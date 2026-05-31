@@ -122,4 +122,4 @@ class ReportRead(ReportBase):
 class ReportDetailRead(ReportRead):
     trips: list[TripRead] = Field(default_factory=list)
     expense_items: list[ExpenseItemRead] = Field(default_factory=list)
-    invoices: list[InvoiceRead] = Field(default_factory=list)
+    invoices: list[InvoiceRead] = Field(default_factory=list, validation_alias="active_invoices")

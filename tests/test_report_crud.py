@@ -4,7 +4,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.models.settings import Settings
-from backend.schemas.report import ReportCreate, ReportUpdate
+from backend.schemas.report import ReportCreate, ReportUpdate, TripWrite
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     create_report,
@@ -33,7 +33,11 @@ def test_create_report_inherits_settings(db):
 def test_amount_normalization_keeps_two_decimals(db):
     report = create_report(
         db,
-        ReportCreate(total_amount=Decimal("100.005"), advance_amount=Decimal("80.00")),
+        ReportCreate(
+            daily_subsidy=Decimal("100.005"),
+            advance_amount=Decimal("80.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=1)],
+        ),
     )
     # 价税合计 quantize 到两位小数
     assert report.total_amount == Decimal("100.00")
@@ -44,7 +48,11 @@ def test_amount_normalization_keeps_two_decimals(db):
 def test_shortfall_and_surplus_are_decimal(db):
     report = create_report(
         db,
-        ReportCreate(total_amount=Decimal("50.00"), advance_amount=Decimal("80.00")),
+        ReportCreate(
+            daily_subsidy=Decimal("50.00"),
+            advance_amount=Decimal("80.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=1)],
+        ),
     )
     assert isinstance(report.surplus, Decimal)
     assert report.surplus == Decimal("30.00")

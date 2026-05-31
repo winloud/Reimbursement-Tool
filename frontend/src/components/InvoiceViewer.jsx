@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
+  Alert,
   Button,
   Dialog,
   DialogActions,
@@ -18,15 +19,30 @@ const formatAmount = (value) =>
 export default function InvoiceViewer({ invoice, open, onClose, onUpdated }) {
   const [amount, setAmount] = useState(invoice ? Number(invoice.amount ?? 0).toFixed(2) : "0.00");
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (invoice) {
+      setAmount(Number(invoice.amount ?? 0).toFixed(2));
+      setError("");
+    }
+  }, [invoice]);
 
   if (!invoice) return null;
 
   const handleConfirm = async () => {
     setSaving(true);
+    setError("");
     try {
-      await updateInvoice(invoice.id, { amount, amount_confirmed: true });
+      const res = await updateInvoice(invoice.id, { amount, amount_confirmed: true });
+      if (!res.success) {
+        setError(res.message || "金额确认失败");
+        return;
+      }
       onUpdated?.();
       onClose();
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "金额确认失败");
     } finally {
       setSaving(false);
     }
@@ -38,6 +54,7 @@ export default function InvoiceViewer({ invoice, open, onClose, onUpdated }) {
     <Dialog open={open} onClose={onClose} maxWidth="md" fullWidth>
       <DialogTitle>发票查看</DialogTitle>
       <DialogContent>
+        {error && <Alert severity="error" sx={{ mb: 2 }}>{error}</Alert>}
         <Grid container spacing={2}>
           <Grid item xs={12} md={5}>
             <Stack spacing={1.5}>
