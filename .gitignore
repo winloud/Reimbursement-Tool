@@ -25,6 +25,12 @@ Thumbs.db
 # Claude local permissions/session files
 .claude/settings.local.json
 
+# Frontend dependencies
+node_modules/
+
+# Local SQLite data
+data/*.db
+
 # Generated PDF outputs
 outputs/
 报销单_reportlab_fields_overlay*.pdf
