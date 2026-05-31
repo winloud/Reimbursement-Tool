@@ -1,0 +1,36 @@
+# Python cache/build artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Local editor / OS files
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Claude local permissions/session files
+.claude/settings.local.json
+
+# Generated PDF outputs
+outputs/
+报销单_reportlab_fields_overlay*.pdf
+报销单_ReportLab_填表域*.pdf
+_test_*.pdf
+
+# Large CAD source templates
+templates/
+*.dwg
