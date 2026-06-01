@@ -498,14 +498,14 @@ OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
 ### Phase 3：行程录入 + 发票上传
 **验收标准：可上传 XML/PDF/OFD 发票并自动识别金额，图片发票可手动输入金额**
 
-- [ ] 行程卡片组件（可增删、拖拽排序）
-- [ ] 其他费用项卡片组件
-- [ ] 发票上传接口（`POST /api/invoices/upload`）+ Service
-- [ ] XML / PDF / OFD 电子发票解析（`invoice_parser.py`）
-- [ ] 图片发票上传（手动输入金额，`amount_confirmed = false`）
-- [ ] 发票查看弹窗（InvoiceViewer）
-- [ ] 实时费用汇总计算（右侧浮窗）
-- [ ] 单元测试：XML/PDF/OFD 解析，补贴天数跨月/跨年计算
+- [x] 行程卡片组件（可增删、拖拽排序）
+- [x] 其他费用项卡片组件
+- [x] 发票上传接口（`POST /api/invoices/upload`）+ Service
+- [x] XML / PDF / OFD 电子发票解析（`invoice_parser.py`）
+- [x] 图片发票上传（手动输入金额，`amount_confirmed = false`）
+- [x] 发票查看弹窗（InvoiceViewer）
+- [x] 实时费用汇总计算（右侧浮窗）
+- [x] 单元测试：XML/PDF/OFD 解析，补贴天数跨月/跨年计算
 
 ---
 
