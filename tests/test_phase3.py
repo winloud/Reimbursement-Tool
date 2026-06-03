@@ -1,11 +1,19 @@
 from datetime import date
 from decimal import Decimal
+from io import BytesIO
 from pathlib import Path
 from zipfile import ZipFile
 
+import pytest
+from fastapi import HTTPException, UploadFile
+from sqlalchemy import select
+
+from backend.models.invoice import Invoice
 from backend.models.trip import Trip
+from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.schemas.report import ReportCreate, TripWrite
 from backend.services.invoice_parser import parse_ofd_invoice, parse_pdf_invoice, parse_xml_invoice
+from backend.services.invoice_service import update_invoice, upload_invoice
 from backend.services.report_service import calculate_subsidy_days, create_report
 
 
@@ -109,3 +117,126 @@ def test_report_recalculation_uses_cross_month_trip_days(db):
 
     assert report.subsidy_days == 3
     assert report.subsidy_total == Decimal("360.00")
+
+
+def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    parsed_amount = Decimal("266.50")
+
+    monkeypatch.setattr(
+        "backend.services.invoice_service.save_upload_file",
+        lambda _upload_file, report_id, _file_type: f"uploads/{report_id}/invoice_test.pdf",
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="987654321", amount=parsed_amount),
+    )
+
+    invoice, parsed = upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4")),
+    )
+
+    assert parsed.amount == parsed_amount
+    assert invoice.amount == parsed_amount
+    assert invoice.amount_confirmed is False
+    db.refresh(report)
+    assert report.total_amount == Decimal("0.00")
+
+
+def test_confirming_invoice_updates_report_totals(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    monkeypatch.setattr(
+        "backend.services.invoice_service.save_upload_file",
+        lambda _upload_file, report_id, _file_type: f"uploads/{report_id}/invoice_test.pdf",
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="987654321", amount=Decimal("266.50")),
+    )
+
+    invoice, _ = upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4")),
+    )
+
+    confirmed = update_invoice(
+        db,
+        invoice.id,
+        InvoiceUpdate(amount=Decimal("266.50"), amount_confirmed=True),
+    )
+    db.refresh(report)
+
+    assert confirmed.amount_confirmed is True
+    assert confirmed.amount == Decimal("266.50")
+    assert report.total_amount == Decimal("266.50")
+    assert report.shortfall == Decimal("266.50")
+
+
+def test_upload_invoice_rejects_duplicate_file_in_same_report(monkeypatch, tmp_path: Path, db):
+    monkeypatch.setattr("backend.services.invoice_service.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "backend" / "uploads")
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(amount=Decimal("10.00")),
+    )
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="invoice-a.pdf", file=BytesIO(b"same invoice bytes")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=report.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="invoice-b.pdf", file=BytesIO(b"same invoice bytes")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "该发票文件已在本报销单中上传" in exc_info.value.detail
+    active_invoices = db.scalars(
+        select(Invoice).where(Invoice.report_id == report.id, Invoice.deleted_at.is_(None)),
+    ).all()
+    assert len(active_invoices) == 1
+
+
+def test_upload_invoice_rejects_duplicate_invoice_number_in_same_report(monkeypatch, tmp_path: Path, db):
+    monkeypatch.setattr("backend.services.invoice_service.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "backend" / "uploads")
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="DUP-20260603", amount=Decimal("10.00")),
+    )
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="invoice-a.pdf", file=BytesIO(b"invoice bytes a")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=report.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="invoice-b.pdf", file=BytesIO(b"invoice bytes b")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "识别到相同发票号 DUP-20260603" in exc_info.value.detail
+    active_invoices = db.scalars(
+        select(Invoice).where(Invoice.report_id == report.id, Invoice.deleted_at.is_(None)),
+    ).all()
+    assert len(active_invoices) == 1

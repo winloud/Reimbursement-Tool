@@ -1,6 +1,7 @@
 import shutil
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
 
@@ -42,6 +43,51 @@ def validate_invoice_target(report, expense_category: str, trip_id: int | None) 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非车船费发票不能关联行程")
 
 
+def calculate_file_hash(file_path: Path) -> str | None:
+    if not file_path.exists():
+        return None
+    digest = sha256()
+    with file_path.open("rb") as source:
+        for chunk in iter(lambda: source.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def calculate_upload_hash(upload_file: UploadFile) -> str:
+    digest = sha256()
+    upload_file.file.seek(0)
+    for chunk in iter(lambda: upload_file.file.read(1024 * 1024), b""):
+        digest.update(chunk)
+    upload_file.file.seek(0)
+    return digest.hexdigest()
+
+
+def ensure_no_duplicate_invoice_file(report, upload_hash: str) -> None:
+    for invoice in report.invoices:
+        if invoice.deleted_at is not None:
+            continue
+        existing_hash = calculate_file_hash(PROJECT_ROOT / "backend" / invoice.file_path)
+        if existing_hash == upload_hash:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="该发票文件已在本报销单中上传，请删除重复发票后再上传",
+            )
+
+
+def ensure_no_duplicate_invoice_no(report, invoice_no: str | None) -> None:
+    normalized = (invoice_no or "").strip()
+    if not normalized:
+        return
+    for invoice in report.invoices:
+        if invoice.deleted_at is not None:
+            continue
+        if (invoice.invoice_no or "").strip() == normalized:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"识别到相同发票号 {normalized} 已在本报销单中上传，请删除重复发票后再上传",
+            )
+
+
 def save_upload_file(upload_file: UploadFile, report_id: int, file_type: str) -> str:
     ext = Path(upload_file.filename or "").suffix.lower() or f".{file_type}"
     upload_dir = UPLOAD_ROOT / str(report_id)
@@ -64,6 +110,9 @@ def upload_invoice(
     ensure_report_writable(report)
     validate_invoice_target(report, expense_category, trip_id)
 
+    upload_hash = calculate_upload_hash(upload_file)
+    ensure_no_duplicate_invoice_file(report, upload_hash)
+
     file_type = detect_file_type(upload_file.filename or "")
     relative_path = save_upload_file(upload_file, report_id, file_type)
     absolute_path = PROJECT_ROOT / "backend" / relative_path
@@ -71,8 +120,12 @@ def upload_invoice(
         parsed = parse_invoice_file(absolute_path, file_type)
     except Exception as exc:
         parsed = InvoiceParsedData(raw={"source": file_type, "parse_error": str(exc)})
+    try:
+        ensure_no_duplicate_invoice_no(report, parsed.invoice_no)
+    except HTTPException:
+        absolute_path.unlink(missing_ok=True)
+        raise
 
-    amount_confirmed = file_type in {"xml", "pdf", "ofd"} and parsed.amount > Decimal("0.00")
     invoice = Invoice(
         report_id=report_id,
         trip_id=trip_id,
@@ -82,7 +135,7 @@ def upload_invoice(
         invoice_no=parsed.invoice_no,
         invoice_date=parsed.invoice_date,
         amount=parsed.amount,
-        amount_confirmed=amount_confirmed,
+        amount_confirmed=False,
     )
     db.add(invoice)
     db.flush()

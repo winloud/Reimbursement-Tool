@@ -1,16 +1,24 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Alert,
+  Autocomplete,
   Box,
   Button,
   Card,
   CardContent,
   Chip,
   CircularProgress,
+  Dialog,
+  DialogActions,
+  DialogContent,
+  DialogContentText,
+  DialogTitle,
   Divider,
   Grid,
   IconButton,
   InputAdornment,
+  LinearProgress,
+  Paper,
   Snackbar,
   Stack,
   TextField,
@@ -18,156 +26,188 @@ import {
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import CloudUploadIcon from "@mui/icons-material/CloudUpload";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
+import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import ExpandLessIcon from "@mui/icons-material/ExpandLess";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
+import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import { Link as RouterLink, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import InvoiceViewer from "../components/InvoiceViewer";
+import { useNavigationGuard } from "../navigationGuard";
 import {
   createReport,
   deleteInvoice,
+  deleteReport,
   getReport,
   getSettings,
   updateReport,
   updateReportStatus,
   uploadInvoice,
 } from "../api/client";
+import {
+  EXPENSE_CATEGORIES,
+  STATUS_ACTIONS,
+  STATUS_META,
+  buildDraftPayload,
+  buildReportPayload,
+  calculateSummary,
+  cloneTripAfter,
+  emptyForm,
+  formatAmount,
+  isEmptyDraft,
+  makeBlankTrip,
+  makeReturnTripAfter,
+  moveTrip,
+  normalizeExpenseItem,
+  normalizeTrip,
+  swapTripEndpoints,
+  toMoney,
+  todayStr,
+} from "./reportEditUtils";
 
-const STATUS_META = {
-  draft: { label: "草稿", color: "default" },
-  printed: { label: "已打印", color: "info" },
-  reimbursed: { label: "已报销", color: "success" },
+const SAVE_LABELS = {
+  idle: { text: "等待修改", icon: null, color: "default" },
+  saving: { text: "保存中...", icon: <CircularProgress size={14} />, color: "info" },
+  saved: { text: "已自动保存", icon: <CheckCircleIcon fontSize="small" />, color: "success" },
+  error: { text: "保存失败，请重试", icon: <ErrorOutlineIcon fontSize="small" />, color: "error" },
 };
 
-const STATUS_ACTIONS = {
-  draft: [{ target: "printed", label: "标记为已打印", color: "primary" }],
-  printed: [
-    { target: "reimbursed", label: "标记为已报销", color: "success" },
-    { target: "draft", label: "退回草稿", color: "inherit" },
-  ],
-  reimbursed: [],
+const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
+const CONTENT_MAX_WIDTH = 1440;
+const SECTION_GAP = { xs: 2, md: 2.5 };
+const FIELD_GAP = { xs: 1.5, md: 2 };
+
+const pageContentSx = {
+  width: "100%",
+  maxWidth: CONTENT_MAX_WIDTH,
+  mx: "auto",
+  pb: 4,
 };
 
-const EXPENSE_CATEGORIES = [
-  { value: "luggage", label: "行李费" },
-  { value: "city_transport", label: "市内交通费" },
-  { value: "accommodation", label: "住宿费" },
-  { value: "postal", label: "邮电费" },
-  { value: "no_sleeper_subsidy", label: "未乘卧铺补助" },
-  { value: "toll", label: "过路费" },
-  { value: "fuel_subsidy", label: "燃油补助" },
-];
-
-const todayStr = () => new Date().toISOString().slice(0, 10);
-
-const emptyForm = {
-  report_date: todayStr(),
-  department: "",
-  employee_name: "",
-  purpose: "",
-  daily_subsidy: "0.00",
-  advance_date_month: "",
-  advance_date_day: "",
-  advance_amount: "0.00",
+const sectionCardContentSx = {
+  p: { xs: 2, md: 2.5 },
+  "&:last-child": {
+    pb: { xs: 2, md: 2.5 },
+  },
 };
 
-const formatAmount = (value) =>
-  `¥${Number(value ?? 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+const workCardSx = {
+  height: "100%",
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 2,
+  boxShadow: "none",
+};
 
-const toMoney = (value) => Number(value || 0).toFixed(2);
+const mainLayoutSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) 360px" },
+  gap: { xs: 2, md: 2.5, xl: 3 },
+  alignItems: "start",
+};
 
-const normalizeTrip = (trip, index) => ({
-  id: trip.id ?? null,
-  sort_order: index + 1,
-  depart_month: trip.depart_month ?? 1,
-  depart_day: trip.depart_day ?? 1,
-  depart_hour: trip.depart_hour ?? "",
-  depart_place: trip.depart_place ?? "",
-  arrive_month: trip.arrive_month ?? 1,
-  arrive_day: trip.arrive_day ?? 1,
-  arrive_hour: trip.arrive_hour ?? "",
-  arrive_place: trip.arrive_place ?? "",
-  transport: trip.transport ?? "",
-});
+const repeatedCardGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+  gap: SECTION_GAP,
+  alignItems: "stretch",
+};
 
-const makeBlankTrip = (reportDate) => {
-  const date = reportDate ? new Date(`${reportDate}T00:00:00`) : new Date();
-  const month = Number.isNaN(date.getTime()) ? 1 : date.getMonth() + 1;
-  const day = Number.isNaN(date.getTime()) ? 1 : date.getDate();
-  return normalizeTrip(
-    {
-      depart_month: month,
-      depart_day: day,
-      arrive_month: month,
-      arrive_day: day,
-    },
-    0,
+const tripFieldGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(4, minmax(0, 1fr))" },
+  gap: FIELD_GAP,
+  alignItems: "start",
+};
+
+const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
+
+const getApiErrorMessage = (err, fallback) =>
+  err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
+
+function InvoiceDropzone({ disabled, uploading, onFiles, hint = "拖放发票到这里，或点击上传" }) {
+  const handleDrop = (event) => {
+    event.preventDefault();
+    if (disabled) return;
+    onFiles(event.dataTransfer.files);
+  };
+
+  return (
+    <Box
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={handleDrop}
+      sx={{
+        border: 1,
+        borderStyle: "dashed",
+        borderColor: disabled ? "divider" : "primary.light",
+        borderRadius: 1,
+        bgcolor: disabled ? "action.hover" : "primary.50",
+        px: 1.5,
+        py: 1.25,
+      }}
+    >
+      <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
+        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
+          {hint}
+        </Typography>
+        <Button component="label" size="small" startIcon={<CloudUploadIcon />} disabled={disabled || uploading}>
+          上传
+          <input
+            hidden
+            multiple
+            type="file"
+            accept=".xml,.pdf,.ofd,image/*"
+            onChange={(event) => {
+              onFiles(event.target.files);
+              event.target.value = "";
+            }}
+          />
+        </Button>
+      </Stack>
+    </Box>
   );
-};
-
-const normalizeExpenseItem = (item) => ({
-  id: item.id ?? null,
-  category: item.category,
-  remark: item.remark ?? "",
-  amount: item.amount ?? "0.00",
-  invoice_count: item.invoice_count ?? 0,
-});
-
-const makeDate = (year, month, day) => {
-  const parsed = new Date(year, month - 1, day);
-  if (parsed.getFullYear() !== year || parsed.getMonth() !== month - 1 || parsed.getDate() !== day) {
-    return null;
-  }
-  return parsed;
-};
-
-const calculateSubsidyDays = (reportDate, trips) => {
-  const year = reportDate ? new Date(`${reportDate}T00:00:00`).getFullYear() : new Date().getFullYear();
-  const ranges = trips
-    .map((trip) => {
-      const departMonth = Number(trip.depart_month);
-      const departDay = Number(trip.depart_day);
-      const arriveMonth = Number(trip.arrive_month);
-      const arriveDay = Number(trip.arrive_day);
-      const arriveYear =
-        arriveMonth < departMonth || (arriveMonth === departMonth && arriveDay < departDay) ? year + 1 : year;
-      const depart = makeDate(year, departMonth, departDay);
-      const arrive = makeDate(arriveYear, arriveMonth, arriveDay);
-      return depart && arrive ? { depart, arrive } : null;
-    })
-    .filter(Boolean);
-
-  if (ranges.length === 0) return 0;
-  const earliest = Math.min(...ranges.map((range) => range.depart.getTime()));
-  const latest = Math.max(...ranges.map((range) => range.arrive.getTime()));
-  return Math.max(0, Math.floor((latest - earliest) / 86400000) + 1);
-};
+}
 
 export default function ReportEdit() {
   const { id } = useParams();
   const isEdit = Boolean(id);
   const navigate = useNavigate();
+  const { registerGuard, requestNavigation } = useNavigationGuard();
 
   const [form, setForm] = useState(emptyForm);
+  const [defaults, setDefaults] = useState(emptyForm);
   const [status, setStatus] = useState("draft");
   const [trips, setTrips] = useState([]);
   const [expenseItems, setExpenseItems] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
+  const [invoiceQueue, setInvoiceQueue] = useState([]);
   const [dragIndex, setDragIndex] = useState(null);
-  const [loading, setLoading] = useState(isEdit);
-  const [saving, setSaving] = useState(false);
-  const [uploading, setUploading] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [creatingDraft, setCreatingDraft] = useState(false);
+  const [saveState, setSaveState] = useState("idle");
+  const [uploadState, setUploadState] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
+  const [pendingLeave, setPendingLeave] = useState(null);
+  const [leaveBusy, setLeaveBusy] = useState(false);
 
+  const creatingRef = useRef(false);
+  const loadedRef = useRef(false);
+  const lastSavedPayloadRef = useRef("");
+  const leaveResolverRef = useRef(null);
   const readonly = status === "reimbursed";
+
+  const statusMeta = STATUS_META[status] || { label: status, color: "default" };
+  const actions = STATUS_ACTIONS[status] || [];
+  const saveMeta = SAVE_LABELS[saveState] || SAVE_LABELS.idle;
 
   const loadForEdit = useCallback(
     async ({ quiet = false } = {}) => {
@@ -175,25 +215,43 @@ export default function ReportEdit() {
       setError("");
       try {
         const res = await getReport(id);
-        if (res.success) {
-          const r = res.data;
-          setForm({
-            report_date: r.report_date || todayStr(),
-            department: r.department || "",
-            employee_name: r.employee_name || "",
-            purpose: r.purpose || "",
-            daily_subsidy: toMoney(r.daily_subsidy),
-            advance_date_month: r.advance_date_month || "",
-            advance_date_day: r.advance_date_day || "",
-            advance_amount: toMoney(r.advance_amount),
-          });
-          setStatus(r.status);
-          setTrips([...(r.trips || [])].sort((a, b) => a.sort_order - b.sort_order).map(normalizeTrip));
-          setExpenseItems((r.expense_items || []).map(normalizeExpenseItem));
-          setInvoices(r.invoices || []);
-        } else {
+        if (!res.success) {
           setError(res.message || "加载报销单失败");
+          return;
         }
+        const report = res.data;
+        const nextForm = {
+          report_date: report.report_date || todayStr(),
+          department: report.department || "",
+          employee_name: report.employee_name || "",
+          purpose: report.purpose || "",
+          daily_subsidy: toMoney(report.daily_subsidy),
+          advance_date_month: report.advance_date_month || "",
+          advance_date_day: report.advance_date_day || "",
+          advance_amount: toMoney(report.advance_amount),
+        };
+        const nextTrips = [...(report.trips || [])].sort((a, b) => a.sort_order - b.sort_order).map(normalizeTrip);
+        const nextItems = (report.expense_items || []).map(normalizeExpenseItem);
+        const nextInvoices = report.invoices || [];
+        const nextDefaults = {
+          ...nextForm,
+          purpose: "",
+          advance_date_month: "",
+          advance_date_day: "",
+          advance_amount: "0.00",
+        };
+
+        setForm(nextForm);
+        setDefaults(nextDefaults);
+        setStatus(report.status);
+        setTrips(nextTrips);
+        setExpenseItems(nextItems);
+        setInvoices(nextInvoices);
+        lastSavedPayloadRef.current = JSON.stringify(
+          buildReportPayload({ form: nextForm, trips: nextTrips, expenseItems: nextItems }),
+        );
+        loadedRef.current = true;
+        setSaveState("saved");
       } catch (err) {
         setError(err.response?.data?.message || err.message || "加载报销单失败");
       } finally {
@@ -203,139 +261,109 @@ export default function ReportEdit() {
     [id],
   );
 
-  const loadDefaults = useCallback(async () => {
+  const createDraft = useCallback(async () => {
+    if (creatingRef.current) return;
+    creatingRef.current = true;
+    setCreatingDraft(true);
+    setLoading(true);
+    setError("");
     try {
-      const res = await getSettings();
-      if (res.success && res.data) {
-        setForm((prev) => ({
-          ...prev,
-          department: res.data.department || "",
-          employee_name: res.data.employee_name || "",
-          daily_subsidy: toMoney(res.data.daily_subsidy),
-        }));
+      const settingsRes = await getSettings();
+      const settings = settingsRes.success && settingsRes.data ? settingsRes.data : {};
+      const draftForm = {
+        ...emptyForm,
+        report_date: todayStr(),
+        department: settings.department || "",
+        employee_name: settings.employee_name || "",
+        daily_subsidy: toMoney(settings.daily_subsidy),
+      };
+      const res = await createReport(buildDraftPayload(draftForm));
+      if (!res.success) {
+        setError(res.message || "创建草稿失败");
+        return;
       }
-    } catch {
-      // 设置读取失败不阻塞新增，使用空默认值
+      navigate(`/reports/${res.data.id}/edit`, { replace: true });
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "创建草稿失败");
+    } finally {
+      setCreatingDraft(false);
+      setLoading(false);
     }
-  }, []);
+  }, [navigate]);
 
   useEffect(() => {
     if (isEdit) {
       loadForEdit();
     } else {
-      setTrips([]);
-      setExpenseItems([]);
-      setInvoices([]);
-      loadDefaults();
+      createDraft();
     }
-  }, [isEdit, loadForEdit, loadDefaults]);
+  }, [isEdit, loadForEdit, createDraft]);
 
-  const summary = useMemo(() => {
-    const subsidyDays = calculateSubsidyDays(form.report_date, trips);
-    const subsidyTotal = subsidyDays * Number(form.daily_subsidy || 0);
-    const invoiceTotal = invoices
-      .filter((invoice) => invoice.amount_confirmed)
-      .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
-    const total = subsidyTotal + invoiceTotal;
-    const advance = Number(form.advance_amount || 0);
-    return {
-      subsidyDays,
-      subsidyTotal,
-      invoiceTotal,
-      total,
-      shortfall: Math.max(0, total - advance),
-      surplus: Math.max(0, advance - total),
-    };
-  }, [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips]);
+  const summary = useMemo(
+    () =>
+      calculateSummary({
+        reportDate: form.report_date,
+        dailySubsidy: form.daily_subsidy,
+        advanceAmount: form.advance_amount,
+        trips,
+        invoices,
+      }),
+    [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
+  );
 
-  const statusMeta = STATUS_META[status] || { label: status, color: "default" };
-  const actions = STATUS_ACTIONS[status] || [];
+  const emptyDraft = useMemo(
+    () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices }),
+    [defaults, form, invoices, status, trips],
+  );
+
+  const resolveLeave = useCallback((allowed) => {
+    leaveResolverRef.current?.(allowed);
+    leaveResolverRef.current = null;
+    setPendingLeave(null);
+  }, []);
+
+  useEffect(() => {
+    if (!isEdit) return undefined;
+    return registerGuard(async (to) => {
+      if (!emptyDraft) return true;
+      setPendingLeave({ to });
+      return new Promise((resolve) => {
+        leaveResolverRef.current = resolve;
+      });
+    });
+  }, [emptyDraft, isEdit, registerGuard]);
+
+  useEffect(() => {
+    if (!isEdit || readonly || loading || !loadedRef.current) return undefined;
+    const payload = buildReportPayload({ form, trips, expenseItems });
+    const payloadKey = JSON.stringify(payload);
+    if (payloadKey === lastSavedPayloadRef.current) return undefined;
+
+    setSaveState("saving");
+    const timer = window.setTimeout(async () => {
+      try {
+        const res = await updateReport(id, payload);
+        if (!res.success) {
+          setError(res.message || "自动保存失败");
+          setSaveState("error");
+          return;
+        }
+        lastSavedPayloadRef.current = payloadKey;
+        setSaveState("saved");
+        if (payload.trips.some((trip) => !trip.id)) {
+          await loadForEdit({ quiet: true });
+        }
+      } catch (err) {
+        setError(err.response?.data?.message || err.message || "自动保存失败");
+        setSaveState("error");
+      }
+    }, 700);
+
+    return () => window.clearTimeout(timer);
+  }, [expenseItems, form, id, isEdit, loadForEdit, loading, readonly, trips]);
 
   const handleChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
-  };
-
-  const buildTripPayload = () =>
-    trips.map((trip, index) => ({
-      id: trip.id || null,
-      sort_order: index + 1,
-      depart_month: Number(trip.depart_month || 1),
-      depart_day: Number(trip.depart_day || 1),
-      depart_hour: trip.depart_hour === "" ? null : Number(trip.depart_hour),
-      depart_place: trip.depart_place?.trim() || null,
-      arrive_month: Number(trip.arrive_month || 1),
-      arrive_day: Number(trip.arrive_day || 1),
-      arrive_hour: trip.arrive_hour === "" ? null : Number(trip.arrive_hour),
-      arrive_place: trip.arrive_place?.trim() || null,
-      transport: trip.transport?.trim() || null,
-    }));
-
-  const buildPayload = () => ({
-    report_date: form.report_date || null,
-    department: form.department.trim() || null,
-    employee_name: form.employee_name.trim() || null,
-    purpose: form.purpose.trim() || null,
-    daily_subsidy: form.daily_subsidy === "" ? "0.00" : form.daily_subsidy,
-    advance_date_month: form.advance_date_month === "" ? null : Number(form.advance_date_month),
-    advance_date_day: form.advance_date_day === "" ? null : Number(form.advance_date_day),
-    advance_amount: form.advance_amount === "" ? "0.00" : form.advance_amount,
-    ...(isEdit
-      ? {
-          trips: buildTripPayload(),
-          expense_items: expenseItems.map((item) => ({
-            id: item.id || null,
-            category: item.category,
-            remark: item.remark?.trim() || null,
-          })),
-        }
-      : {}),
-  });
-
-  const handleSave = async () => {
-    setSaving(true);
-    setError("");
-    try {
-      const payload = buildPayload();
-      if (isEdit) {
-        const res = await updateReport(id, payload);
-        if (res.success) {
-          setToast("已保存");
-          await loadForEdit({ quiet: true });
-        } else {
-          setError(res.message || "保存失败");
-        }
-      } else {
-        const res = await createReport(payload);
-        if (res.success) {
-          navigate(`/reports/${res.data.id}/edit`, { replace: true });
-          setToast("草稿已创建");
-        } else {
-          setError(res.message || "创建失败");
-        }
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || "保存失败");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  const handleStatusAction = async (target) => {
-    setSaving(true);
-    setError("");
-    try {
-      const res = await updateReportStatus(id, target);
-      if (res.success) {
-        setStatus(res.data.status);
-        setToast("状态已更新");
-      } else {
-        setError(res.message || "状态更新失败");
-      }
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || "状态更新失败");
-    } finally {
-      setSaving(false);
-    }
   };
 
   const updateTrip = (index, field, value) => {
@@ -350,47 +378,77 @@ export default function ReportEdit() {
     setTrips((prev) => prev.filter((_trip, i) => i !== index).map(normalizeTrip));
   };
 
-  const moveTrip = (from, to) => {
-    if (to < 0 || to >= trips.length || from === to) return;
-    setTrips((prev) => {
-      const next = [...prev];
-      const [item] = next.splice(from, 1);
-      next.splice(to, 0, item);
-      return next.map(normalizeTrip);
-    });
+  const duplicateTrip = (index) => {
+    setTrips((prev) => cloneTripAfter(prev, index));
   };
 
-  const updateExpenseItem = (category, value) => {
-    setExpenseItems((prev) => prev.map((item) => (item.category === category ? { ...item, remark: value } : item)));
+  const returnTrip = (index) => {
+    setTrips((prev) => makeReturnTripAfter(prev, index));
+  };
+
+  const swapTrip = (index) => {
+    setTrips((prev) => prev.map((trip, i) => (i === index ? swapTripEndpoints(trip) : trip)));
+  };
+
+  const toggleTripCollapsed = (index) => {
+    setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, collapsed: !trip.collapsed } : trip)));
   };
 
   const invoicesForTrip = (tripId) => invoices.filter((invoice) => invoice.trip_id === tripId);
   const invoicesForCategory = (category) =>
     invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id);
 
-  const handleUpload = async ({ event, expenseCategory, tripId = null, key }) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setUploading(key);
+  const handleStatusAction = async (target) => {
+    setSaveState("saving");
     setError("");
     try {
-      const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
+      const res = await updateReportStatus(id, target);
       if (res.success) {
-        setToast(res.data.amount_confirmed ? "发票已上传并识别金额" : "发票已上传，请确认金额");
-        await loadForEdit({ quiet: true });
+        setStatus(res.data.status);
+        setToast("状态已更新");
+        setSaveState("saved");
       } else {
-        setError(res.message || "上传失败");
+        setError(res.message || "状态更新失败");
+        setSaveState("error");
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "上传失败");
+      setError(err.response?.data?.message || err.message || "状态更新失败");
+      setSaveState("error");
+    }
+  };
+
+  const handleFilesUpload = async ({ files, expenseCategory, tripId = null, key }) => {
+    const fileList = Array.from(files || []);
+    if (fileList.length === 0 || readonly || !id) return;
+
+    const uploaded = [];
+    setError("");
+    setUploadState({ key, current: 0, total: fileList.length, name: fileList[0].name });
+    try {
+      for (let index = 0; index < fileList.length; index += 1) {
+        const file = fileList[index];
+        setUploadState({ key, current: index + 1, total: fileList.length, name: file.name });
+        const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
+        if (!res.success) {
+          throw new Error(res.message || `${file.name} 上传失败`);
+        }
+        uploaded.push(res.data);
+      }
+      await loadForEdit({ quiet: true });
+      if (uploaded.length > 0) {
+        setInvoiceQueue(uploaded);
+        setSelectedInvoice(uploaded[0]);
+        setToast(fileList.length > 1 ? "批量上传完成，请逐张确认金额" : "发票已上传，请确认金额");
+      }
+    } catch (err) {
+      setError(getApiErrorMessage(err, "上传失败"));
     } finally {
-      setUploading("");
+      setUploadState(null);
     }
   };
 
   const handleDeleteInvoice = async (invoiceId) => {
-    setSaving(true);
+    setSaveState("saving");
     setError("");
     try {
       const res = await deleteInvoice(invoiceId);
@@ -399,11 +457,39 @@ export default function ReportEdit() {
         await loadForEdit({ quiet: true });
       } else {
         setError(res.message || "删除发票失败");
+        setSaveState("error");
       }
     } catch (err) {
       setError(err.response?.data?.message || err.message || "删除发票失败");
+      setSaveState("error");
+    }
+  };
+
+  const handleInvoiceUpdated = async () => {
+    await loadForEdit({ quiet: true });
+    setInvoiceQueue((prev) => {
+      const next = prev.slice(1);
+      setSelectedInvoice(next[0] || null);
+      return next;
+    });
+  };
+
+  const handleDeleteEmptyDraftAndLeave = async () => {
+    setLeaveBusy(true);
+    setError("");
+    try {
+      const res = await deleteReport(id);
+      if (!res.success) {
+        setError(res.message || "删除空草稿失败");
+        resolveLeave(false);
+        return;
+      }
+      resolveLeave(true);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "删除空草稿失败");
+      resolveLeave(false);
     } finally {
-      setSaving(false);
+      setLeaveBusy(false);
     }
   };
 
@@ -415,50 +501,44 @@ export default function ReportEdit() {
         </Typography>
       ) : (
         items.map((invoice) => (
-          <Stack
+          <Paper
             key={invoice.id}
-            direction="row"
-            alignItems="center"
-            justifyContent="space-between"
-            spacing={1}
-            sx={{ px: 1.25, py: 1, border: 1, borderColor: "divider", borderRadius: 1 }}
+            variant="outlined"
+            sx={{ px: 1.25, py: 1, borderRadius: 1, bgcolor: "background.paper" }}
           >
-            <Box sx={{ minWidth: 0 }}>
-              <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                <Typography variant="body2" fontWeight={600}>
-                  {formatAmount(invoice.amount)}
-                </Typography>
-                <Chip size="small" label={invoice.file_type.toUpperCase()} />
-                <Chip
-                  size="small"
-                  color={invoice.amount_confirmed ? "success" : "warning"}
-                  label={invoice.amount_confirmed ? "已确认" : "待确认"}
-                />
-              </Stack>
-              <Typography variant="caption" color="text.secondary" noWrap>
-                {invoice.invoice_no || "无发票号码"}
-              </Typography>
-            </Box>
-            <Stack direction="row" spacing={0.5}>
-              <Tooltip title="查看发票">
-                <IconButton size="small" onClick={() => setSelectedInvoice(invoice)}>
-                  <VisibilityIcon fontSize="small" />
-                </IconButton>
-              </Tooltip>
-              <Tooltip title="删除发票">
-                <span>
-                  <IconButton
+            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+              <Box sx={{ minWidth: 0 }}>
+                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
+                  <Typography variant="body2" fontWeight={700}>
+                    {formatAmount(invoice.amount)}
+                  </Typography>
+                  <Chip size="small" label={invoice.file_type.toUpperCase()} />
+                  <Chip
                     size="small"
-                    color="error"
-                    disabled={readonly || saving}
-                    onClick={() => handleDeleteInvoice(invoice.id)}
-                  >
-                    <DeleteIcon fontSize="small" />
+                    color={invoice.amount_confirmed ? "success" : "warning"}
+                    label={invoice.amount_confirmed ? "已确认" : "待确认"}
+                  />
+                </Stack>
+                <Typography variant="caption" color="text.secondary" noWrap>
+                  {invoice.invoice_no || "无发票号码"}
+                </Typography>
+              </Box>
+              <Stack direction="row" spacing={0.5}>
+                <Tooltip title="查看发票">
+                  <IconButton size="small" onClick={() => setSelectedInvoice(invoice)}>
+                    <VisibilityIcon fontSize="small" />
                   </IconButton>
-                </span>
-              </Tooltip>
+                </Tooltip>
+                <Tooltip title="删除发票">
+                  <span>
+                    <IconButton size="small" color="error" disabled={readonly} onClick={() => handleDeleteInvoice(invoice.id)}>
+                      <DeleteIcon fontSize="small" />
+                    </IconButton>
+                  </span>
+                </Tooltip>
+              </Stack>
             </Stack>
-          </Stack>
+          </Paper>
         ))
       )}
     </Stack>
@@ -467,172 +547,274 @@ export default function ReportEdit() {
   if (loading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
-        <CircularProgress />
+        <Stack spacing={2} alignItems="center">
+          <CircularProgress />
+          <Typography color="text.secondary">{creatingDraft ? "正在创建草稿..." : "正在加载报销单..."}</Typography>
+        </Stack>
       </Box>
     );
   }
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={SECTION_GAP} sx={pageContentSx}>
       <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
-        <div>
-          <Stack direction="row" spacing={1.5} alignItems="center">
-            <Typography variant="h5" fontWeight={700}>
-              {isEdit ? "编辑报销单" : "新增报销单"}
+        <Box>
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="h5" fontWeight={800}>
+              报销单录入
             </Typography>
-            {isEdit && <Chip size="small" color={statusMeta.color} label={statusMeta.label} />}
+            <Chip size="small" color={statusMeta.color} label={statusMeta.label} />
+            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
           </Stack>
-          <Typography color="text.secondary">录入出差基本信息、行程、发票与预借金额。</Typography>
-        </div>
-        <Button component={RouterLink} to="/reports" variant="outlined">
-          返回列表
-        </Button>
+          <Typography color="text.secondary">基本信息、行程、发票和预支信息在一页完成。</Typography>
+        </Box>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+          <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={() => requestNavigation("/reports")}>
+            返回列表
+          </Button>
+          {actions.map((action) => (
+            <Button
+              key={action.target}
+              variant="outlined"
+              color={action.color === "inherit" ? "inherit" : action.color}
+              onClick={() => handleStatusAction(action.target)}
+              disabled={saveState === "saving"}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </Stack>
       </Stack>
 
       {error && <Alert severity="error">{error}</Alert>}
       {readonly && <Alert severity="info">已报销状态为只读，不可修改。</Alert>}
+      {uploadState && (
+        <Alert severity="info">
+          <Stack spacing={1}>
+            <Typography variant="body2">
+              正在上传 {uploadState.current}/{uploadState.total}：{uploadState.name}
+            </Typography>
+            <LinearProgress />
+          </Stack>
+        </Alert>
+      )}
 
-      <Grid container spacing={3} alignItems="flex-start">
-        <Grid item xs={12} md={8}>
-          <Stack spacing={3}>
-            <Card>
-              <CardContent>
-                <Grid container spacing={2}>
-                  <Grid item xs={12} md={3}>
-                    <TextField
-                      fullWidth
-                      label="报销日期"
-                      type="date"
-                      value={form.report_date}
-                      onChange={handleChange("report_date")}
-                      InputLabelProps={{ shrink: true }}
-                      disabled={readonly}
-                    />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
-                    <TextField fullWidth label="部门" value={form.department} onChange={handleChange("department")} disabled={readonly} />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
-                    <TextField fullWidth label="出差人" value={form.employee_name} onChange={handleChange("employee_name")} disabled={readonly} />
-                  </Grid>
-                  <Grid item xs={12} md={3}>
-                    <TextField
-                      fullWidth
-                      label="途中补贴日标准"
-                      type="number"
-                      value={form.daily_subsidy}
-                      onChange={handleChange("daily_subsidy")}
-                      disabled={readonly}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                        inputProps: { min: 0, step: "0.01" },
-                      }}
-                    />
-                  </Grid>
-                  <Grid item xs={12}>
-                    <TextField
-                      fullWidth
-                      label="出差事由"
-                      value={form.purpose}
-                      onChange={handleChange("purpose")}
-                      disabled={readonly}
-                      multiline
-                      minRows={2}
-                    />
-                  </Grid>
-                </Grid>
-
-                <Divider sx={{ my: 3 }} />
-
-                <Stack direction="row" spacing={1.5} flexWrap="wrap" useFlexGap>
-                  <Button variant="contained" onClick={handleSave} disabled={saving || readonly}>
-                    {isEdit ? "保存" : "保存草稿"}
-                  </Button>
-                  {isEdit &&
-                    actions.map((action) => (
-                      <Button
-                        key={action.target}
-                        variant="outlined"
-                        color={action.color === "inherit" ? "inherit" : action.color}
-                        onClick={() => handleStatusAction(action.target)}
-                        disabled={saving}
-                      >
-                        {action.label}
-                      </Button>
-                    ))}
-                </Stack>
-              </CardContent>
-            </Card>
-
-            {isEdit && (
-              <>
-                <Stack spacing={1.5}>
-                  <Stack direction="row" alignItems="center" justifyContent="space-between">
-                    <Typography variant="h6" fontWeight={700}>
-                      行程
-                    </Typography>
-                    <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
-                      新增行程
-                    </Button>
+      <Box sx={mainLayoutSx}>
+        <Box sx={{ minWidth: 0 }}>
+          <Stack spacing={SECTION_GAP}>
+              <Card sx={workCardSx}>
+                <CardContent sx={sectionCardContentSx}>
+                  <Stack spacing={2}>
+                      <Typography variant="h6" fontWeight={800}>
+                        基本信息
+                      </Typography>
+                      <Grid container spacing={FIELD_GAP}>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="报销日期"
+                            type="date"
+                            value={form.report_date}
+                            onChange={handleChange("report_date")}
+                            InputLabelProps={{ shrink: true }}
+                            disabled={readonly}
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField fullWidth size="small" label="部门" value={form.department} onChange={handleChange("department")} disabled={readonly} />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="出差人"
+                            value={form.employee_name}
+                            onChange={handleChange("employee_name")}
+                            disabled={readonly}
+                          />
+                        </Grid>
+                        <Grid item xs={12} sm={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="途中补贴日标准"
+                            type="number"
+                            value={form.daily_subsidy}
+                            onChange={handleChange("daily_subsidy")}
+                            disabled={readonly}
+                            InputProps={{
+                              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+                              inputProps: { min: 0, step: "0.01" },
+                            }}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="出差事由"
+                            value={form.purpose}
+                            onChange={handleChange("purpose")}
+                            disabled={readonly}
+                            multiline
+                            minRows={2}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <Divider />
+                        </Grid>
+                        <Grid item xs={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="预支月"
+                            type="number"
+                            value={form.advance_date_month}
+                            disabled={readonly}
+                            onChange={handleChange("advance_date_month")}
+                            inputProps={{ min: 1, max: 12 }}
+                          />
+                        </Grid>
+                        <Grid item xs={6}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="预支日"
+                            type="number"
+                            value={form.advance_date_day}
+                            disabled={readonly}
+                            onChange={handleChange("advance_date_day")}
+                            inputProps={{ min: 1, max: 31 }}
+                          />
+                        </Grid>
+                        <Grid item xs={12}>
+                          <TextField
+                            fullWidth
+                            size="small"
+                            label="预支金额"
+                            type="number"
+                            value={form.advance_amount}
+                            disabled={readonly}
+                            onChange={handleChange("advance_amount")}
+                            InputProps={{
+                              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+                              inputProps: { min: 0, step: "0.01" },
+                            }}
+                          />
+                        </Grid>
+                      </Grid>
                   </Stack>
+                </CardContent>
+              </Card>
 
-                  {trips.length === 0 ? (
-                    <Alert severity="info">暂无行程。</Alert>
-                  ) : (
-                    trips.map((trip, index) => {
-                      const tripInvoices = trip.id ? invoicesForTrip(trip.id) : [];
-                      const uploadKey = `trip-${index}`;
-                      return (
+            <Stack spacing={1.5}>
+              <Stack direction="row" alignItems="center" justifyContent="space-between">
+                <Box>
+                  <Typography variant="h6" fontWeight={800}>
+                    行程列表
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    复制、返程和排序都会自动保存。
+                  </Typography>
+                </Box>
+                <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
+                  添加行程
+                </Button>
+              </Stack>
+
+              {trips.length === 0 ? (
+                <Alert severity="info">暂无行程，添加第一段行程后即可上传车船费发票。</Alert>
+              ) : (
+                <Box sx={repeatedCardGridSx}>
+                  {trips.map((trip, index) => {
+                    const tripInvoices = trip.id ? invoicesForTrip(trip.id) : [];
+                    const uploadKey = `trip-${index}`;
+                    const confirmedAmount = tripInvoices
+                      .filter((invoice) => invoice.amount_confirmed)
+                      .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+                    const uploading = uploadState?.key === uploadKey;
+                    const uploadDisabled = readonly || !trip.id || saveState === "saving";
+                    const summaryText = `${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
+                      trip.depart_place || "出发地"
+                    } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
+                      trip.arrive_place || "到达地"
+                    } · ${trip.transport || "交通工具"} · 发票 ${tripInvoices.length} 张 ${formatAmount(confirmedAmount)}`;
+
+                    return (
+                      <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
                         <Card
-                          key={trip.id || `new-${index}`}
                           draggable={!readonly}
                           onDragStart={() => setDragIndex(index)}
                           onDragOver={(event) => event.preventDefault()}
                           onDrop={() => {
-                            if (dragIndex !== null) moveTrip(dragIndex, index);
+                            if (dragIndex !== null) {
+                              setTrips((prev) => moveTrip(prev, dragIndex, index));
+                            }
                             setDragIndex(null);
                           }}
+                          sx={{
+                            ...workCardSx,
+                            border: dragIndex === index ? 2 : 1,
+                            borderColor: dragIndex === index ? "primary.main" : "divider",
+                          }}
                         >
-                          <CardContent>
-                            <Stack spacing={2}>
-                              <Stack direction="row" alignItems="center" justifyContent="space-between">
-                                <Stack direction="row" alignItems="center" spacing={1}>
-                                  <DragIndicatorIcon color="disabled" />
-                                  <Typography fontWeight={700}>行程 {index + 1}</Typography>
-                                </Stack>
-                                <Stack direction="row" spacing={0.5}>
-                                  <Tooltip title="上移">
-                                    <span>
-                                      <IconButton size="small" disabled={readonly || index === 0} onClick={() => moveTrip(index, index - 1)}>
-                                        <KeyboardArrowUpIcon />
-                                      </IconButton>
-                                    </span>
-                                  </Tooltip>
-                                  <Tooltip title="下移">
-                                    <span>
-                                      <IconButton
-                                        size="small"
-                                        disabled={readonly || index === trips.length - 1}
-                                        onClick={() => moveTrip(index, index + 1)}
-                                      >
-                                        <KeyboardArrowDownIcon />
-                                      </IconButton>
-                                    </span>
-                                  </Tooltip>
-                                  <Tooltip title="删除行程">
-                                    <span>
-                                      <IconButton size="small" color="error" disabled={readonly} onClick={() => removeTrip(index)}>
-                                        <DeleteIcon />
-                                      </IconButton>
-                                    </span>
-                                  </Tooltip>
-                                </Stack>
-                              </Stack>
+                      <CardContent sx={sectionCardContentSx}>
+                        <Stack spacing={2}>
+                          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
+                              <DragIndicatorIcon color="disabled" />
+                              <Box sx={{ minWidth: 0 }}>
+                                <Typography fontWeight={800}>行程 {index + 1}</Typography>
+                                <Typography variant="body2" color="text.secondary" noWrap>
+                                  {summaryText}
+                                </Typography>
+                              </Box>
+                            </Stack>
+                            <Stack direction="row" spacing={0.5}>
+                              <Tooltip title={trip.collapsed ? "展开" : "折叠"}>
+                                <IconButton size="small" onClick={() => toggleTripCollapsed(index)}>
+                                  {trip.collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="复制行程">
+                                <span>
+                                  <IconButton size="small" disabled={readonly} onClick={() => duplicateTrip(index)}>
+                                    <ContentCopyIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="交换出发/到达">
+                                <span>
+                                  <IconButton size="small" disabled={readonly} onClick={() => swapTrip(index)}>
+                                    <SwapHorizIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="生成返程">
+                                <span>
+                                  <IconButton size="small" disabled={readonly} onClick={() => returnTrip(index)}>
+                                    <KeyboardReturnIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="删除行程">
+                                <span>
+                                  <IconButton size="small" color="error" disabled={readonly} onClick={() => removeTrip(index)}>
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            </Stack>
+                          </Stack>
 
-                              <Grid container spacing={2}>
-                                <Grid item xs={6} sm={3}>
+                          {!trip.collapsed && (
+                            <>
+                              <Box sx={tripFieldGridSx}>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="出发月"
                                     type="number"
                                     value={trip.depart_month}
@@ -640,10 +822,11 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "depart_month", event.target.value)}
                                     inputProps={{ min: 1, max: 12 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="出发日"
                                     type="number"
                                     value={trip.depart_day}
@@ -651,10 +834,11 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "depart_day", event.target.value)}
                                     inputProps={{ min: 1, max: 31 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="出发时"
                                     type="number"
                                     value={trip.depart_hour}
@@ -662,19 +846,21 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "depart_hour", event.target.value)}
                                     inputProps={{ min: 0, max: 23 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="出发地"
                                     value={trip.depart_place}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "depart_place", event.target.value)}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="到达月"
                                     type="number"
                                     value={trip.arrive_month}
@@ -682,10 +868,11 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "arrive_month", event.target.value)}
                                     inputProps={{ min: 1, max: 12 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="到达日"
                                     type="number"
                                     value={trip.arrive_day}
@@ -693,10 +880,11 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "arrive_day", event.target.value)}
                                     inputProps={{ min: 1, max: 31 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="到达时"
                                     type="number"
                                     value={trip.arrive_hour}
@@ -704,210 +892,227 @@ export default function ReportEdit() {
                                     onChange={(event) => updateTrip(index, "arrive_hour", event.target.value)}
                                     inputProps={{ min: 0, max: 23 }}
                                   />
-                                </Grid>
-                                <Grid item xs={6} sm={3}>
+                                </Box>
+                                <Box>
                                   <TextField
                                     fullWidth
+                                    size="small"
                                     label="到达地"
                                     value={trip.arrive_place}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "arrive_place", event.target.value)}
                                   />
-                                </Grid>
-                                <Grid item xs={12}>
-                                  <TextField
-                                    fullWidth
-                                    label="交通工具"
-                                    value={trip.transport}
+                                </Box>
+                                <Box sx={{ gridColumn: "1 / -1" }}>
+                                  <Autocomplete
+                                    freeSolo
+                                    clearOnBlur={false}
+                                    options={TRANSPORT_OPTIONS}
+                                    value={trip.transport || ""}
+                                    inputValue={trip.transport || ""}
                                     disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "transport", event.target.value)}
+                                    onChange={(_event, value) => updateTrip(index, "transport", value || "")}
+                                    onInputChange={(_event, value) => updateTrip(index, "transport", value)}
+                                    renderInput={(params) => (
+                                      <TextField
+                                        {...params}
+                                        fullWidth
+                                        size="small"
+                                        label="交通工具"
+                                      />
+                                    )}
                                   />
-                                </Grid>
-                              </Grid>
-
-                              <Stack spacing={1}>
-                                <Stack direction="row" alignItems="center" justifyContent="space-between">
-                                  <Typography variant="subtitle2">车船费发票</Typography>
-                                  <Button
-                                    component="label"
-                                    size="small"
-                                    startIcon={<CloudUploadIcon />}
-                                    disabled={readonly || !trip.id || uploading === uploadKey}
-                                  >
-                                    上传
-                                    <input
-                                      hidden
-                                      type="file"
-                                      accept=".xml,.pdf,.ofd,image/*"
-                                      onChange={(event) =>
-                                        handleUpload({
-                                          event,
-                                          expenseCategory: "transport_fare",
-                                          tripId: trip.id,
-                                          key: uploadKey,
-                                        })
-                                      }
-                                    />
-                                  </Button>
-                                </Stack>
-                                {renderInvoiceList(tripInvoices)}
-                              </Stack>
-                            </Stack>
-                          </CardContent>
-                        </Card>
-                      );
-                    })
-                  )}
-                </Stack>
-
-                <Stack spacing={1.5}>
-                  <Typography variant="h6" fontWeight={700}>
-                    其他费用
-                  </Typography>
-                  {EXPENSE_CATEGORIES.map((category) => {
-                    const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
-                      category: category.value,
-                      remark: "",
-                    };
-                    const uploadKey = `expense-${category.value}`;
-                    return (
-                      <Card key={category.value}>
-                        <CardContent>
-                          <Stack spacing={2}>
-                            <Stack
-                              direction={{ xs: "column", sm: "row" }}
-                              alignItems={{ xs: "stretch", sm: "center" }}
-                              justifyContent="space-between"
-                              spacing={1.5}
-                            >
-                              <Box>
-                                <Typography fontWeight={700}>{category.label}</Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  {formatAmount(item.amount)} / {item.invoice_count || 0} 张
-                                </Typography>
+                                </Box>
                               </Box>
-                              <Button component="label" startIcon={<CloudUploadIcon />} disabled={readonly || uploading === uploadKey}>
-                                上传
-                                <input
-                                  hidden
-                                  type="file"
-                                  accept=".xml,.pdf,.ofd,image/*"
-                                  onChange={(event) =>
-                                    handleUpload({
-                                      event,
-                                      expenseCategory: category.value,
+                              <Stack spacing={1}>
+                                <Stack direction="row" justifyContent="space-between" alignItems="center">
+                                  <Typography variant="subtitle2" fontWeight={800}>
+                                    车船费发票
+                                  </Typography>
+                                  {!trip.id && (
+                                    <Typography variant="caption" color="text.secondary">
+                                      行程自动保存后可上传
+                                    </Typography>
+                                  )}
+                                </Stack>
+                                <InvoiceDropzone
+                                  disabled={uploadDisabled}
+                                  uploading={uploading}
+                                  onFiles={(files) =>
+                                    handleFilesUpload({
+                                      files,
+                                      expenseCategory: "transport_fare",
+                                      tripId: trip.id,
                                       key: uploadKey,
                                     })
                                   }
                                 />
-                              </Button>
+                                {renderInvoiceList(tripInvoices)}
+                              </Stack>
+                            </>
+                          )}
+                        </Stack>
+                      </CardContent>
+                        </Card>
+                      </Box>
+                    );
+                  })}
+                </Box>
+              )}
+            </Stack>
+
+            <Stack spacing={1.5}>
+              <Typography variant="h6" fontWeight={800}>
+                其他费用发票
+              </Typography>
+              <Box sx={repeatedCardGridSx}>
+                {EXPENSE_CATEGORIES.map((category) => {
+                  const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
+                    category: category.value,
+                    remark: "",
+                    amount: "0.00",
+                    invoice_count: 0,
+                  };
+                  const uploadKey = `expense-${category.value}`;
+                  const uploading = uploadState?.key === uploadKey;
+                  return (
+                    <Box key={category.value} sx={{ minWidth: 0 }}>
+                      <Card sx={workCardSx}>
+                        <CardContent sx={sectionCardContentSx}>
+                          <Stack spacing={1.5}>
+                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
+                              <Box>
+                                <Typography fontWeight={800}>{category.label}</Typography>
+                                <Typography variant="body2" color="text.secondary">
+                                  {formatAmount(item.amount)} / {item.invoice_count || 0} 张
+                                </Typography>
+                              </Box>
                             </Stack>
-                            <TextField
-                              fullWidth
-                              label="备注"
-                              value={item.remark || ""}
-                              disabled={readonly}
-                              onChange={(event) => updateExpenseItem(category.value, event.target.value)}
+                            <InvoiceDropzone
+                              disabled={readonly || saveState === "saving"}
+                              uploading={uploading}
+                              onFiles={(files) =>
+                                handleFilesUpload({
+                                  files,
+                                  expenseCategory: category.value,
+                                  key: uploadKey,
+                                })
+                              }
                             />
                             {renderInvoiceList(invoicesForCategory(category.value))}
                           </Stack>
                         </CardContent>
                       </Card>
+                    </Box>
+                  );
+                })}
+              </Box>
+            </Stack>
+          </Stack>
+        </Box>
+
+        <Box sx={{ minWidth: 0 }}>
+          <Card sx={{ ...workCardSx, position: { xl: "sticky" }, top: 24 }}>
+            <CardContent sx={sectionCardContentSx}>
+              <Stack spacing={2}>
+                <Box>
+                  <Typography variant="h6" fontWeight={800}>
+                    费用汇总
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    未确认金额不计入报销总额。
+                  </Typography>
+                </Box>
+
+                <Divider />
+
+                <Stack spacing={1.1}>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography color="text.secondary">补贴天数</Typography>
+                    <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography color="text.secondary">途中补贴</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography color="text.secondary">已确认发票</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.invoiceTotal)}</Typography>
+                  </Stack>
+                </Stack>
+
+                <Divider />
+
+                <Stack spacing={0.8}>
+                  {EXPENSE_CATEGORIES.map((category) => {
+                    const item = expenseItems.find((expenseItem) => expenseItem.category === category.value);
+                    return (
+                      <Stack key={category.value} direction="row" justifyContent="space-between" spacing={1}>
+                        <Typography variant="body2" color="text.secondary">
+                          {category.label}
+                        </Typography>
+                        <Typography variant="body2" fontWeight={700}>
+                          {formatAmount(item?.amount || 0)}
+                        </Typography>
+                      </Stack>
                     );
                   })}
                 </Stack>
-              </>
-            )}
-          </Stack>
-        </Grid>
-
-        <Grid item xs={12} md={4}>
-          <Card sx={{ position: { md: "sticky" }, top: 16 }}>
-            <CardContent>
-              <Stack spacing={2}>
-                <Typography variant="h6" fontWeight={700}>
-                  费用汇总
-                </Typography>
-                <Grid container spacing={1.5}>
-                  <Grid item xs={6}>
-                    <TextField
-                      fullWidth
-                      label="预借月"
-                      type="number"
-                      value={form.advance_date_month}
-                      disabled={readonly}
-                      onChange={handleChange("advance_date_month")}
-                      inputProps={{ min: 1, max: 12 }}
-                    />
-                  </Grid>
-                  <Grid item xs={6}>
-                    <TextField
-                      fullWidth
-                      label="预借日"
-                      type="number"
-                      value={form.advance_date_day}
-                      disabled={readonly}
-                      onChange={handleChange("advance_date_day")}
-                      inputProps={{ min: 1, max: 31 }}
-                    />
-                  </Grid>
-                  <Grid item xs={12}>
-                    <TextField
-                      fullWidth
-                      label="预借金额"
-                      type="number"
-                      value={form.advance_amount}
-                      disabled={readonly}
-                      onChange={handleChange("advance_amount")}
-                      InputProps={{
-                        startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                        inputProps: { min: 0, step: "0.01" },
-                      }}
-                    />
-                  </Grid>
-                </Grid>
 
                 <Divider />
 
                 <Stack spacing={1.25}>
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">补贴天数</Typography>
-                    <Typography fontWeight={700}>{summary.subsidyDays} 天</Typography>
+                  <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                    <Typography fontWeight={800}>报销总金额</Typography>
+                    <Typography variant="h5" fontWeight={900} color="primary.main">
+                      {formatAmount(summary.total)}
+                    </Typography>
                   </Stack>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">途中补贴</Typography>
-                    <Typography fontWeight={700}>{formatAmount(summary.subsidyTotal)}</Typography>
+                    <Typography color="text.secondary">补领不足</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.shortfall)}</Typography>
                   </Stack>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">已确认发票</Typography>
-                    <Typography fontWeight={700}>{formatAmount(summary.invoiceTotal)}</Typography>
-                  </Stack>
-                  <Divider />
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography fontWeight={700}>报销总金额</Typography>
-                    <Typography fontWeight={800}>{formatAmount(summary.total)}</Typography>
-                  </Stack>
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">应补</Typography>
-                    <Typography fontWeight={700}>{formatAmount(summary.shortfall)}</Typography>
-                  </Stack>
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">应退</Typography>
-                    <Typography fontWeight={700}>{formatAmount(summary.surplus)}</Typography>
+                    <Typography color="text.secondary">归还多余</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.surplus)}</Typography>
                   </Stack>
                 </Stack>
               </Stack>
             </CardContent>
           </Card>
-        </Grid>
-      </Grid>
+        </Box>
+      </Box>
 
       <InvoiceViewer
         invoice={selectedInvoice}
         open={Boolean(selectedInvoice)}
-        onClose={() => setSelectedInvoice(null)}
-        onUpdated={() => loadForEdit({ quiet: true })}
+        readonly={readonly}
+        onClose={() => {
+          setSelectedInvoice(null);
+          setInvoiceQueue([]);
+        }}
+        onUpdated={handleInvoiceUpdated}
       />
+
+      <Dialog open={Boolean(pendingLeave)} onClose={() => !leaveBusy && resolveLeave(false)}>
+        <DialogTitle>空草稿尚未填写</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            当前草稿还没有出差事由、行程或发票。可以删除这个空草稿后离开，也可以保留它稍后继续填写。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => resolveLeave(false)} disabled={leaveBusy}>
+            取消
+          </Button>
+          <Button onClick={() => resolveLeave(true)} disabled={leaveBusy}>
+            保留草稿并离开
+          </Button>
+          <Button onClick={handleDeleteEmptyDraftAndLeave} color="error" disabled={leaveBusy}>
+            {leaveBusy ? "删除中..." : "删除空草稿并离开"}
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Snackbar
         open={Boolean(toast)}
