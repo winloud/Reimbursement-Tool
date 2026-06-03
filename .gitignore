@@ -38,5 +38,7 @@ outputs/
 _test_*.pdf
 
 # Large CAD source templates
-templates/
-*.dwg
+templates/*.dwg
+
+# 发票测试样本
+Test cases for invoices/
