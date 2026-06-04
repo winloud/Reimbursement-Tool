@@ -1,6 +1,7 @@
 # 出差旅费报销管理工具 — 开发规划文档
 
 > 本文档用于指导 Claude Code 完成项目的完整开发。请按照文档中的阶段顺序逐步实现，**每个阶段完成后必须停止，输出验收结果，等待用户确认后再进入下一阶段**。
+> 从 2026-06-04 起，本文件是唯一维护的开发文档；根目录临时开发计划和工作记录已合并进本文档，不再单独维护。
 
 ---
 
@@ -38,11 +39,10 @@
 - **数据库**：SQLite + SQLAlchemy 2.0
 - **数据校验**：Pydantic v2
 - **金额计算**：Python `decimal.Decimal`（禁止使用 float）
-- **PDF 处理**：pypdf（读取模板域）+ reportlab（填充内容）
+- **PDF 处理**：pypdf（读取模板域）+ reportlab（填充内容）+ PyMuPDF（发票 PDF 文本提取、第一页内存渲染预览图）
 - **电子发票解析**：
-  - XML 发票：Python 标准库 `xml.etree.ElementTree`
-  - PDF 发票：pypdf 文本提取
-  - OFD 发票：`ofd-python` 或解压 ZIP 后解析 XML
+  - PDF 发票：PyMuPDF 读取并内存渲染第一页图片，优先使用 OpenCV WeChatQRCode 识别二维码，失败后用 PyMuPDF 文本提取 + 正则兜底
+  - XML / OFD 发票不再支持，上传时直接提示不支持
 
 ### 打包
 - **EXE 封装**：PyInstaller 单目录模式（`--onedir`），启动快，不触发杀毒误报
@@ -201,8 +201,8 @@ reimbursement-tool/
 | report_id | INTEGER FK | 关联报销单 |
 | trip_id | INTEGER FK | 关联行程（车船费专用，其他类别为 NULL） |
 | expense_category | TEXT | 费用类别（与 expense_items.category 枚举一致） |
-| file_path | TEXT | 文件存储相对路径（`uploads/{report_id}/invoice_{uuid}.{ext}`） |
-| file_type | TEXT | 文件类型：`xml` / `pdf` / `ofd` / `image` |
+| file_path | TEXT | 文件存储相对路径（`uploads/{report_id}/{expense_category}_invoice_{uuid}.{ext}`） |
+| file_type | TEXT | 文件类型：`pdf` / `image` |
 | invoice_no | TEXT | 发票号码（解析获取，可为空） |
 | invoice_date | DATE | 发票日期（解析获取，可为空） |
 | amount | NUMERIC(18,2) | 金额（解析自动填入，用户可修改） |
@@ -262,6 +262,7 @@ reimbursement-tool/
 |------|------|------|
 | POST | `/api/invoices/upload` | 上传发票文件，返回解析结果 |
 | GET | `/api/invoices/{id}/file` | 获取发票原文件（用于预览） |
+| GET | `/api/invoices/{id}/parse` | 只读重新解析发票文件，返回解析字段、预览图和解析诊断信息 |
 | PUT | `/api/invoices/{id}` | 更新发票金额（用户确认后） |
 | DELETE | `/api/invoices/{id}` | 删除发票（软删除记录，物理文件暂保留） |
 
@@ -364,16 +365,18 @@ draft ⇄ printed ──→ reimbursed
 - 车船费在行程卡片内上传；其他费用在对应费用卡片内上传
 - 支持按钮上传、multiple 批量上传、拖放上传
 - 上传完成后打开 InvoiceViewer 让用户确认解析金额；批量上传按队列逐张确认；上传接口返回的发票必须保持 `amount_confirmed = false`，不能因自动解析出金额而直接标记已确认
+- 上传过程本身不渲染 PDF iframe 预览；上传完成进入金额确认弹窗后，应默认展示后端生成的图片预览
 - 发票列表展示金额、确认状态、文件类型、发票号、查看、删除
+- 上传格式以 PDF 为主，图片保留手动录入金额；XML / OFD 不再支持
 - 不支持改类别/改行程；归类错误需删除后重新上传
 
 
 ### 7.4 发票查看弹窗（InvoiceViewer）
 - 原型风格弹窗，左侧展示关键字段和金额确认，右侧展示 PDF/image 预览
-- XML/OFD：格式化展示关键字段（发票号、日期、金额、购买方、销售方），并提供打开原文件按钮
-- PDF：内嵌预览
+- 提供“解析依据”按钮，弹窗展示本次解析最终采用方式、是否识别成功、最终解析字段，以及二维码/文本正则等候选方式的尝试结果
+- PDF：优先使用后端 PyMuPDF 已渲染的图片预览或只读重解析接口生成图片预览，不再在弹窗内嵌 PDF iframe
 - 图片：图片查看器
-- 未识别 PDF/OFD/XML 和图片发票都允许手动输入金额并确认
+- 未识别 PDF 和图片发票都允许手动输入金额并确认
 - 确认后刷新报销单详情和右侧汇总
 
 > 注：OCR 图片识别为第二代功能，第一代图片发票金额由用户手动输入。
@@ -429,25 +432,24 @@ draft ⇄ printed ──→ reimbursed
 
 ## 九、电子发票解析逻辑
 
-### 9.1 XML 发票（国家税务局标准格式）
-```python
-invoice_no    = root.find('.//FPH').text    # 发票号码
-invoice_date  = root.find('.//KPRQ').text   # 开票日期
-total_amount  = root.find('.//JSHJ').text   # 价税合计
-seller_name   = root.find('.//XFMC').text   # 销售方名称
-buyer_name    = root.find('.//GFMC').text   # 购买方名称
-```
+### 9.1 PDF 数电发票
+- 使用 PyMuPDF 打开 PDF，只处理第一页：同时提取文本，并将页面在内存中渲染为图片；渲染图片用于二维码识别和前端预览，不写入硬盘
+- 优先使用 `opencv-contrib-python-headless` 提供的 `cv2.wechat_qrcode_WeChatQRCode` 识别二维码；模型文件放在 `backend/models/wechat_qrcode/`，包括 `detect.prototxt`、`detect.caffemodel`、`sr.prototxt`、`sr.caffemodel`
+- Windows 路径包含中文时，OpenCV WeChatQRCode 对绝对模型路径不稳定；后端应优先传入相对模型路径，确保模型可初始化
+- 如果 WeChatQRCode 不可用、模型文件缺失或识别失败，再尝试 OpenCV 标准 `QRCodeDetector`，仍失败则进入文本兜底
+- 二维码内容可解析发票号码、开票日期、价税合计金额时，优先采用二维码结果
+- 无二维码或二维码无法识别时，使用 PyMuPDF 提取文本并通过正则解析：
+  - 发票号码：`发票号码` / `发票号` / `号码`
+  - 开票日期：`开票日期`
+  - 金额：优先提取 `价税合计（小写）` 或 `税价合计（小写）`
+- 同时提取 `价税合计（大写）`，将中文大写金额转为 Decimal，与小写金额交叉验证；不一致时保留校验状态，仍允许用户在确认弹窗中修正金额
+- FastAPI 上传成功后返回解析字段和后端刚渲染出的发票预览图 data URL；React 使用 MUI 标准组件展示该图片。历史发票或无预览图时继续使用原文件预览接口兜底
+- 上传响应必须同时返回解析诊断信息：最终采用方式、识别成功状态、最终字段结果、各解析方式尝试结果，用于前端“解析依据”弹窗核对；历史发票缺少诊断信息时，前端通过只读重解析接口即时获取
 
-### 9.2 PDF 电子发票
-```python
-import re
-amount_pattern = r'价税合计[（\(]小写[）\)]\s*[¥￥]?\s*([\d,]+\.?\d*)'
-```
+### 9.2 不再支持 XML / OFD
+XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑。
 
-### 9.3 OFD 发票
-OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
-
-### 9.4 图片发票
+### 9.3 图片发票
 第一代：用户手动输入金额，`amount_confirmed = false` 直到用户点击确认。
 第二代：接入 OCR API 自动识别。
 
@@ -471,7 +473,7 @@ OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
 |------|--------|
 | 金额转中文大写 | 整数、小数、零元整、万元以上、亿元以上 |
 | 补贴天数计算 | 同月、跨月、跨年、单天 |
-| 发票解析 | XML 标准格式、PDF 文本提取、OFD 解压解析 |
+| 发票解析 | PDF 二维码优先、PDF 文本提取、价税合计大小写金额交叉验证 |
 | 状态机流转 | 合法转换全覆盖、非法转换应抛出异常 |
 | 金额计算 | Decimal 精度验证，禁止 float 误差 |
 
@@ -489,6 +491,26 @@ OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
 > 7. 后端保持 Router → Service → Database 分层，禁止新增 Repository 层
 > 8. 前端必须使用 MUI v5，禁止替换为 Ant Design 或其他 UI 组件库
 > 9. 前端所有页面必须做宽屏适配：主内容限宽居中、保留外侧 gutter，卡片和表单控件不得随窗口无限拉伸；宽屏下必须检查卡片边框、内边距、列间距和标题/控件对齐是否统一
+
+---
+
+### 当前进度快照（2026-06-04）
+
+| 阶段 | 状态 | 说明 |
+|------|------|------|
+| Phase 1 | 已完成 | 前后端基础、数据库、健康检查已具备 |
+| Phase 2 | 已完成 | 报销单 CRUD、状态机、列表基础能力已具备 |
+| Phase 3 | 已验收通过 | 报销单录入界面已通过用户验收；行程、费用、发票上传、金额确认、实时汇总、重复发票拦截、PDF 图片预览和解析依据已完成 |
+| Phase 4 | 待开始 | PDF 模板填充、中文大写金额、生成下载接口待开发 |
+| Phase 5 | 待开始 | 统计看板接口和页面待开发 |
+| Phase 6 | 待开始 | 前端静态集成、自动打开浏览器、PyInstaller 打包和端到端验证待开发 |
+
+Phase 3 当前验证基线：
+- 后端：`python -m pytest`，31 passed
+- 前端构建：`npm run build`，通过；Vite chunk size 警告不影响功能
+- 前端工具函数：`node --test frontend/src/pages/reportEditUtils.test.js`，4 passed
+- WeChatQRCode：四个模型文件放在 `backend/models/wechat_qrcode/` 后可初始化；PDF 发票优先二维码识别，失败后文本正则兜底
+- 发票预览：金额确认弹窗和查看发票弹窗都默认展示图片预览；上传过程本身不做 PDF iframe 预览
 
 ---
 
@@ -517,9 +539,9 @@ OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
 ---
 
 ### Phase 3：行程录入 + 发票上传（前端重做）
-**验收标准：进入新增页即创建草稿，单页完成基础信息、行程、发票上传、金额确认和实时汇总；XML/PDF/OFD 可自动识别金额，图片发票可手动输入金额**
+**验收标准：进入新增页即创建草稿，单页完成基础信息、行程、PDF 发票上传、金额确认和实时汇总；PDF 优先通过二维码和文本提取识别金额，图片发票可手动输入金额**
 
-> Phase 3 已有后端基础能力，但前端未还原原型。重做时优先完成前端工作台，再补后端文件名小改和样本金额回归。
+> Phase 3 已有后端基础能力，但前端未还原原型。重做时优先完成前端工作台，再补后端文件名小改和 PDF 发票识别增强。
 
 **Phase 3A：前端工作台（当前优先）**
 - [ ] App 壳层从顶部 AppBar 改为 Sidebar + 主内容区，保留 `/`、`/reports`、`/reports/new`、`/reports/:id/edit` 路由
@@ -540,8 +562,10 @@ OFD 是 ZIP 压缩包，解压后解析内部 XML 获取字段。
 **Phase 3B：后端和回归补齐**
 - [ ] 保留现有发票上传接口和报销单更新接口，不新增改类别 API
 - [ ] `backend/services/invoice_service.py` 保存文件名改为 `{expense_category}_invoice_{uuid}.{ext}`
-- [ ] `Test cases for invoices/` 样本先人工确认金额，再写入 `tests/fixtures/invoice_expected_amounts.json`
-- [ ] 新增或扩展 pytest，用 JSON 期望清单回归 XML/PDF/OFD 样本解析金额
+- [ ] 放弃 XML / OFD 发票上传和解析支持，上传时返回清晰提示
+- [ ] PDF 识别使用 PyMuPDF 内存渲染第一页图片，优先通过 OpenCV WeChatQRCode 识别二维码，并将同一张渲染图片随上传响应返回给前端预览
+- [ ] 二维码不可用时使用 PyMuPDF 文本提取 + 正则提取发票号、开票日期、价税合计小写金额
+- [ ] PDF 识别提取价税合计大写金额，与小写金额做交叉验证
 
 ---
 

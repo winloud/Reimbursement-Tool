@@ -77,6 +77,11 @@ export const updateInvoice = async (id, payload) => {
   return response.data;
 };
 
+export const parseInvoice = async (id) => {
+  const response = await apiClient.get(`/api/invoices/${id}/parse`);
+  return response.data;
+};
+
 export const deleteInvoice = async (id) => {
   const response = await apiClient.delete(`/api/invoices/${id}`);
   return response.data;

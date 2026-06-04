@@ -7,8 +7,8 @@ from sqlalchemy.orm import Session
 from backend.database.connection import PROJECT_ROOT
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse
-from backend.schemas.invoice import InvoiceRead, InvoiceUpdate, InvoiceUploadResult
-from backend.services.invoice_service import get_invoice_or_404, soft_delete_invoice, update_invoice, upload_invoice
+from backend.schemas.invoice import InvoiceParsedData, InvoiceRead, InvoiceUpdate, InvoiceUploadResult
+from backend.services.invoice_service import get_invoice_or_404, parse_existing_invoice, soft_delete_invoice, update_invoice, upload_invoice
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
@@ -33,6 +33,14 @@ def get_invoice_file(
     invoice = get_invoice_or_404(db, invoice_id)
     file_path = PROJECT_ROOT / "backend" / invoice.file_path
     return FileResponse(file_path)
+
+
+@router.get("/{invoice_id}/parse", response_model=ApiResponse[InvoiceParsedData])
+def get_invoice_parse_result(
+    invoice_id: Annotated[int, Path(ge=1)],
+    db: Session = Depends(get_db),
+) -> ApiResponse[InvoiceParsedData]:
+    return ApiResponse(data=parse_existing_invoice(db, invoice_id), message="发票解析完成")
 
 
 @router.put("/{invoice_id}", response_model=ApiResponse[InvoiceRead])

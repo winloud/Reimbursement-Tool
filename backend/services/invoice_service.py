@@ -20,15 +20,11 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
 def detect_file_type(filename: str) -> str:
     ext = Path(filename).suffix.lower()
-    if ext == ".xml":
-        return "xml"
     if ext == ".pdf":
         return "pdf"
-    if ext == ".ofd":
-        return "ofd"
     if ext in IMAGE_EXTENSIONS:
         return "image"
-    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的发票文件类型")
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的发票文件类型，请上传 PDF 发票或图片")
 
 
 def validate_invoice_target(report, expense_category: str, trip_id: int | None) -> None:
@@ -88,11 +84,11 @@ def ensure_no_duplicate_invoice_no(report, invoice_no: str | None) -> None:
             )
 
 
-def save_upload_file(upload_file: UploadFile, report_id: int, file_type: str) -> str:
+def save_upload_file(upload_file: UploadFile, report_id: int, expense_category: str, file_type: str) -> str:
     ext = Path(upload_file.filename or "").suffix.lower() or f".{file_type}"
     upload_dir = UPLOAD_ROOT / str(report_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    relative_path = Path("uploads") / str(report_id) / f"invoice_{uuid4().hex}{ext}"
+    relative_path = Path("uploads") / str(report_id) / f"{expense_category}_invoice_{uuid4().hex}{ext}"
     absolute_path = PROJECT_ROOT / "backend" / relative_path
     with absolute_path.open("wb") as target:
         shutil.copyfileobj(upload_file.file, target)
@@ -110,11 +106,11 @@ def upload_invoice(
     ensure_report_writable(report)
     validate_invoice_target(report, expense_category, trip_id)
 
+    file_type = detect_file_type(upload_file.filename or "")
     upload_hash = calculate_upload_hash(upload_file)
     ensure_no_duplicate_invoice_file(report, upload_hash)
 
-    file_type = detect_file_type(upload_file.filename or "")
-    relative_path = save_upload_file(upload_file, report_id, file_type)
+    relative_path = save_upload_file(upload_file, report_id, expense_category, file_type)
     absolute_path = PROJECT_ROOT / "backend" / relative_path
     try:
         parsed = parse_invoice_file(absolute_path, file_type)
@@ -162,6 +158,15 @@ def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invo
     db.commit()
     db.refresh(invoice)
     return invoice
+
+
+def parse_existing_invoice(db: Session, invoice_id: int) -> InvoiceParsedData:
+    invoice = get_invoice_or_404(db, invoice_id)
+    absolute_path = PROJECT_ROOT / "backend" / invoice.file_path
+    try:
+        return parse_invoice_file(absolute_path, invoice.file_type)
+    except Exception as exc:
+        return InvoiceParsedData(raw={"source": invoice.file_type, "parse_error": str(exc)})
 
 
 def soft_delete_invoice(db: Session, invoice_id: int) -> None:

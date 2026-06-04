@@ -163,7 +163,7 @@ function InvoiceDropzone({ disabled, uploading, onFiles, hint = "拖放发票到
             hidden
             multiple
             type="file"
-            accept=".xml,.pdf,.ofd,image/*"
+            accept=".pdf,image/*"
             onChange={(event) => {
               onFiles(event.target.files);
               event.target.value = "";

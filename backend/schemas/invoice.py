@@ -2,9 +2,9 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-InvoiceFileType = Literal["xml", "pdf", "ofd", "image"]
+InvoiceFileType = Literal["pdf", "image"]
 
 
 class InvoiceParsedData(BaseModel):
@@ -13,7 +13,15 @@ class InvoiceParsedData(BaseModel):
     amount: Decimal = Field(default=Decimal("0.00"), ge=0)
     seller_name: str | None = None
     buyer_name: str | None = None
+    preview_image: str | None = None
     raw: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("amount", mode="before")
+    @classmethod
+    def normalize_amount(cls, value: Any) -> Decimal:
+        if value is None or value == "":
+            return Decimal("0.00")
+        return Decimal(str(value)).quantize(Decimal("0.01"))
 
 
 class InvoiceUploadResult(BaseModel):

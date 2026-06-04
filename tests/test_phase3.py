@@ -2,7 +2,6 @@ from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
-from zipfile import ZipFile
 
 import pytest
 from fastapi import HTTPException, UploadFile
@@ -12,73 +11,113 @@ from backend.models.invoice import Invoice
 from backend.models.trip import Trip
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.schemas.report import ReportCreate, TripWrite
-from backend.services.invoice_parser import parse_ofd_invoice, parse_pdf_invoice, parse_xml_invoice
-from backend.services.invoice_service import update_invoice, upload_invoice
+from backend.services.invoice_parser import parse_pdf_invoice, parse_qr_payload
+from backend.services.invoice_service import detect_file_type, save_upload_file, update_invoice, upload_invoice
 from backend.services.report_service import calculate_subsidy_days, create_report
 
 
-def test_parse_xml_invoice_reads_amount_and_metadata(tmp_path: Path):
-    xml_path = tmp_path / "invoice.xml"
-    xml_path.write_text(
-        """
-        <Invoice>
-          <FPH>12345678</FPH>
-          <KPRQ>2026-05-30</KPRQ>
-          <JSHJ>388.80</JSHJ>
-          <XFMC>供应商</XFMC>
-          <GFMC>购买方</GFMC>
-        </Invoice>
-        """,
-        encoding="utf-8",
+def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "发票号码: 987654321\n开票日期: 2026年5月31日\n价税合计（小写） ￥266.50",
+            "preview_image": "data:image/png;base64,abc",
+            "image_bgr": object(),
+            "render_error": None,
+        },
     )
-
-    parsed = parse_xml_invoice(xml_path)
-
-    assert parsed.invoice_no == "12345678"
-    assert parsed.invoice_date == date(2026, 5, 30)
-    assert parsed.amount == Decimal("388.80")
-    assert parsed.seller_name == "供应商"
-    assert parsed.buyer_name == "购买方"
-
-
-def test_parse_pdf_invoice_reads_text_amount_and_number(monkeypatch, tmp_path: Path):
-    class FakePage:
-        def extract_text(self):
-            return "发票号码: 987654321\n开票日期: 2026年5月31日\n价税合计（小写） ￥266.50"
-
-    class FakeReader:
-        def __init__(self, _path):
-            self.pages = [FakePage()]
-
-    monkeypatch.setattr("backend.services.invoice_parser.PdfReader", FakeReader)
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
 
     parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
 
     assert parsed.invoice_no == "987654321"
     assert parsed.invoice_date == date(2026, 5, 31)
     assert parsed.amount == Decimal("266.50")
+    assert parsed.preview_image == "data:image/png;base64,abc"
+    assert parsed.raw["parse_method"] == "text_regex"
+    assert parsed.raw["parse_success"] is True
+    assert parsed.raw["amount_source"] == "tax_total_small"
 
 
-def test_parse_ofd_invoice_finds_embedded_xml(tmp_path: Path):
-    ofd_path = tmp_path / "invoice.ofd"
-    with ZipFile(ofd_path, "w") as archive:
-        archive.writestr(
-            "Doc_0/Pages/invoice.xml",
-            """
-            <Invoice>
-              <InvoiceNo>OFD20260531</InvoiceNo>
-              <IssueDate>20260531</IssueDate>
-              <TotalAmount>99.01</TotalAmount>
-            </Invoice>
-            """,
-        )
+def test_parse_pdf_invoice_cross_validates_uppercase_amount(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "发票号码：1234567890",
+                    "开票日期：2026-06-03",
+                    "价税合计（大写）人民币贰佰陆拾陆元伍角",
+                    "价税合计（小写）¥266.50",
+                ]
+            ),
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
 
-    parsed = parse_ofd_invoice(ofd_path)
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
 
-    assert parsed.invoice_no == "OFD20260531"
-    assert parsed.invoice_date == date(2026, 5, 31)
-    assert parsed.amount == Decimal("99.01")
-    assert parsed.raw["source"] == "ofd"
+    assert parsed.amount == Decimal("266.50")
+    assert parsed.raw["amount_uppercase"] == "266.50"
+    assert parsed.raw["amount_validation"] == "matched"
+
+
+def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "发票号码：11111111\n开票日期：2026年5月31日\n价税合计（小写）¥1.00",
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image: ["发票号码：9876543210，开票日期：20260603，价税合计（小写）¥388.80"],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_no == "9876543210"
+    assert parsed.invoice_date == date(2026, 6, 3)
+    assert parsed.amount == Decimal("388.80")
+    assert parsed.raw["parse_method"] == "qrcode"
+    assert parsed.raw["qr_payloads"]
+
+
+def test_parse_qr_payload_supports_comma_separated_invoice_tokens():
+    parsed = parse_qr_payload("01,10,044001800111,28104068,181.52,20260603,checksum")
+
+    assert parsed["invoice_no"] == "28104068"
+    assert parsed["invoice_date"] == date(2026, 6, 3)
+    assert parsed["amount"] == Decimal("181.52")
+
+
+def test_invoice_upload_rejects_xml_and_ofd():
+    with pytest.raises(HTTPException) as xml_error:
+        detect_file_type("invoice.xml")
+    with pytest.raises(HTTPException) as ofd_error:
+        detect_file_type("invoice.ofd")
+
+    assert xml_error.value.status_code == 400
+    assert ofd_error.value.status_code == 400
+    assert "PDF" in xml_error.value.detail
+
+
+def test_save_upload_file_uses_expense_category_prefix(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("backend.services.invoice_service.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "backend" / "uploads")
+    upload = UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4"))
+
+    relative_path = save_upload_file(upload, report_id=9, expense_category="luggage", file_type="pdf")
+
+    assert relative_path.startswith("uploads/9/luggage_invoice_")
+    assert relative_path.endswith(".pdf")
+    assert (tmp_path / "backend" / relative_path).exists()
 
 
 def test_calculate_subsidy_days_across_month():
@@ -125,7 +164,7 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
 
     monkeypatch.setattr(
         "backend.services.invoice_service.save_upload_file",
-        lambda _upload_file, report_id, _file_type: f"uploads/{report_id}/invoice_test.pdf",
+        lambda _upload_file, report_id, _expense_category, _file_type: f"uploads/{report_id}/invoice_test.pdf",
     )
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_file",
@@ -151,7 +190,7 @@ def test_confirming_invoice_updates_report_totals(monkeypatch, db):
 
     monkeypatch.setattr(
         "backend.services.invoice_service.save_upload_file",
-        lambda _upload_file, report_id, _file_type: f"uploads/{report_id}/invoice_test.pdf",
+        lambda _upload_file, report_id, _expense_category, _file_type: f"uploads/{report_id}/invoice_test.pdf",
     )
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_file",
@@ -204,6 +243,15 @@ def test_upload_invoice_rejects_duplicate_file_in_same_report(monkeypatch, tmp_p
 
     assert exc_info.value.status_code == 409
     assert "该发票文件已在本报销单中上传" in exc_info.value.detail
+    with pytest.raises(HTTPException) as unsupported_error:
+        upload_invoice(
+            db,
+            report_id=report.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="invoice.xml", file=BytesIO(b"same invoice bytes")),
+        )
+    assert unsupported_error.value.status_code == 400
+
     active_invoices = db.scalars(
         select(Invoice).where(Invoice.report_id == report.id, Invoice.deleted_at.is_(None)),
     ).all()
