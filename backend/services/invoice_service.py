@@ -1,6 +1,7 @@
 import shutil
 from datetime import datetime
 from decimal import Decimal
+from hashlib import sha1
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -12,7 +13,15 @@ from backend.database.connection import PROJECT_ROOT
 from backend.models.invoice import Invoice
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.services.invoice_parser import parse_invoice_file
-from backend.services.report_service import EXPENSE_CATEGORIES, ensure_report_writable, get_report_or_404, recalculate_report_totals
+from backend.services.report_service import (
+    EXPENSE_CATEGORIES,
+    CUSTOM_CATEGORY_PREFIX,
+    ensure_report_writable,
+    get_report_or_404,
+    is_custom_category,
+    recalculate_report_totals,
+    validate_expense_category,
+)
 
 UPLOAD_ROOT = PROJECT_ROOT / "backend" / "uploads"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
@@ -27,16 +36,23 @@ def detect_file_type(filename: str) -> str:
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的发票文件类型，请上传 PDF 发票或图片")
 
 
-def validate_invoice_target(report, expense_category: str, trip_id: int | None) -> None:
-    if expense_category not in EXPENSE_CATEGORIES:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效费用类别")
+def validate_invoice_target(report, expense_category: str, trip_id: int | None) -> str:
+    expense_category = validate_expense_category(expense_category)
     if expense_category == "transport_fare":
         if trip_id is None:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="车船费发票必须关联行程")
         if all(trip.id != trip_id for trip in report.trips):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="行程不存在")
-    elif trip_id is not None:
+        return expense_category
+    if trip_id is not None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="非车船费发票不能关联行程")
+    if is_custom_category(expense_category):
+        if all(item.category != expense_category for item in report.expense_items):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义费用类别不存在，请先在当前报销单中添加")
+        return expense_category
+    if expense_category not in EXPENSE_CATEGORIES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效费用类别")
+    return expense_category
 
 
 def calculate_file_hash(file_path: Path) -> str | None:
@@ -84,11 +100,19 @@ def ensure_no_duplicate_invoice_no(report, invoice_no: str | None) -> None:
             )
 
 
+def safe_category_filename_prefix(expense_category: str) -> str:
+    if expense_category.startswith(CUSTOM_CATEGORY_PREFIX):
+        digest = sha1(expense_category.encode("utf-8")).hexdigest()[:8]
+        return f"custom_{digest}"
+    return expense_category
+
+
 def save_upload_file(upload_file: UploadFile, report_id: int, expense_category: str, file_type: str) -> str:
     ext = Path(upload_file.filename or "").suffix.lower() or f".{file_type}"
     upload_dir = UPLOAD_ROOT / str(report_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
-    relative_path = Path("uploads") / str(report_id) / f"{expense_category}_invoice_{uuid4().hex}{ext}"
+    filename_prefix = safe_category_filename_prefix(expense_category)
+    relative_path = Path("uploads") / str(report_id) / f"{filename_prefix}_invoice_{uuid4().hex}{ext}"
     absolute_path = PROJECT_ROOT / "backend" / relative_path
     with absolute_path.open("wb") as target:
         shutil.copyfileobj(upload_file.file, target)
@@ -104,7 +128,7 @@ def upload_invoice(
 ) -> tuple[Invoice, InvoiceParsedData]:
     report = get_report_or_404(db, report_id)
     ensure_report_writable(report)
-    validate_invoice_target(report, expense_category, trip_id)
+    expense_category = validate_invoice_target(report, expense_category, trip_id)
 
     file_type = detect_file_type(upload_file.filename or "")
     upload_hash = calculate_upload_hash(upload_file)

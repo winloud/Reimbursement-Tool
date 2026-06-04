@@ -52,16 +52,18 @@ import {
   uploadInvoice,
 } from "../api/client";
 import {
-  EXPENSE_CATEGORIES,
   STATUS_ACTIONS,
   STATUS_META,
+  buildCustomExpenseCategory,
   buildDraftPayload,
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
   emptyForm,
   formatAmount,
+  getExpenseCategoryOptions,
   isEmptyDraft,
+  isCustomExpenseCategory,
   makeBlankTrip,
   makeReturnTripAfter,
   moveTrip,
@@ -70,6 +72,7 @@ import {
   swapTripEndpoints,
   toMoney,
   todayStr,
+  validateCustomExpenseName,
 } from "./reportEditUtils";
 
 const SAVE_LABELS = {
@@ -198,6 +201,9 @@ export default function ReportEdit() {
   const [toast, setToast] = useState("");
   const [pendingLeave, setPendingLeave] = useState(null);
   const [leaveBusy, setLeaveBusy] = useState(false);
+  const [customDialogOpen, setCustomDialogOpen] = useState(false);
+  const [customName, setCustomName] = useState("");
+  const [customNameError, setCustomNameError] = useState("");
 
   const creatingRef = useRef(false);
   const loadedRef = useRef(false);
@@ -310,6 +316,7 @@ export default function ReportEdit() {
       }),
     [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
   );
+  const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
 
   const emptyDraft = useMemo(
     () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices }),
@@ -463,6 +470,43 @@ export default function ReportEdit() {
       setError(err.response?.data?.message || err.message || "删除发票失败");
       setSaveState("error");
     }
+  };
+
+  const handleOpenCustomDialog = () => {
+    setCustomName("");
+    setCustomNameError("");
+    setCustomDialogOpen(true);
+  };
+
+  const handleAddCustomCategory = () => {
+    const validationError = validateCustomExpenseName(customName, expenseItems);
+    if (validationError) {
+      setCustomNameError(validationError);
+      return;
+    }
+    const category = buildCustomExpenseCategory(customName);
+    setExpenseItems((prev) => [
+      ...prev,
+      {
+        id: null,
+        category,
+        remark: "",
+        amount: "0.00",
+        invoice_count: 0,
+      },
+    ]);
+    setCustomDialogOpen(false);
+    setToast("自定义费用类别已添加");
+  };
+
+  const handleDeleteCustomCategory = (category) => {
+    const categoryInvoices = invoicesForCategory(category);
+    if (categoryInvoices.length > 0) {
+      setError("该自定义费用类别已有发票，请先删除发票后再删除类别");
+      return;
+    }
+    setExpenseItems((prev) => prev.filter((item) => item.category !== category));
+    setToast("自定义费用类别已删除");
   };
 
   const handleInvoiceUpdated = async () => {
@@ -962,11 +1006,22 @@ export default function ReportEdit() {
             </Stack>
 
             <Stack spacing={1.5}>
-              <Typography variant="h6" fontWeight={800}>
-                其他费用发票
-              </Typography>
+              <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
+                <Typography variant="h6" fontWeight={800}>
+                  其他费用发票
+                </Typography>
+                <Button
+                  size="small"
+                  variant="outlined"
+                  startIcon={<AddIcon />}
+                  disabled={readonly}
+                  onClick={handleOpenCustomDialog}
+                >
+                  添加自定义费用
+                </Button>
+              </Stack>
               <Box sx={repeatedCardGridSx}>
-                {EXPENSE_CATEGORIES.map((category) => {
+                {expenseCategoryOptions.map((category) => {
                   const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
                     category: category.value,
                     remark: "",
@@ -981,12 +1036,26 @@ export default function ReportEdit() {
                         <CardContent sx={sectionCardContentSx}>
                           <Stack spacing={1.5}>
                             <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                              <Box>
+                              <Box sx={{ minWidth: 0 }}>
                                 <Typography fontWeight={800}>{category.label}</Typography>
                                 <Typography variant="body2" color="text.secondary">
                                   {formatAmount(item.amount)} / {item.invoice_count || 0} 张
                                 </Typography>
                               </Box>
+                              {isCustomExpenseCategory(category.value) && (
+                                <Tooltip title="删除自定义费用">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      color="error"
+                                      disabled={readonly}
+                                      onClick={() => handleDeleteCustomCategory(category.value)}
+                                    >
+                                      <DeleteIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              )}
                             </Stack>
                             <InvoiceDropzone
                               disabled={readonly || saveState === "saving"}
@@ -1044,7 +1113,7 @@ export default function ReportEdit() {
                 <Divider />
 
                 <Stack spacing={0.8}>
-                  {EXPENSE_CATEGORIES.map((category) => {
+                  {expenseCategoryOptions.map((category) => {
                     const item = expenseItems.find((expenseItem) => expenseItem.category === category.value);
                     return (
                       <Stack key={category.value} direction="row" justifyContent="space-between" spacing={1}>
@@ -1093,6 +1162,42 @@ export default function ReportEdit() {
         }}
         onUpdated={handleInvoiceUpdated}
       />
+
+      <Dialog open={customDialogOpen} onClose={() => setCustomDialogOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>添加自定义费用</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ pt: 0.5 }}>
+            <DialogContentText>
+              自定义费用类别仅保存在当前报销单内。
+            </DialogContentText>
+            <TextField
+              autoFocus
+              fullWidth
+              label="费用名称"
+              value={customName}
+              error={Boolean(customNameError)}
+              helperText={customNameError || "1-20 个字符，不能与固定费用类别重名"}
+              onChange={(event) => {
+                setCustomName(event.target.value);
+                if (customNameError) {
+                  setCustomNameError("");
+                }
+              }}
+              onKeyDown={(event) => {
+                if (event.key === "Enter") {
+                  handleAddCustomCategory();
+                }
+              }}
+            />
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setCustomDialogOpen(false)}>取消</Button>
+          <Button variant="contained" onClick={handleAddCustomCategory}>
+            添加
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={Boolean(pendingLeave)} onClose={() => !leaveBusy && resolveLeave(false)}>
         <DialogTitle>空草稿尚未填写</DialogTitle>

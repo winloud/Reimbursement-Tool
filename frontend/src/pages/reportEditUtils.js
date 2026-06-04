@@ -21,6 +21,52 @@ export const EXPENSE_CATEGORIES = [
   { value: "fuel_subsidy", label: "燃油补助" },
 ];
 
+export const CUSTOM_CATEGORY_PREFIX = "custom:";
+const CUSTOM_CATEGORY_FORBIDDEN_PATTERN = /[\/\\:*?"<>|\x00-\x1f]/;
+const FIXED_CATEGORY_LABELS = new Set([
+  ...EXPENSE_CATEGORIES.map((category) => category.label),
+  "市内车费",
+  "不买卧铺补贴",
+  "油补",
+]);
+
+export const isCustomExpenseCategory = (category) => String(category || "").startsWith(CUSTOM_CATEGORY_PREFIX);
+
+export const getCustomExpenseName = (category) =>
+  isCustomExpenseCategory(category) ? String(category).slice(CUSTOM_CATEGORY_PREFIX.length) : "";
+
+export const getExpenseCategoryLabel = (category) => {
+  const fixed = EXPENSE_CATEGORIES.find((item) => item.value === category);
+  if (fixed) return fixed.label;
+  if (isCustomExpenseCategory(category)) return getCustomExpenseName(category);
+  return category || "";
+};
+
+export const buildCustomExpenseCategory = (name) => `${CUSTOM_CATEGORY_PREFIX}${String(name || "").trim()}`;
+
+export const validateCustomExpenseName = (name, expenseItems = []) => {
+  const trimmed = String(name || "").trim();
+  if (trimmed.length < 1 || trimmed.length > 20) return "自定义费用名称需为 1-20 个字符";
+  if (CUSTOM_CATEGORY_FORBIDDEN_PATTERN.test(trimmed)) return '不能包含 / \\ : * ? " < > | 或控制字符';
+  if (FIXED_CATEGORY_LABELS.has(trimmed)) return "不能与固定费用类别重名";
+  const duplicated = expenseItems.some((item) => getCustomExpenseName(item.category) === trimmed);
+  if (duplicated) return "同一报销单内不能重复添加该费用类别";
+  return "";
+};
+
+export const getExpenseCategoryOptions = (expenseItems = []) => {
+  const customItems = expenseItems
+    .filter((item) => isCustomExpenseCategory(item.category))
+    .map((item) => ({ value: item.category, label: getCustomExpenseName(item.category), custom: true }));
+  const seen = new Set(EXPENSE_CATEGORIES.map((category) => category.value));
+  const uniqueCustomItems = customItems.filter((item) => {
+    if (seen.has(item.value)) return false;
+    seen.add(item.value);
+    return true;
+  });
+  return [...EXPENSE_CATEGORIES, ...uniqueCustomItems];
+};
+
 export const STATUS_META = {
   draft: { label: "草稿", color: "default" },
   printed: { label: "已打印", color: "info" },

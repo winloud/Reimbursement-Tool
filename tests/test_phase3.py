@@ -10,10 +10,17 @@ from sqlalchemy import select
 from backend.models.invoice import Invoice
 from backend.models.trip import Trip
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
-from backend.schemas.report import ReportCreate, TripWrite
+from backend.schemas.report import ReportCreate, ReportUpdate, TripWrite
 from backend.services.invoice_parser import parse_pdf_invoice, parse_qr_payload
-from backend.services.invoice_service import detect_file_type, save_upload_file, update_invoice, upload_invoice
-from backend.services.report_service import calculate_subsidy_days, create_report
+from backend.services.invoice_service import (
+    detect_file_type,
+    safe_category_filename_prefix,
+    save_upload_file,
+    soft_delete_invoice,
+    update_invoice,
+    upload_invoice,
+)
+from backend.services.report_service import calculate_subsidy_days, create_report, update_report
 
 
 def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_path: Path):
@@ -118,6 +125,12 @@ def test_save_upload_file_uses_expense_category_prefix(monkeypatch, tmp_path: Pa
     assert relative_path.startswith("uploads/9/luggage_invoice_")
     assert relative_path.endswith(".pdf")
     assert (tmp_path / "backend" / relative_path).exists()
+
+
+def test_custom_category_filename_uses_safe_hash_prefix():
+    assert safe_category_filename_prefix("custom:宴请").startswith("custom_")
+    assert safe_category_filename_prefix("custom:宴请") == safe_category_filename_prefix("custom:宴请")
+    assert safe_category_filename_prefix("custom:宴请") != "custom:宴请"
 
 
 def test_calculate_subsidy_days_across_month():
@@ -288,3 +301,145 @@ def test_upload_invoice_rejects_duplicate_invoice_number_in_same_report(monkeypa
         select(Invoice).where(Invoice.report_id == report.id, Invoice.deleted_at.is_(None)),
     ).all()
     assert len(active_invoices) == 1
+
+
+def test_report_update_can_add_custom_expense_category_and_keeps_fixed_items(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "custom:宴请", "remark": "客户晚餐"}],
+        ),
+    )
+
+    categories = {item.category for item in updated.expense_items}
+    assert "custom:宴请" in categories
+    assert {"luggage", "city_transport", "accommodation", "postal", "no_sleeper_subsidy", "toll", "fuel_subsidy"}.issubset(
+        categories,
+    )
+
+
+@pytest.mark.parametrize("category", ["custom:", "custom:宴:请", "custom:行李费", "custom:宴请宴请宴请宴请宴请宴请宴请宴请宴请宴请宴"])
+def test_report_update_rejects_invalid_custom_category_names(category, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report(
+            db,
+            report.id,
+            ReportUpdate(report_date=date(2026, 6, 3), expense_items=[{"category": category}]),
+        )
+
+    assert exc_info.value.status_code == 400
+
+
+def test_report_update_rejects_duplicate_custom_category_names(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report(
+            db,
+            report.id,
+            ReportUpdate(
+                report_date=date(2026, 6, 3),
+                expense_items=[{"category": "custom:宴请"}, {"category": "custom:宴请"}],
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "不能重名" in exc_info.value.detail
+
+
+def test_upload_invoice_to_existing_custom_category_succeeds_and_confirmed_amount_counts(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(report_date=date(2026, 6, 3), expense_items=[{"category": "custom:宴请"}]),
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.save_upload_file",
+        lambda _upload_file, report_id, _expense_category, _file_type: f"uploads/{report_id}/custom_test.pdf",
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="CUSTOM-1", amount=Decimal("188.80")),
+    )
+
+    invoice, _ = upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="custom:宴请",
+        upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 custom")),
+    )
+    update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("188.80"), amount_confirmed=True))
+    db.refresh(report)
+
+    assert invoice.expense_category == "custom:宴请"
+    assert report.total_amount == Decimal("188.80")
+
+
+def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(amount=Decimal("10.00")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=report.id,
+            expense_category="custom:宴请",
+            upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 custom")),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "自定义费用类别不存在" in exc_info.value.detail
+
+
+def test_custom_category_with_active_invoice_cannot_be_deleted(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(report_date=date(2026, 6, 3), expense_items=[{"category": "custom:宴请"}]),
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.save_upload_file",
+        lambda _upload_file, report_id, _expense_category, _file_type: f"uploads/{report_id}/custom_test.pdf",
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="CUSTOM-DELETE", amount=Decimal("20.00")),
+    )
+    invoice, _ = upload_invoice(
+        db,
+        report_id=report.id,
+        expense_category="custom:宴请",
+        upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 custom delete")),
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+
+    assert exc_info.value.status_code == 400
+    soft_delete_invoice(db, invoice.id)
+    updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+    assert "custom:宴请" not in {item.category for item in updated.expense_items}
+
+
+def test_custom_category_without_invoice_can_be_deleted(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(report_date=date(2026, 6, 3), expense_items=[{"category": "custom:宴请"}]),
+    )
+
+    updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+
+    assert "custom:宴请" not in {item.category for item in updated.expense_items}

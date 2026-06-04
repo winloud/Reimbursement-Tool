@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+import re
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, select
@@ -28,6 +29,32 @@ EXPENSE_CATEGORIES = [
     "toll",
     "fuel_subsidy",
 ]
+FIXED_OTHER_EXPENSE_CATEGORIES = [
+    "luggage",
+    "city_transport",
+    "accommodation",
+    "postal",
+    "no_sleeper_subsidy",
+    "toll",
+    "fuel_subsidy",
+]
+FIXED_CATEGORY_LABELS = {
+    "transport_fare": "车船费",
+    "luggage": "行李费",
+    "city_transport": "市内交通费",
+    "accommodation": "住宿费",
+    "postal": "邮电费",
+    "no_sleeper_subsidy": "未乘卧铺补助",
+    "toll": "过路费",
+    "fuel_subsidy": "燃油补助",
+}
+FIXED_CATEGORY_LABEL_ALIASES = {
+    "市内车费",
+    "不买卧铺补贴",
+    "油补",
+}
+CUSTOM_CATEGORY_PREFIX = "custom:"
+CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
 
 
 class TripDateError(ValueError):
@@ -114,6 +141,48 @@ def ensure_expense_items(report: ExpenseReport) -> None:
             report.expense_items.append(ExpenseItem(category=category))
 
 
+def is_custom_category(category: str) -> bool:
+    return category.startswith(CUSTOM_CATEGORY_PREFIX)
+
+
+def custom_category_name(category: str) -> str:
+    return category.removeprefix(CUSTOM_CATEGORY_PREFIX)
+
+
+def build_custom_category(name: str) -> str:
+    normalized = validate_custom_category_name(name)
+    return f"{CUSTOM_CATEGORY_PREFIX}{normalized}"
+
+
+def validate_custom_category_name(name: str) -> str:
+    normalized = name.strip()
+    if not 1 <= len(normalized) <= 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义费用名称需为 1-20 个字符")
+    if CUSTOM_CATEGORY_FORBIDDEN_PATTERN.search(normalized):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='自定义费用名称不能包含 / \\ : * ? " < > | 或控制字符')
+    fixed_labels = set(FIXED_CATEGORY_LABELS.values()) | FIXED_CATEGORY_LABEL_ALIASES
+    if normalized in fixed_labels:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义费用名称不能与固定费用类别重名")
+    return normalized
+
+
+def validate_expense_category(category: str) -> str:
+    normalized = category.strip()
+    if normalized in EXPENSE_CATEGORIES:
+        return normalized
+    if is_custom_category(normalized):
+        return build_custom_category(custom_category_name(normalized))
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效费用类别")
+
+
+def active_invoices_for_category(report: ExpenseReport, category: str) -> list[Invoice]:
+    return [
+        invoice
+        for invoice in report.invoices
+        if invoice.deleted_at is None and invoice.expense_category == category
+    ]
+
+
 def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None:
     keep_ids = {item.id for item in trip_payloads if item.id is not None}
     report.trips[:] = [trip for trip in report.trips if trip.id in keep_ids]
@@ -133,12 +202,32 @@ def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None
 def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemWrite]) -> None:
     ensure_expense_items(report)
     by_category = {item.category: item for item in report.expense_items}
+    seen_custom_names: set[str] = set()
+    requested_custom_categories: set[str] = set()
     for payload in item_payloads:
-        item = by_category.get(payload.category)
+        category = validate_expense_category(payload.category)
+        if category == "transport_fare":
+            continue
+        if is_custom_category(category):
+            name = custom_category_name(category)
+            if name in seen_custom_names:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="同一报销单内自定义费用类别不能重名")
+            seen_custom_names.add(name)
+            requested_custom_categories.add(category)
+        item = by_category.get(category)
         if item is None:
-            report.expense_items.append(ExpenseItem(category=payload.category, remark=payload.remark))
+            item = ExpenseItem(category=category, remark=payload.remark)
+            report.expense_items.append(item)
+            by_category[category] = item
         else:
             item.remark = payload.remark
+
+    for item in list(report.expense_items):
+        if not is_custom_category(item.category) or item.category in requested_custom_categories:
+            continue
+        if active_invoices_for_category(report, item.category):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先删除发票后再删除类别")
+        report.expense_items.remove(item)
 
 
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:

@@ -3,10 +3,14 @@ import { describe, it } from "node:test";
 
 import {
   buildDraftPayload,
+  buildCustomExpenseCategory,
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
+  getExpenseCategoryLabel,
+  getExpenseCategoryOptions,
   isEmptyDraft,
+  validateCustomExpenseName,
   makeBlankTrip,
   makeReturnTripAfter,
   moveTrip,
@@ -147,5 +151,27 @@ describe("report edit utilities", () => {
       shortfall: 190.5,
       surplus: 0,
     });
+  });
+
+  it("builds fixed plus custom expense category options in order", () => {
+    const options = getExpenseCategoryOptions([
+      { category: "custom:宴请" },
+      { category: "luggage" },
+      { category: "custom:材料" },
+    ]);
+
+    assert.equal(options[0].value, "luggage");
+    assert.equal(options.at(-2).label, "宴请");
+    assert.equal(options.at(-1).value, "custom:材料");
+    assert.equal(getExpenseCategoryLabel("custom:宴请"), "宴请");
+  });
+
+  it("validates custom expense category names", () => {
+    assert.equal(buildCustomExpenseCategory(" 宴请 "), "custom:宴请");
+    assert.equal(validateCustomExpenseName("宴请", []), "");
+    assert.match(validateCustomExpenseName("", []), /1-20/);
+    assert.match(validateCustomExpenseName("宴:请", []), /不能包含/);
+    assert.match(validateCustomExpenseName("行李费", []), /固定费用类别/);
+    assert.match(validateCustomExpenseName("宴请", [{ category: "custom:宴请" }]), /不能重复/);
   });
 });

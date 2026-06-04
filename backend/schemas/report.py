@@ -33,7 +33,7 @@ class TripWrite(BaseModel):
 
 class ExpenseItemWrite(BaseModel):
     id: int | None = None
-    category: ExpenseCategory
+    category: str = Field(min_length=1)
     remark: str | None = None
 
 
