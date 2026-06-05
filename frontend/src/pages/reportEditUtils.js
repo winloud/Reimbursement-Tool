@@ -102,8 +102,38 @@ export const normalizeTrip = (trip = {}, index = 0) => ({
   arrive_hour: trip.arrive_hour ?? "",
   arrive_place: trip.arrive_place ?? "",
   transport: trip.transport ?? "",
+  subsidy_start: Boolean(trip.subsidy_start),
+  subsidy_end: Boolean(trip.subsidy_end),
   collapsed: trip.collapsed ?? false,
 });
+
+export const applyDefaultSubsidyMarkers = (trips = []) => {
+  const normalized = trips.map((trip, index) => normalizeTrip(trip, index));
+  if (normalized.length === 0 || normalized.some((trip) => trip.subsidy_start || trip.subsidy_end)) {
+    return normalized;
+  }
+
+  const homePlace = String(normalized[0].depart_place || "").trim();
+  let openInterval = false;
+  const next = normalized.map((trip) => ({ ...trip, subsidy_start: false, subsidy_end: false }));
+  next.forEach((trip, index) => {
+    const departPlace = String(trip.depart_place || "").trim();
+    const arrivePlace = String(trip.arrive_place || "").trim();
+    const shouldStart = index === 0 || (!openInterval && homePlace && departPlace === homePlace);
+    if (shouldStart) {
+      trip.subsidy_start = true;
+      openInterval = true;
+    }
+    if (openInterval && homePlace && arrivePlace === homePlace) {
+      trip.subsidy_end = true;
+      openInterval = false;
+    }
+  });
+  if (openInterval) {
+    next[next.length - 1].subsidy_end = true;
+  }
+  return next;
+};
 
 export const makeBlankTrip = (reportDate) => {
   const date = reportDate ? new Date(`${reportDate}T00:00:00`) : new Date();
@@ -138,7 +168,10 @@ const makeDate = (year, month, day) => {
 
 export const calculateSubsidyDays = (reportDate, trips) => {
   const year = reportDate ? new Date(`${reportDate}T00:00:00`).getFullYear() : new Date().getFullYear();
-  const ranges = trips
+  const markedTrips = trips.some((trip) => trip.subsidy_start || trip.subsidy_end)
+    ? trips.map((trip, index) => normalizeTrip(trip, index))
+    : applyDefaultSubsidyMarkers(trips);
+  const ranges = markedTrips
     .map((trip) => {
       const departMonth = Number(trip.depart_month);
       const departDay = Number(trip.depart_day);
@@ -148,14 +181,52 @@ export const calculateSubsidyDays = (reportDate, trips) => {
         arriveMonth < departMonth || (arriveMonth === departMonth && arriveDay < departDay) ? year + 1 : year;
       const depart = makeDate(year, departMonth, departDay);
       const arrive = makeDate(arriveYear, arriveMonth, arriveDay);
-      return depart && arrive ? { depart, arrive } : null;
+      if (!depart || !arrive) return null;
+      const travelDays = Math.floor((arrive.getTime() - depart.getTime()) / 86400000);
+      if (travelDays < 0 || travelDays > 7) return null;
+      if (
+        travelDays === 0 &&
+        trip.depart_hour !== "" &&
+        trip.depart_hour !== null &&
+        trip.depart_hour !== undefined &&
+        trip.arrive_hour !== "" &&
+        trip.arrive_hour !== null &&
+        trip.arrive_hour !== undefined &&
+        Number(trip.arrive_hour) < Number(trip.depart_hour)
+      ) {
+        return null;
+      }
+      return depart && arrive ? { trip, depart, arrive } : null;
     })
     .filter(Boolean);
 
   if (ranges.length === 0) return 0;
-  const earliest = Math.min(...ranges.map((range) => range.depart.getTime()));
-  const latest = Math.max(...ranges.map((range) => range.arrive.getTime()));
-  return Math.max(0, Math.floor((latest - earliest) / 86400000) + 1);
+  const intervals = [];
+  let activeStart = null;
+  for (const range of ranges) {
+    if (range.trip.subsidy_start) {
+      if (activeStart) return 0;
+      activeStart = range.depart;
+    }
+    if (range.trip.subsidy_end) {
+      if (!activeStart || range.arrive.getTime() < activeStart.getTime()) return 0;
+      intervals.push({ start: activeStart, end: range.arrive });
+      activeStart = null;
+    }
+  }
+  if (activeStart || intervals.length === 0) return 0;
+
+  intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
+  const merged = [];
+  for (const interval of intervals) {
+    const previous = merged.at(-1);
+    if (!previous || interval.start.getTime() > previous.end.getTime() + 86400000) {
+      merged.push({ ...interval });
+    } else if (interval.end.getTime() > previous.end.getTime()) {
+      previous.end = interval.end;
+    }
+  }
+  return merged.reduce((sum, interval) => sum + Math.floor((interval.end - interval.start) / 86400000) + 1, 0);
 };
 
 export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices }) => {
@@ -212,6 +283,8 @@ export const buildTripPayload = (trips) =>
     arrive_hour: trip.arrive_hour === "" ? null : Number(trip.arrive_hour),
     arrive_place: nullableText(trip.arrive_place),
     transport: nullableText(trip.transport),
+    subsidy_start: Boolean(trip.subsidy_start),
+    subsidy_end: Boolean(trip.subsidy_end),
   }));
 
 export const buildReportPayload = ({ form, trips, expenseItems }) => ({

@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.connection import Base
@@ -21,6 +21,8 @@ class Trip(Base):
     arrive_hour: Mapped[int | None] = mapped_column(Integer, nullable=True)
     arrive_place: Mapped[str | None] = mapped_column(String, nullable=True)
     transport: Mapped[str | None] = mapped_column(String, nullable=True)
+    subsidy_start: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    subsidy_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
     report = relationship("ExpenseReport", back_populates="trips")
     invoices = relationship("Invoice", back_populates="trip")

@@ -2,9 +2,11 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  applyDefaultSubsidyMarkers,
   buildDraftPayload,
   buildCustomExpenseCategory,
   buildReportPayload,
+  calculateSubsidyDays,
   calculateSummary,
   cloneTripAfter,
   getExpenseCategoryLabel,
@@ -101,6 +103,8 @@ describe("report edit utilities", () => {
           arrive_hour: 12,
           arrive_place: "成都",
           transport: "高铁",
+          subsidy_start: false,
+          subsidy_end: false,
         },
       ],
       expense_items: [{ id: 2, category: "luggage", remark: "箱子" }],
@@ -151,6 +155,57 @@ describe("report edit utilities", () => {
       shortfall: 190.5,
       surplus: 0,
     });
+  });
+
+  it("calculates subsidy days from default start and end markers", () => {
+    const trips = [
+      normalizeTrip({ depart_month: 3, depart_day: 4, depart_place: "杭州", arrive_month: 3, arrive_day: 4, arrive_place: "芜湖" }, 0),
+      normalizeTrip({ depart_month: 3, depart_day: 4, depart_place: "芜湖", arrive_month: 3, arrive_day: 4, arrive_place: "杭州" }, 1),
+      normalizeTrip({ depart_month: 3, depart_day: 12, depart_place: "杭州", arrive_month: 3, arrive_day: 12, arrive_place: "芜湖" }, 2),
+      normalizeTrip({ depart_month: 3, depart_day: 15, depart_place: "芜湖", arrive_month: 3, arrive_day: 15, arrive_place: "杭州" }, 3),
+    ];
+
+    const marked = applyDefaultSubsidyMarkers(trips);
+
+    assert.deepEqual(marked.map((trip) => [trip.subsidy_start, trip.subsidy_end]), [
+      [true, false],
+      [false, true],
+      [true, false],
+      [false, true],
+    ]);
+    assert.equal(calculateSubsidyDays("2026-03-01", trips), 5);
+  });
+
+  it("calculates subsidy days from manual start and end markers", () => {
+    const trips = [
+      normalizeTrip({ depart_month: 3, depart_day: 4, arrive_month: 3, arrive_day: 4, subsidy_start: true }, 0),
+      normalizeTrip({ depart_month: 3, depart_day: 4, arrive_month: 3, arrive_day: 4, subsidy_end: true }, 1),
+      normalizeTrip({ depart_month: 3, depart_day: 12, arrive_month: 3, arrive_day: 12, subsidy_start: true }, 2),
+      normalizeTrip({ depart_month: 3, depart_day: 15, arrive_month: 3, arrive_day: 15, subsidy_end: true }, 3),
+    ];
+
+    assert.equal(calculateSubsidyDays("2026-03-01", trips), 5);
+  });
+
+  it("allows a short cross-year trip and rejects invalid trip spans", () => {
+    assert.equal(
+      calculateSubsidyDays("2026-12-01", [
+        normalizeTrip({ depart_month: 12, depart_day: 30, arrive_month: 1, arrive_day: 2 }, 0),
+      ]),
+      4,
+    );
+    assert.equal(
+      calculateSubsidyDays("2026-06-01", [
+        normalizeTrip({ depart_month: 6, depart_day: 1, depart_hour: 14, arrive_month: 6, arrive_day: 1, arrive_hour: 9 }, 0),
+      ]),
+      0,
+    );
+    assert.equal(
+      calculateSubsidyDays("2026-12-01", [
+        normalizeTrip({ depart_month: 12, depart_day: 20, arrive_month: 1, arrive_day: 5 }, 0),
+      ]),
+      0,
+    );
   });
 
   it("builds fixed plus custom expense category options in order", () => {

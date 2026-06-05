@@ -36,6 +36,7 @@ import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
+import DownloadIcon from "@mui/icons-material/Download";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate, useParams } from "react-router-dom";
@@ -45,7 +46,9 @@ import {
   createReport,
   deleteInvoice,
   deleteReport,
+  downloadReportPdf,
   getReport,
+  getReportPdfPreview,
   getSettings,
   updateReport,
   updateReportStatus,
@@ -54,6 +57,7 @@ import {
 import {
   STATUS_ACTIONS,
   STATUS_META,
+  applyDefaultSubsidyMarkers,
   buildCustomExpenseCategory,
   buildDraftPayload,
   buildReportPayload,
@@ -204,9 +208,14 @@ export default function ReportEdit() {
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customNameError, setCustomNameError] = useState("");
+  const [pdfBusy, setPdfBusy] = useState("");
+  const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
+  const [pdfPreviewPages, setPdfPreviewPages] = useState([]);
+  const [pdfBlockedOpen, setPdfBlockedOpen] = useState(false);
 
   const creatingRef = useRef(false);
   const loadedRef = useRef(false);
+  const autosaveRequestRef = useRef(0);
   const lastSavedPayloadRef = useRef("");
   const leaveResolverRef = useRef(null);
   const readonly = status === "reimbursed";
@@ -236,7 +245,9 @@ export default function ReportEdit() {
           advance_date_day: report.advance_date_day || "",
           advance_amount: toMoney(report.advance_amount),
         };
-        const nextTrips = [...(report.trips || [])].sort((a, b) => a.sort_order - b.sort_order).map(normalizeTrip);
+        const nextTrips = applyDefaultSubsidyMarkers(
+          [...(report.trips || [])].sort((a, b) => a.sort_order - b.sort_order).map(normalizeTrip),
+        );
         const nextItems = (report.expense_items || []).map(normalizeExpenseItem);
         const nextInvoices = report.invoices || [];
         const nextDefaults = {
@@ -317,6 +328,10 @@ export default function ReportEdit() {
     [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
   );
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
+  const hasUnconfirmedInvoices = useMemo(
+    () => invoices.some((invoice) => !invoice.amount_confirmed),
+    [invoices],
+  );
 
   const emptyDraft = useMemo(
     () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices }),
@@ -344,29 +359,46 @@ export default function ReportEdit() {
     if (!isEdit || readonly || loading || !loadedRef.current) return undefined;
     const payload = buildReportPayload({ form, trips, expenseItems });
     const payloadKey = JSON.stringify(payload);
-    if (payloadKey === lastSavedPayloadRef.current) return undefined;
+    if (payloadKey === lastSavedPayloadRef.current) {
+      autosaveRequestRef.current += 1;
+      setError("");
+      setSaveState("saved");
+      return undefined;
+    }
+
+    const requestId = autosaveRequestRef.current + 1;
+    autosaveRequestRef.current = requestId;
+    let cancelled = false;
+    const isCurrentAutosave = () => !cancelled && autosaveRequestRef.current === requestId;
 
     setSaveState("saving");
+    setError("");
     const timer = window.setTimeout(async () => {
       try {
         const res = await updateReport(id, payload);
+        if (!isCurrentAutosave()) return;
         if (!res.success) {
           setError(res.message || "自动保存失败");
           setSaveState("error");
           return;
         }
         lastSavedPayloadRef.current = payloadKey;
+        setError("");
         setSaveState("saved");
         if (payload.trips.some((trip) => !trip.id)) {
           await loadForEdit({ quiet: true });
         }
       } catch (err) {
-        setError(err.response?.data?.message || err.message || "自动保存失败");
+        if (!isCurrentAutosave()) return;
+        setError(getApiErrorMessage(err, "自动保存失败"));
         setSaveState("error");
       }
     }, 700);
 
-    return () => window.clearTimeout(timer);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
   }, [expenseItems, form, id, isEdit, loadForEdit, loading, readonly, trips]);
 
   const handleChange = (field) => (event) => {
@@ -378,7 +410,7 @@ export default function ReportEdit() {
   };
 
   const addTrip = () => {
-    setTrips((prev) => [...prev, normalizeTrip(makeBlankTrip(form.report_date), prev.length)]);
+    setTrips((prev) => applyDefaultSubsidyMarkers([...prev, normalizeTrip(makeBlankTrip(form.report_date), prev.length)]));
   };
 
   const removeTrip = (index) => {
@@ -401,6 +433,10 @@ export default function ReportEdit() {
     setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, collapsed: !trip.collapsed } : trip)));
   };
 
+  const toggleTripMarker = (index, field) => {
+    setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, [field]: !trip[field] } : trip)));
+  };
+
   const invoicesForTrip = (tripId) => invoices.filter((invoice) => invoice.trip_id === tripId);
   const invoicesForCategory = (category) =>
     invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id);
@@ -421,6 +457,54 @@ export default function ReportEdit() {
     } catch (err) {
       setError(err.response?.data?.message || err.message || "状态更新失败");
       setSaveState("error");
+    }
+  };
+
+  const handlePdfPreview = async () => {
+    if (hasUnconfirmedInvoices) {
+      setPdfBlockedOpen(true);
+      return;
+    }
+    setPdfBusy("preview");
+    setError("");
+    try {
+      const res = await getReportPdfPreview(id);
+      if (!res.success) {
+        setError(res.message || "生成 PDF 预览失败");
+        return;
+      }
+      setPdfPreviewPages(res.data?.pages || []);
+      setPdfPreviewOpen(true);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "生成 PDF 预览失败"));
+    } finally {
+      setPdfBusy("");
+    }
+  };
+
+  const handlePdfDownload = async () => {
+    if (hasUnconfirmedInvoices) {
+      setPdfBlockedOpen(true);
+      return;
+    }
+    setPdfBusy("download");
+    setError("");
+    try {
+      const { blob, filename } = await downloadReportPdf(id);
+      const url = window.URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+      await loadForEdit({ quiet: true });
+      setToast("PDF 已生成并开始下载");
+    } catch (err) {
+      setError(getApiErrorMessage(err, "下载 PDF 失败"));
+    } finally {
+      setPdfBusy("");
     }
   };
 
@@ -779,11 +863,13 @@ export default function ReportEdit() {
                       .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
                     const uploading = uploadState?.key === uploadKey;
                     const uploadDisabled = readonly || !trip.id || saveState === "saving";
-                    const summaryText = `${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
+                    const markerPrefix = trip.subsidy_start ? "起 " : "";
+                    const markerSuffix = trip.subsidy_end ? " 止" : "";
+                    const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
                       trip.depart_place || "出发地"
                     } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
                       trip.arrive_place || "到达地"
-                    } · ${trip.transport || "交通工具"} · 发票 ${tripInvoices.length} 张 ${formatAmount(confirmedAmount)}`;
+                    }${markerSuffix} · ${trip.transport || "交通工具"} · 发票 ${tripInvoices.length} 张 ${formatAmount(confirmedAmount)}`;
 
                     return (
                       <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
@@ -815,7 +901,33 @@ export default function ReportEdit() {
                                 </Typography>
                               </Box>
                             </Stack>
-                            <Stack direction="row" spacing={0.5}>
+                            <Stack direction="row" spacing={0.5} alignItems="center">
+                              <Tooltip title="标记为出差开始">
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant={trip.subsidy_start ? "contained" : "outlined"}
+                                    disabled={readonly}
+                                    onClick={() => toggleTripMarker(index, "subsidy_start")}
+                                    sx={{ minWidth: 32, px: 0.75 }}
+                                  >
+                                    起
+                                  </Button>
+                                </span>
+                              </Tooltip>
+                              <Tooltip title="标记为出差结束">
+                                <span>
+                                  <Button
+                                    size="small"
+                                    variant={trip.subsidy_end ? "contained" : "outlined"}
+                                    disabled={readonly}
+                                    onClick={() => toggleTripMarker(index, "subsidy_end")}
+                                    sx={{ minWidth: 32, px: 0.75 }}
+                                  >
+                                    止
+                                  </Button>
+                                </span>
+                              </Tooltip>
                               <Tooltip title={trip.collapsed ? "展开" : "折叠"}>
                                 <IconButton size="small" onClick={() => toggleTripCollapsed(index)}>
                                   {trip.collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
@@ -1146,6 +1258,31 @@ export default function ReportEdit() {
                     <Typography fontWeight={800}>{formatAmount(summary.surplus)}</Typography>
                   </Stack>
                 </Stack>
+
+                <Divider />
+
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                  <Button
+                    fullWidth
+                    variant="outlined"
+                    startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />}
+                    onClick={handlePdfPreview}
+                    disabled={readonly || pdfBusy === "download"}
+                    sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
+                  >
+                    {pdfBusy === "preview" ? "生成中" : "预览"}
+                  </Button>
+                  <Button
+                    fullWidth
+                    variant="contained"
+                    startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
+                    onClick={handlePdfDownload}
+                    disabled={readonly || pdfBusy === "preview"}
+                    sx={hasUnconfirmedInvoices ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
+                  >
+                    {pdfBusy === "download" ? "生成中" : "下载"}
+                  </Button>
+                </Stack>
               </Stack>
             </CardContent>
           </Card>
@@ -1196,6 +1333,42 @@ export default function ReportEdit() {
           <Button variant="contained" onClick={handleAddCustomCategory}>
             添加
           </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pdfPreviewOpen} onClose={() => setPdfPreviewOpen(false)} fullWidth maxWidth="lg">
+        <DialogTitle>PDF 预览</DialogTitle>
+        <DialogContent dividers>
+          <Stack spacing={2}>
+            {pdfPreviewPages.map((page) => (
+              <Paper key={page.page} variant="outlined" sx={{ p: 1, bgcolor: "grey.50" }}>
+                <Typography variant="caption" color="text.secondary">
+                  第 {page.page} 页
+                </Typography>
+                <Box
+                  component="img"
+                  src={page.image_url}
+                  alt={`PDF 预览第 ${page.page} 页`}
+                  sx={{ display: "block", width: "100%", mt: 1, borderRadius: 1 }}
+                />
+              </Paper>
+            ))}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPdfPreviewOpen(false)}>关闭</Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pdfBlockedOpen} onClose={() => setPdfBlockedOpen(false)} fullWidth maxWidth="xs">
+        <DialogTitle>存在未确认发票</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            当前报销单存在未确认金额的发票，请先逐张确认发票金额后再预览或下载 PDF。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPdfBlockedOpen(false)}>知道了</Button>
         </DialogActions>
       </Dialog>
 

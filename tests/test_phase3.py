@@ -20,7 +20,7 @@ from backend.services.invoice_service import (
     update_invoice,
     upload_invoice,
 )
-from backend.services.report_service import calculate_subsidy_days, create_report, update_report
+from backend.services.report_service import TripDateError, calculate_subsidy_days, create_report, update_report
 
 
 def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_path: Path):
@@ -141,12 +141,70 @@ def test_calculate_subsidy_days_across_month():
     assert calculate_subsidy_days(2026, trips) == 4
 
 
-def test_calculate_subsidy_days_across_year():
+def test_calculate_subsidy_days_allows_short_cross_year_trip():
     trips = [
         Trip(depart_month=12, depart_day=30, arrive_month=1, arrive_day=2, sort_order=1),
     ]
 
     assert calculate_subsidy_days(2026, trips) == 4
+
+
+def test_calculate_subsidy_days_rejects_arrival_month_day_before_departure_in_same_year():
+    trips = [
+        Trip(depart_month=3, depart_day=10, arrive_month=3, arrive_day=9, sort_order=1),
+    ]
+
+    with pytest.raises(TripDateError):
+        calculate_subsidy_days(2026, trips)
+
+
+def test_calculate_subsidy_days_rejects_long_cross_year_trip():
+    trips = [
+        Trip(depart_month=12, depart_day=20, arrive_month=1, arrive_day=5, sort_order=1),
+    ]
+
+    with pytest.raises(TripDateError):
+        calculate_subsidy_days(2026, trips)
+
+
+def test_calculate_subsidy_days_rejects_arrival_hour_before_departure_hour():
+    trips = [
+        Trip(depart_month=6, depart_day=1, depart_hour=14, arrive_month=6, arrive_day=1, arrive_hour=9, sort_order=1),
+    ]
+
+    with pytest.raises(TripDateError):
+        calculate_subsidy_days(2026, trips)
+
+
+def test_calculate_subsidy_days_uses_default_start_end_markers_for_round_trips():
+    trips = [
+        Trip(sort_order=1, depart_month=3, depart_day=4, depart_place="杭州", arrive_month=3, arrive_day=4, arrive_place="芜湖"),
+        Trip(sort_order=2, depart_month=3, depart_day=4, depart_place="芜湖", arrive_month=3, arrive_day=4, arrive_place="杭州"),
+        Trip(sort_order=3, depart_month=3, depart_day=12, depart_place="杭州", arrive_month=3, arrive_day=12, arrive_place="芜湖"),
+        Trip(sort_order=4, depart_month=3, depart_day=15, depart_place="芜湖", arrive_month=3, arrive_day=15, arrive_place="杭州"),
+    ]
+
+    assert calculate_subsidy_days(2026, trips) == 5
+
+
+def test_calculate_subsidy_days_uses_manual_start_end_markers():
+    trips = [
+        Trip(sort_order=1, depart_month=3, depart_day=4, arrive_month=3, arrive_day=4, subsidy_start=True),
+        Trip(sort_order=2, depart_month=3, depart_day=4, arrive_month=3, arrive_day=4, subsidy_end=True),
+        Trip(sort_order=3, depart_month=3, depart_day=12, arrive_month=3, arrive_day=12, subsidy_start=True),
+        Trip(sort_order=4, depart_month=3, depart_day=15, arrive_month=3, arrive_day=15, subsidy_end=True),
+    ]
+
+    assert calculate_subsidy_days(2026, trips) == 5
+
+
+def test_calculate_subsidy_days_rejects_unmatched_end_marker():
+    trips = [
+        Trip(sort_order=1, depart_month=3, depart_day=4, arrive_month=3, arrive_day=4, subsidy_end=True),
+    ]
+
+    with pytest.raises(TripDateError):
+        calculate_subsidy_days(2026, trips)
 
 
 def test_report_recalculation_uses_cross_month_trip_days(db):

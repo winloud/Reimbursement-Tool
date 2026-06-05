@@ -58,6 +58,40 @@ export const updateReportStatus = async (id, status) => {
   return response.data;
 };
 
+export const getReportPdfPreview = async (id) => {
+  const response = await apiClient.get(`/api/reports/${id}/pdf/preview`);
+  return response.data;
+};
+
+const filenameFromContentDisposition = (contentDisposition) => {
+  const encodedMatch = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/);
+  if (encodedMatch) {
+    return decodeURIComponent(encodedMatch[1]);
+  }
+  const fallbackMatch = contentDisposition?.match(/filename="?([^";]+)"?/);
+  return fallbackMatch?.[1] || "expense-report.pdf";
+};
+
+export const downloadReportPdf = async (id) => {
+  try {
+    const response = await apiClient.get(`/api/reports/${id}/pdf`, { responseType: "blob" });
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]),
+    };
+  } catch (err) {
+    if (err.response?.data instanceof Blob) {
+      const text = await err.response.data.text();
+      try {
+        err.response.data = JSON.parse(text);
+      } catch {
+        err.response.data = { message: text };
+      }
+    }
+    throw err;
+  }
+};
+
 export const uploadInvoice = async ({ reportId, tripId, expenseCategory, file }) => {
   const formData = new FormData();
   formData.append("report_id", reportId);

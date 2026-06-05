@@ -29,6 +29,8 @@ class TripWrite(BaseModel):
     arrive_hour: int | None = Field(default=None, ge=0, le=23)
     arrive_place: str | None = None
     transport: str | None = None
+    subsidy_start: bool = False
+    subsidy_end: bool = False
 
 
 class ExpenseItemWrite(BaseModel):
@@ -67,6 +69,15 @@ class ReportStatusUpdate(BaseModel):
     status: ReportStatus
 
 
+class PdfPreviewPage(BaseModel):
+    page: int
+    image_url: str
+
+
+class PdfPreviewRead(BaseModel):
+    pages: list[PdfPreviewPage] = Field(default_factory=list)
+
+
 class TripRead(BaseModel):
     id: int
     sort_order: int
@@ -79,6 +90,8 @@ class TripRead(BaseModel):
     arrive_hour: int | None = None
     arrive_place: str | None = None
     transport: str | None = None
+    subsidy_start: bool = False
+    subsidy_end: bool = False
     invoice_count: int = 0
     amount: Decimal = Decimal("0.00")
 

@@ -1,4 +1,5 @@
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 import re
 
@@ -55,10 +56,20 @@ FIXED_CATEGORY_LABEL_ALIASES = {
 }
 CUSTOM_CATEGORY_PREFIX = "custom:"
 CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
+MAX_TRIP_TRAVEL_DAYS = 7
 
 
 class TripDateError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class SubsidyTrip:
+    trip: Trip
+    depart: date
+    arrive: date
+    subsidy_start: bool
+    subsidy_end: bool
 
 
 def validate_status_transition(current_status: str, target_status: str) -> None:
@@ -96,18 +107,97 @@ def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
     if not trips:
         return 0
 
-    depart_dates: list[date] = []
-    arrive_dates: list[date] = []
-    for trip in trips:
+    sorted_trips = sorted(trips, key=lambda trip: trip.sort_order)
+    has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
+    default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
+    subsidy_trips: list[SubsidyTrip] = []
+    for trip in sorted_trips:
         depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
         arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
         arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        depart_dates.append(depart)
-        arrive_dates.append(arrive)
+        validate_trip_chronology(trip, depart, arrive)
+        default_start, default_end = default_markers.get(id(trip), (False, False))
+        subsidy_trips.append(
+            SubsidyTrip(
+                trip=trip,
+                depart=depart,
+                arrive=arrive,
+                subsidy_start=trip.subsidy_start if has_manual_markers else default_start,
+                subsidy_end=trip.subsidy_end if has_manual_markers else default_end,
+            )
+        )
 
-    earliest = min(depart_dates)
-    latest = max(arrive_dates)
-    return (latest - earliest).days + 1
+    intervals = build_subsidy_intervals(subsidy_trips)
+    return count_merged_interval_days(intervals)
+
+
+def derive_default_subsidy_markers(trips: list[Trip]) -> dict[int, tuple[bool, bool]]:
+    if not trips:
+        return {}
+
+    home_place = (trips[0].depart_place or "").strip()
+    markers = {id(trip): [False, False] for trip in trips}
+    open_interval = False
+
+    for index, trip in enumerate(trips):
+        depart_place = (trip.depart_place or "").strip()
+        arrive_place = (trip.arrive_place or "").strip()
+        should_start = index == 0 or (not open_interval and home_place and depart_place == home_place)
+        if should_start:
+            markers[id(trip)][0] = True
+            open_interval = True
+        if open_interval and home_place and arrive_place == home_place:
+            markers[id(trip)][1] = True
+            open_interval = False
+
+    if open_interval:
+        markers[id(trips[-1])][1] = True
+
+    return {key: (value[0], value[1]) for key, value in markers.items()}
+
+
+def build_subsidy_intervals(trips: list[SubsidyTrip]) -> list[tuple[date, date]]:
+    intervals: list[tuple[date, date]] = []
+    active_start: date | None = None
+
+    for trip in trips:
+        if trip.subsidy_start:
+            if active_start is not None:
+                raise TripDateError("存在连续的出差起点标记，请先设置上一段出差的止点")
+            active_start = trip.depart
+        if trip.subsidy_end:
+            if active_start is None:
+                raise TripDateError("存在未匹配起点的出差止点标记")
+            if trip.arrive < active_start:
+                raise TripDateError("出差止点日期不能早于起点日期")
+            intervals.append((active_start, trip.arrive))
+            active_start = None
+
+    if active_start is not None:
+        raise TripDateError("存在未闭合的出差起点标记，请设置止点")
+    return intervals
+
+
+def count_merged_interval_days(intervals: list[tuple[date, date]]) -> int:
+    if not intervals:
+        return 0
+
+    merged: list[tuple[date, date]] = []
+    for start, end in sorted(intervals):
+        if not merged or start > merged[-1][1] + timedelta(days=1):
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+
+    return sum((end - start).days + 1 for start, end in merged)
+
+
+def validate_trip_chronology(trip: Trip, depart: date, arrive: date) -> None:
+    travel_days = (arrive - depart).days
+    if travel_days < 0 or travel_days > MAX_TRIP_TRAVEL_DAYS:
+        raise TripDateError("行程到达日期不能早于出发日期；仅允许不超过 7 天的跨年到达")
+    if arrive == depart and trip.depart_hour is not None and trip.arrive_hour is not None and trip.arrive_hour < trip.depart_hour:
+        raise TripDateError("同日行程到达时间不能早于出发时间")
 
 
 def recalculate_report_totals(report: ExpenseReport) -> None:
