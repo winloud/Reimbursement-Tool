@@ -1,7 +1,9 @@
 import axios from "axios";
 
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+
 export const apiClient = axios.create({
-  baseURL: "http://localhost:8000",
+  baseURL: API_BASE_URL,
   timeout: 10000,
 });
 
@@ -56,6 +58,40 @@ export const updateReportStatus = async (id, status) => {
   return response.data;
 };
 
+export const getReportPdfPreview = async (id) => {
+  const response = await apiClient.get(`/api/reports/${id}/pdf/preview`);
+  return response.data;
+};
+
+const filenameFromContentDisposition = (contentDisposition) => {
+  const encodedMatch = contentDisposition?.match(/filename\*=UTF-8''([^;]+)/);
+  if (encodedMatch) {
+    return decodeURIComponent(encodedMatch[1]);
+  }
+  const fallbackMatch = contentDisposition?.match(/filename="?([^";]+)"?/);
+  return fallbackMatch?.[1] || "expense-report.pdf";
+};
+
+export const downloadReportPdf = async (id) => {
+  try {
+    const response = await apiClient.get(`/api/reports/${id}/pdf`, { responseType: "blob" });
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]),
+    };
+  } catch (err) {
+    if (err.response?.data instanceof Blob) {
+      const text = await err.response.data.text();
+      try {
+        err.response.data = JSON.parse(text);
+      } catch {
+        err.response.data = { message: text };
+      }
+    }
+    throw err;
+  }
+};
+
 export const uploadInvoice = async ({ reportId, tripId, expenseCategory, file }) => {
   const formData = new FormData();
   formData.append("report_id", reportId);
@@ -72,6 +108,11 @@ export const uploadInvoice = async ({ reportId, tripId, expenseCategory, file })
 
 export const updateInvoice = async (id, payload) => {
   const response = await apiClient.put(`/api/invoices/${id}`, payload);
+  return response.data;
+};
+
+export const parseInvoice = async (id) => {
+  const response = await apiClient.get(`/api/invoices/${id}/parse`);
   return response.data;
 };
 

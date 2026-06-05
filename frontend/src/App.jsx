@@ -1,25 +1,104 @@
-import { AppBar, Box, Button, Container, CssBaseline, Toolbar, Typography } from "@mui/material";
-import { Link as RouterLink, Route, Routes } from "react-router-dom";
+import {
+  Box,
+  Button,
+  CssBaseline,
+  Divider,
+  List,
+  ListItemButton,
+  ListItemIcon,
+  ListItemText,
+  Paper,
+  Stack,
+  Typography,
+} from "@mui/material";
+import AddIcon from "@mui/icons-material/Add";
+import DashboardIcon from "@mui/icons-material/Dashboard";
+import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+import { Route, Routes, useLocation } from "react-router-dom";
+import { NavigationGuardProvider, useNavigationGuard } from "./navigationGuard";
 import Dashboard from "./pages/Dashboard";
 import ReportEdit from "./pages/ReportEdit";
 import ReportList from "./pages/ReportList";
 import ReportPrint from "./pages/ReportPrint";
 
-export default function App() {
+const NAV_ITEMS = [
+  { label: "总览看板", to: "/", icon: <DashboardIcon fontSize="small" /> },
+  { label: "报销单管理", to: "/reports", icon: <ReceiptLongIcon fontSize="small" /> },
+];
+
+const APP_CONTENT_MAX_WIDTH = 1440;
+
+function Sidebar() {
+  const location = useLocation();
+  const { requestNavigation } = useNavigationGuard();
+
+  const isActive = (to) => {
+    if (to === "/") return location.pathname === "/";
+    return location.pathname.startsWith(to);
+  };
+
   return (
-    <>
-      <CssBaseline />
-      <AppBar position="static" color="default" elevation={0} sx={{ borderBottom: 1, borderColor: "divider" }}>
-        <Toolbar>
-          <Typography variant="h6" sx={{ flexGrow: 1, fontWeight: 700 }}>
-            出差旅费报销管理工具
+    <Paper
+      component="aside"
+      elevation={0}
+      sx={{
+        width: { xs: "100%", md: 248 },
+        minHeight: { md: "100vh" },
+        borderRadius: 0,
+        borderRight: { md: 1 },
+        borderBottom: { xs: 1, md: 0 },
+        borderColor: "divider",
+        bgcolor: "background.paper",
+        position: { md: "sticky" },
+        top: 0,
+        zIndex: 1,
+      }}
+    >
+      <Stack spacing={2} sx={{ p: 2.5 }}>
+        <Box>
+          <Typography variant="h6" fontWeight={800}>
+            报销管理
           </Typography>
-          <Button component={RouterLink} to="/" color="inherit">总览看板</Button>
-          <Button component={RouterLink} to="/reports" color="inherit">报销单管理</Button>
-        </Toolbar>
-      </AppBar>
-      <Box sx={{ minHeight: "100vh", bgcolor: "#F7F8FA", py: 4 }}>
-        <Container maxWidth="lg">
+          <Typography variant="body2" color="text.secondary">
+            出差旅费报销工具
+          </Typography>
+        </Box>
+
+        <Button
+          variant="contained"
+          startIcon={<AddIcon />}
+          onClick={() => requestNavigation("/reports/new")}
+          sx={{ justifyContent: "flex-start" }}
+        >
+          新增报销单
+        </Button>
+
+        <Divider />
+
+        <List disablePadding>
+          {NAV_ITEMS.map((item) => (
+            <ListItemButton
+              key={item.to}
+              selected={isActive(item.to)}
+              onClick={() => requestNavigation(item.to)}
+              sx={{ borderRadius: 1, mb: 0.5 }}
+            >
+              <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
+              <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 700 }} />
+            </ListItemButton>
+          ))}
+        </List>
+      </Stack>
+    </Paper>
+  );
+}
+
+function AppRoutes() {
+  return (
+    <Box sx={{ display: { xs: "block", md: "flex" }, minHeight: "100vh", bgcolor: "#F4F7FB" }}>
+      <Sidebar />
+      <Box component="main" sx={{ flex: 1, minWidth: 0, px: { xs: 2, md: 3, xl: 4 }, py: { xs: 2, md: 3 } }}>
+        <Box sx={{ width: "100%", maxWidth: APP_CONTENT_MAX_WIDTH, mx: "auto" }}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/reports" element={<ReportList />} />
@@ -27,8 +106,17 @@ export default function App() {
             <Route path="/reports/:id/edit" element={<ReportEdit />} />
             <Route path="/reports/:id/print" element={<ReportPrint />} />
           </Routes>
-        </Container>
+        </Box>
       </Box>
-    </>
+    </Box>
+  );
+}
+
+export default function App() {
+  return (
+    <NavigationGuardProvider>
+      <CssBaseline />
+      <AppRoutes />
+    </NavigationGuardProvider>
   );
 }

@@ -1,11 +1,25 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Path, Query
+from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
 
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse, PaginationData
-from backend.schemas.report import ReportCreate, ReportDetailRead, ReportRead, ReportStatus, ReportStatusUpdate, ReportUpdate
+from backend.schemas.report import (
+    PdfPreviewRead,
+    ReportCreate,
+    ReportDetailRead,
+    ReportRead,
+    ReportStatus,
+    ReportStatusUpdate,
+    ReportUpdate,
+)
+from backend.services.pdf_generator import (
+    build_merged_report_pdf,
+    build_pdf_filename,
+    content_disposition_for_filename,
+    render_report_preview_pages,
+)
 from backend.services.report_service import (
     create_report,
     get_report_or_404,
@@ -40,6 +54,33 @@ def get_report(
     db: Session = Depends(get_db),
 ) -> ApiResponse[ReportDetailRead]:
     return ApiResponse(data=get_report_or_404(db, report_id))
+
+
+@router.get("/{report_id}/pdf/preview", response_model=ApiResponse[PdfPreviewRead])
+def get_report_pdf_preview(
+    report_id: Annotated[int, Path(ge=1)],
+    db: Session = Depends(get_db),
+) -> ApiResponse[PdfPreviewRead]:
+    report = get_report_or_404(db, report_id)
+    return ApiResponse(data=PdfPreviewRead(pages=render_report_preview_pages(report)), message="PDF 预览已生成")
+
+
+@router.get("/{report_id}/pdf")
+def get_report_pdf(
+    report_id: Annotated[int, Path(ge=1)],
+    db: Session = Depends(get_db),
+) -> Response:
+    report = get_report_or_404(db, report_id)
+    pdf_bytes = build_merged_report_pdf(report)
+    filename = build_pdf_filename(report)
+    if report.status == "draft":
+        report.status = "printed"
+        db.commit()
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": content_disposition_for_filename(filename)},
+    )
 
 
 @router.put("/{report_id}", response_model=ApiResponse[ReportRead])

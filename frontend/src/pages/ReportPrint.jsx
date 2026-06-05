@@ -4,8 +4,8 @@ export default function ReportPrint() {
   return (
     <Card>
       <CardContent>
-        <Typography variant="h5" fontWeight={700}>打印预览</Typography>
-        <Typography color="text.secondary">PDF 生成与预览将在 Phase 4 实现。</Typography>
+        <Typography variant="h5" fontWeight={700}>PDF 预览</Typography>
+        <Typography color="text.secondary">请在报销单编辑页的费用汇总卡片中预览或下载 PDF。</Typography>
       </CardContent>
     </Card>
   );

@@ -1,5 +1,7 @@
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, timedelta
 from decimal import Decimal
+import re
 
 from fastapi import HTTPException, status
 from sqlalchemy import Select, func, select
@@ -28,10 +30,46 @@ EXPENSE_CATEGORIES = [
     "toll",
     "fuel_subsidy",
 ]
+FIXED_OTHER_EXPENSE_CATEGORIES = [
+    "luggage",
+    "city_transport",
+    "accommodation",
+    "postal",
+    "no_sleeper_subsidy",
+    "toll",
+    "fuel_subsidy",
+]
+FIXED_CATEGORY_LABELS = {
+    "transport_fare": "车船费",
+    "luggage": "行李费",
+    "city_transport": "市内交通费",
+    "accommodation": "住宿费",
+    "postal": "邮电费",
+    "no_sleeper_subsidy": "未乘卧铺补助",
+    "toll": "过路费",
+    "fuel_subsidy": "燃油补助",
+}
+FIXED_CATEGORY_LABEL_ALIASES = {
+    "市内车费",
+    "不买卧铺补贴",
+    "油补",
+}
+CUSTOM_CATEGORY_PREFIX = "custom:"
+CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
+MAX_TRIP_TRAVEL_DAYS = 7
 
 
 class TripDateError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class SubsidyTrip:
+    trip: Trip
+    depart: date
+    arrive: date
+    subsidy_start: bool
+    subsidy_end: bool
 
 
 def validate_status_transition(current_status: str, target_status: str) -> None:
@@ -69,18 +107,97 @@ def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
     if not trips:
         return 0
 
-    depart_dates: list[date] = []
-    arrive_dates: list[date] = []
-    for trip in trips:
+    sorted_trips = sorted(trips, key=lambda trip: trip.sort_order)
+    has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
+    default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
+    subsidy_trips: list[SubsidyTrip] = []
+    for trip in sorted_trips:
         depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
         arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
         arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        depart_dates.append(depart)
-        arrive_dates.append(arrive)
+        validate_trip_chronology(trip, depart, arrive)
+        default_start, default_end = default_markers.get(id(trip), (False, False))
+        subsidy_trips.append(
+            SubsidyTrip(
+                trip=trip,
+                depart=depart,
+                arrive=arrive,
+                subsidy_start=trip.subsidy_start if has_manual_markers else default_start,
+                subsidy_end=trip.subsidy_end if has_manual_markers else default_end,
+            )
+        )
 
-    earliest = min(depart_dates)
-    latest = max(arrive_dates)
-    return (latest - earliest).days + 1
+    intervals = build_subsidy_intervals(subsidy_trips)
+    return count_merged_interval_days(intervals)
+
+
+def derive_default_subsidy_markers(trips: list[Trip]) -> dict[int, tuple[bool, bool]]:
+    if not trips:
+        return {}
+
+    home_place = (trips[0].depart_place or "").strip()
+    markers = {id(trip): [False, False] for trip in trips}
+    open_interval = False
+
+    for index, trip in enumerate(trips):
+        depart_place = (trip.depart_place or "").strip()
+        arrive_place = (trip.arrive_place or "").strip()
+        should_start = index == 0 or (not open_interval and home_place and depart_place == home_place)
+        if should_start:
+            markers[id(trip)][0] = True
+            open_interval = True
+        if open_interval and home_place and arrive_place == home_place:
+            markers[id(trip)][1] = True
+            open_interval = False
+
+    if open_interval:
+        markers[id(trips[-1])][1] = True
+
+    return {key: (value[0], value[1]) for key, value in markers.items()}
+
+
+def build_subsidy_intervals(trips: list[SubsidyTrip]) -> list[tuple[date, date]]:
+    intervals: list[tuple[date, date]] = []
+    active_start: date | None = None
+
+    for trip in trips:
+        if trip.subsidy_start:
+            if active_start is not None:
+                raise TripDateError("存在连续的出差起点标记，请先设置上一段出差的止点")
+            active_start = trip.depart
+        if trip.subsidy_end:
+            if active_start is None:
+                raise TripDateError("存在未匹配起点的出差止点标记")
+            if trip.arrive < active_start:
+                raise TripDateError("出差止点日期不能早于起点日期")
+            intervals.append((active_start, trip.arrive))
+            active_start = None
+
+    if active_start is not None:
+        raise TripDateError("存在未闭合的出差起点标记，请设置止点")
+    return intervals
+
+
+def count_merged_interval_days(intervals: list[tuple[date, date]]) -> int:
+    if not intervals:
+        return 0
+
+    merged: list[tuple[date, date]] = []
+    for start, end in sorted(intervals):
+        if not merged or start > merged[-1][1] + timedelta(days=1):
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+
+    return sum((end - start).days + 1 for start, end in merged)
+
+
+def validate_trip_chronology(trip: Trip, depart: date, arrive: date) -> None:
+    travel_days = (arrive - depart).days
+    if travel_days < 0 or travel_days > MAX_TRIP_TRAVEL_DAYS:
+        raise TripDateError("行程到达日期不能早于出发日期；仅允许不超过 7 天的跨年到达")
+    if arrive == depart and trip.depart_hour is not None and trip.arrive_hour is not None and trip.arrive_hour < trip.depart_hour:
+        raise TripDateError("同日行程到达时间不能早于出发时间")
 
 
 def recalculate_report_totals(report: ExpenseReport) -> None:
@@ -114,6 +231,48 @@ def ensure_expense_items(report: ExpenseReport) -> None:
             report.expense_items.append(ExpenseItem(category=category))
 
 
+def is_custom_category(category: str) -> bool:
+    return category.startswith(CUSTOM_CATEGORY_PREFIX)
+
+
+def custom_category_name(category: str) -> str:
+    return category.removeprefix(CUSTOM_CATEGORY_PREFIX)
+
+
+def build_custom_category(name: str) -> str:
+    normalized = validate_custom_category_name(name)
+    return f"{CUSTOM_CATEGORY_PREFIX}{normalized}"
+
+
+def validate_custom_category_name(name: str) -> str:
+    normalized = name.strip()
+    if not 1 <= len(normalized) <= 20:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义费用名称需为 1-20 个字符")
+    if CUSTOM_CATEGORY_FORBIDDEN_PATTERN.search(normalized):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail='自定义费用名称不能包含 / \\ : * ? " < > | 或控制字符')
+    fixed_labels = set(FIXED_CATEGORY_LABELS.values()) | FIXED_CATEGORY_LABEL_ALIASES
+    if normalized in fixed_labels:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="自定义费用名称不能与固定费用类别重名")
+    return normalized
+
+
+def validate_expense_category(category: str) -> str:
+    normalized = category.strip()
+    if normalized in EXPENSE_CATEGORIES:
+        return normalized
+    if is_custom_category(normalized):
+        return build_custom_category(custom_category_name(normalized))
+    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效费用类别")
+
+
+def active_invoices_for_category(report: ExpenseReport, category: str) -> list[Invoice]:
+    return [
+        invoice
+        for invoice in report.invoices
+        if invoice.deleted_at is None and invoice.expense_category == category
+    ]
+
+
 def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None:
     keep_ids = {item.id for item in trip_payloads if item.id is not None}
     report.trips[:] = [trip for trip in report.trips if trip.id in keep_ids]
@@ -133,12 +292,32 @@ def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None
 def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemWrite]) -> None:
     ensure_expense_items(report)
     by_category = {item.category: item for item in report.expense_items}
+    seen_custom_names: set[str] = set()
+    requested_custom_categories: set[str] = set()
     for payload in item_payloads:
-        item = by_category.get(payload.category)
+        category = validate_expense_category(payload.category)
+        if category == "transport_fare":
+            continue
+        if is_custom_category(category):
+            name = custom_category_name(category)
+            if name in seen_custom_names:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="同一报销单内自定义费用类别不能重名")
+            seen_custom_names.add(name)
+            requested_custom_categories.add(category)
+        item = by_category.get(category)
         if item is None:
-            report.expense_items.append(ExpenseItem(category=payload.category, remark=payload.remark))
+            item = ExpenseItem(category=category, remark=payload.remark)
+            report.expense_items.append(item)
+            by_category[category] = item
         else:
             item.remark = payload.remark
+
+    for item in list(report.expense_items):
+        if not is_custom_category(item.category) or item.category in requested_custom_categories:
+            continue
+        if active_invoices_for_category(report, item.category):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先删除发票后再删除类别")
+        report.expense_items.remove(item)
 
 
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
