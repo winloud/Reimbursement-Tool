@@ -44,6 +44,19 @@ export const buildCategoryChartData = (items = []) =>
     amount: Number(item.amount || 0),
   }));
 
+export const buildCategoryLegendItems = (items = []) => {
+  const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
+  return items.map((item) => {
+    const amount = Number(item.amount || 0);
+    return {
+      category: item.category,
+      label: item.label,
+      amountText: formatStatsAmount(amount),
+      percentText: total > 0 ? `${((amount / total) * 100).toFixed(1)}%` : "0.0%",
+    };
+  });
+};
+
 export const dateKey = (value) => {
   if (typeof value === "string") return value.slice(0, 10);
   if (value instanceof Date) return value.toISOString().slice(0, 10);

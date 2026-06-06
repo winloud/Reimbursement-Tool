@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 ReportStatus = Literal["draft", "printed", "reimbursed"]
+ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
 ExpenseCategory = Literal[
     "transport_fare",
     "luggage",
@@ -76,6 +77,15 @@ class PdfPreviewPage(BaseModel):
 
 class PdfPreviewRead(BaseModel):
     pages: list[PdfPreviewPage] = Field(default_factory=list)
+
+
+class ReportCategoryOption(BaseModel):
+    value: str
+    label: str
+
+
+class ReportFilterOptionsRead(BaseModel):
+    categories: list[ReportCategoryOption] = Field(default_factory=list)
 
 
 class TripRead(BaseModel):

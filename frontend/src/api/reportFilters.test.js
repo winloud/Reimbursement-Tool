@@ -1,0 +1,59 @@
+import assert from "node:assert/strict";
+import { describe, it } from "node:test";
+
+import { buildReportQueryParams } from "./reportFilters.js";
+
+describe("buildReportQueryParams", () => {
+  it("keeps pagination and omits empty filter values", () => {
+    assert.deepEqual(buildReportQueryParams({ page: 2, pageSize: 50, status: "all" }), {
+      page: 2,
+      page_size: 50,
+    });
+  });
+
+  it("maps enhanced report filters to backend query params", () => {
+    assert.deepEqual(
+      buildReportQueryParams({
+        page: 1,
+        pageSize: 20,
+        status: "printed",
+        filters: {
+          tripStart: "2026-05-01",
+          tripEnd: "2026-05-31",
+          keyword: " 客户 ",
+          amountMin: "100",
+          amountMax: "900",
+          invoiceState: "has_unconfirmed",
+          category: "accommodation",
+          hasAttachment: "yes",
+          subsidyDaysMin: "2",
+          subsidyDaysMax: "5",
+        },
+      }),
+      {
+        page: 1,
+        page_size: 20,
+        status: "printed",
+        trip_start: "2026-05-01",
+        trip_end: "2026-05-31",
+        keyword: "客户",
+        amount_min: "100",
+        amount_max: "900",
+        invoice_state: "has_unconfirmed",
+        category: "accommodation",
+        has_attachment: true,
+        subsidy_days_min: "2",
+        subsidy_days_max: "5",
+      },
+    );
+  });
+
+  it("maps no attachment filter to false", () => {
+    assert.equal(
+      buildReportQueryParams({
+        filters: { hasAttachment: "no" },
+      }).has_attachment,
+      false,
+    );
+  });
+});

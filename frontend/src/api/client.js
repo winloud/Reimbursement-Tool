@@ -1,4 +1,5 @@
 import axios from "axios";
+import { buildReportQueryParams } from "./reportFilters";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -27,14 +28,15 @@ export const updateSettings = async (payload) => {
   return response.data;
 };
 
-export const getReports = async ({ page = 1, pageSize = 20, status } = {}) => {
+export const getReports = async ({ page = 1, pageSize = 20, status, filters } = {}) => {
   const response = await apiClient.get("/api/reports", {
-    params: {
-      page,
-      page_size: pageSize,
-      ...(status && status !== "all" ? { status } : {}),
-    },
+    params: buildReportQueryParams({ page, pageSize, status, filters }),
   });
+  return response.data;
+};
+
+export const getReportFilterOptions = async () => {
+  const response = await apiClient.get("/api/reports/filter-options");
   return response.data;
 };
 

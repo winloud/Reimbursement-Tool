@@ -4,14 +4,21 @@ from decimal import Decimal
 import re
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.trip import Trip
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportStatus, ReportUpdate, TripWrite
+from backend.schemas.report import (
+    ExpenseItemWrite,
+    ReportCreate,
+    ReportInvoiceState,
+    ReportStatus,
+    ReportUpdate,
+    TripWrite,
+)
 from backend.services.settings_service import get_or_create_settings
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
@@ -70,6 +77,21 @@ class SubsidyTrip:
     arrive: date
     subsidy_start: bool
     subsidy_end: bool
+
+
+@dataclass(frozen=True)
+class ReportFilters:
+    report_status: ReportStatus | None = None
+    trip_start: date | None = None
+    trip_end: date | None = None
+    keyword: str | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    invoice_state: ReportInvoiceState = "all"
+    category: str | None = None
+    has_attachment: bool | None = None
+    subsidy_days_min: int | None = None
+    subsidy_days_max: int | None = None
 
 
 def validate_status_transition(current_status: str, target_status: str) -> None:
@@ -332,29 +354,130 @@ def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     return report
 
 
+def trip_date_range(report: ExpenseReport, trip: Trip) -> tuple[date, date]:
+    report_year = report.report_date.year if report.report_date else date.today().year
+    depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
+    arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
+    arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
+    return depart, arrive
+
+
+def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
+    if trip_start is None and trip_end is None:
+        return True
+    if not report.trips:
+        return False
+
+    start = trip_start or date.min
+    end = trip_end or date.max
+    return any(depart <= end and arrive >= start for depart, arrive in (trip_date_range(report, trip) for trip in report.trips))
+
+
+def report_matches_keyword(report: ExpenseReport, keyword: str | None) -> bool:
+    normalized = (keyword or "").strip().lower()
+    if not normalized:
+        return True
+    values = [
+        str(report.id),
+        report.purpose or "",
+        report.employee_name or "",
+        report.department or "",
+    ]
+    return any(normalized in value.lower() for value in values)
+
+
+def active_invoices(report: ExpenseReport) -> list[Invoice]:
+    return [invoice for invoice in report.invoices if invoice.deleted_at is None]
+
+
+def report_matches_invoice_state(report: ExpenseReport, invoice_state: ReportInvoiceState) -> bool:
+    invoices = active_invoices(report)
+    if invoice_state == "all":
+        return True
+    if invoice_state == "no_invoice":
+        return not invoices
+    if invoice_state == "has_unconfirmed":
+        return any(not invoice.amount_confirmed for invoice in invoices)
+    if invoice_state == "all_confirmed":
+        return bool(invoices) and all(invoice.amount_confirmed for invoice in invoices)
+    return True
+
+
+def report_matches_category(report: ExpenseReport, category: str | None) -> bool:
+    normalized = (category or "").strip()
+    if not normalized:
+        return True
+    category_key = validate_expense_category(normalized)
+    return any(invoice.expense_category == category_key for invoice in active_invoices(report))
+
+
+def report_matches_filters(report: ExpenseReport, filters: ReportFilters) -> bool:
+    if not report_has_trip_overlap(report, filters.trip_start, filters.trip_end):
+        return False
+    if not report_matches_keyword(report, filters.keyword):
+        return False
+    if filters.amount_min is not None and report.total_amount < filters.amount_min:
+        return False
+    if filters.amount_max is not None and report.total_amount > filters.amount_max:
+        return False
+    if not report_matches_invoice_state(report, filters.invoice_state):
+        return False
+    if not report_matches_category(report, filters.category):
+        return False
+    if filters.has_attachment is not None and bool(active_invoices(report)) != filters.has_attachment:
+        return False
+    if filters.subsidy_days_min is not None and report.subsidy_days < filters.subsidy_days_min:
+        return False
+    if filters.subsidy_days_max is not None and report.subsidy_days > filters.subsidy_days_max:
+        return False
+    return True
+
+
+def list_report_category_options(db: Session) -> list[dict[str, str]]:
+    options = [{"value": category, "label": FIXED_CATEGORY_LABELS[category]} for category in EXPENSE_CATEGORIES]
+    seen = set(EXPENSE_CATEGORIES)
+    custom_items = db.scalars(
+        select(ExpenseItem.category)
+        .join(ExpenseReport, ExpenseItem.report_id == ExpenseReport.id)
+        .where(
+            ExpenseReport.deleted_at.is_(None),
+            ExpenseItem.category.like(f"{CUSTOM_CATEGORY_PREFIX}%"),
+        )
+        .order_by(ExpenseItem.category.asc())
+    ).all()
+
+    for category in custom_items:
+        if category in seen:
+            continue
+        options.append({"value": category, "label": custom_category_name(category)})
+        seen.add(category)
+    return options
+
+
 def list_reports(
     db: Session,
     page: int = 1,
     page_size: int = 20,
     report_status: ReportStatus | None = None,
+    filters: ReportFilters | None = None,
 ) -> tuple[list[ExpenseReport], int]:
+    filters = filters or ReportFilters(report_status=report_status)
+    report_status = filters.report_status if filters.report_status is not None else report_status
     statement: Select[tuple[ExpenseReport]] = select(ExpenseReport).where(ExpenseReport.deleted_at.is_(None))
-    count_statement = select(func.count()).select_from(ExpenseReport).where(ExpenseReport.deleted_at.is_(None))
 
     if report_status is not None:
         statement = statement.where(ExpenseReport.status == report_status)
-        count_statement = count_statement.where(ExpenseReport.status == report_status)
 
     statement = statement.order_by(
         ExpenseReport.report_date.is_(None),
         ExpenseReport.report_date.desc(),
         ExpenseReport.created_at.desc(),
     )
-    statement = statement.offset((page - 1) * page_size).limit(page_size)
 
-    items = list(db.scalars(statement).all())
-    total = int(db.scalar(count_statement) or 0)
-    return items, total
+    all_items = [report for report in db.scalars(statement).all() if report_matches_filters(report, filters)]
+    total = len(all_items)
+    start = (page - 1) * page_size
+    return all_items[start : start + page_size], total
 
 
 def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:

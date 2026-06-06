@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   buildCategoryChartData,
+  buildCategoryLegendItems,
   buildMonthCalendarWeeks,
   buildSummaryCards,
   buildYearCalendarMonths,
@@ -77,6 +78,19 @@ describe("dashboard utilities", () => {
       [
         { category: "luggage", label: "行李费", amount: 1530.72 },
         { category: "subsidy", label: "途中补贴", amount: 0 },
+      ],
+    );
+  });
+
+  it("builds category legend rows with amount and percent", () => {
+    assert.deepEqual(
+      buildCategoryLegendItems([
+        { category: "transport_fare", label: "车船费", amount: 300 },
+        { category: "subsidy", label: "途中补贴", amount: 100 },
+      ]),
+      [
+        { category: "transport_fare", label: "车船费", amountText: "¥300.00", percentText: "75.0%" },
+        { category: "subsidy", label: "途中补贴", amountText: "¥100.00", percentText: "25.0%" },
       ],
     );
   });

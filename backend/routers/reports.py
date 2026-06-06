@@ -1,4 +1,6 @@
 from typing import Annotated
+from datetime import date
+from decimal import Decimal
 
 from fastapi import APIRouter, Depends, Path, Query, Response
 from sqlalchemy.orm import Session
@@ -9,6 +11,8 @@ from backend.schemas.report import (
     PdfPreviewRead,
     ReportCreate,
     ReportDetailRead,
+    ReportFilterOptionsRead,
+    ReportInvoiceState,
     ReportRead,
     ReportStatus,
     ReportStatusUpdate,
@@ -22,8 +26,10 @@ from backend.services.pdf_generator import (
 )
 from backend.services.settings_service import get_or_create_settings
 from backend.services.report_service import (
+    ReportFilters,
     create_report,
     get_report_or_404,
+    list_report_category_options,
     list_reports,
     soft_delete_report,
     update_report,
@@ -38,10 +44,38 @@ def get_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: ReportStatus | None = None,
+    trip_start: date | None = None,
+    trip_end: date | None = None,
+    keyword: Annotated[str | None, Query(max_length=100)] = None,
+    amount_min: Annotated[Decimal | None, Query(ge=0)] = None,
+    amount_max: Annotated[Decimal | None, Query(ge=0)] = None,
+    invoice_state: ReportInvoiceState = "all",
+    category: Annotated[str | None, Query(max_length=60)] = None,
+    has_attachment: bool | None = None,
+    subsidy_days_min: Annotated[int | None, Query(ge=0)] = None,
+    subsidy_days_max: Annotated[int | None, Query(ge=0)] = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[PaginationData[ReportRead]]:
-    items, total = list_reports(db, page=page, page_size=page_size, report_status=status)
+    filters = ReportFilters(
+        report_status=status,
+        trip_start=trip_start,
+        trip_end=trip_end,
+        keyword=keyword,
+        amount_min=amount_min,
+        amount_max=amount_max,
+        invoice_state=invoice_state,
+        category=category,
+        has_attachment=has_attachment,
+        subsidy_days_min=subsidy_days_min,
+        subsidy_days_max=subsidy_days_max,
+    )
+    items, total = list_reports(db, page=page, page_size=page_size, filters=filters)
     return ApiResponse(data=PaginationData(items=items, total=total, page=page, page_size=page_size))
+
+
+@router.get("/filter-options", response_model=ApiResponse[ReportFilterOptionsRead])
+def get_report_filter_options(db: Session = Depends(get_db)) -> ApiResponse[ReportFilterOptionsRead]:
+    return ApiResponse(data=ReportFilterOptionsRead(categories=list_report_category_options(db)))
 
 
 @router.post("", response_model=ApiResponse[ReportRead])

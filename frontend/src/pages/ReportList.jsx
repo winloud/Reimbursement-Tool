@@ -6,11 +6,14 @@ import {
   Card,
   Chip,
   CircularProgress,
+  Collapse,
   Dialog,
   DialogActions,
   DialogContent,
   DialogContentText,
   DialogTitle,
+  InputAdornment,
+  MenuItem,
   Stack,
   Tab,
   Table,
@@ -21,10 +24,15 @@ import {
   TablePagination,
   TableRow,
   Tabs,
+  TextField,
   Typography,
 } from "@mui/material";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import SearchIcon from "@mui/icons-material/Search";
+import TuneIcon from "@mui/icons-material/Tune";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
-import { deleteReport, getReports } from "../api/client";
+import { deleteReport, getReportFilterOptions, getReports } from "../api/client";
+import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 
 const STATUS_TABS = [
   { value: "all", label: "全部" },
@@ -39,6 +47,31 @@ const STATUS_META = {
   reimbursed: { label: "已报销", color: "success" },
 };
 
+const INVOICE_STATE_OPTIONS = [
+  { value: "all", label: "全部发票" },
+  { value: "has_unconfirmed", label: "有未确认发票" },
+  { value: "all_confirmed", label: "全部已确认" },
+  { value: "no_invoice", label: "无发票" },
+];
+
+const CATEGORY_OPTIONS = [
+  { value: "", label: "全部类别" },
+  { value: "transport_fare", label: "车船费" },
+  { value: "luggage", label: "行李费" },
+  { value: "city_transport", label: "市内交通费" },
+  { value: "accommodation", label: "住宿费" },
+  { value: "postal", label: "邮电费" },
+  { value: "no_sleeper_subsidy", label: "未乘卧铺补助" },
+  { value: "toll", label: "过路费" },
+  { value: "fuel_subsidy", label: "燃油补助" },
+];
+
+const HAS_ATTACHMENT_OPTIONS = [
+  { value: "all", label: "附件不限" },
+  { value: "yes", label: "有附件" },
+  { value: "no", label: "无附件" },
+];
+
 const formatAmount = (value) =>
   `¥${Number(value ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
@@ -47,6 +80,9 @@ const formatDate = (value) => value || "—";
 export default function ReportList() {
   const navigate = useNavigate();
   const [status, setStatus] = useState("all");
+  const [filters, setFilters] = useState(() => ({ ...DEFAULT_REPORT_FILTERS }));
+  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [categoryOptions, setCategoryOptions] = useState(CATEGORY_OPTIONS);
   const [page, setPage] = useState(0);
   const [pageSize, setPageSize] = useState(20);
   const [items, setItems] = useState([]);
@@ -60,7 +96,7 @@ export default function ReportList() {
     setLoading(true);
     setError("");
     try {
-      const res = await getReports({ page: page + 1, pageSize, status });
+      const res = await getReports({ page: page + 1, pageSize, status, filters });
       if (res.success) {
         setItems(res.data.items);
         setTotal(res.data.total);
@@ -72,16 +108,65 @@ export default function ReportList() {
     } finally {
       setLoading(false);
     }
-  }, [page, pageSize, status]);
+  }, [filters, page, pageSize, status]);
 
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
 
+  useEffect(() => {
+    let ignore = false;
+    const fetchOptions = async () => {
+      try {
+        const res = await getReportFilterOptions();
+        if (!ignore && res.success) {
+          setCategoryOptions([{ value: "", label: "全部类别" }, ...(res.data.categories || [])]);
+        }
+      } catch {
+        // 固定类别兜底即可，筛选列表加载失败不影响报销单列表使用。
+      }
+    };
+    fetchOptions();
+    return () => {
+      ignore = true;
+    };
+  }, []);
+
   const handleStatusChange = (_event, value) => {
     setStatus(value);
     setPage(0);
   };
+
+  const handleFilterChange = (key) => (event) => {
+    setFilters((current) => ({ ...current, [key]: event.target.value }));
+    setPage(0);
+  };
+
+  const handleResetFilters = () => {
+    setFilters({ ...DEFAULT_REPORT_FILTERS });
+    setPage(0);
+  };
+
+  const clearFilter = (key) => {
+    setFilters((current) => ({ ...current, [key]: DEFAULT_REPORT_FILTERS[key] }));
+    setPage(0);
+  };
+
+  const categoryLabel = (value) => categoryOptions.find((option) => option.value === value)?.label || value;
+  const invoiceStateLabel = (value) => INVOICE_STATE_OPTIONS.find((option) => option.value === value)?.label || value;
+  const attachmentLabel = (value) => HAS_ATTACHMENT_OPTIONS.find((option) => option.value === value)?.label || value;
+  const activeFilterChips = [
+    filters.keyword && { key: "keyword", label: `关键词：${filters.keyword}` },
+    filters.tripStart && { key: "tripStart", label: `开始：${filters.tripStart}` },
+    filters.tripEnd && { key: "tripEnd", label: `结束：${filters.tripEnd}` },
+    filters.category && { key: "category", label: `类别：${categoryLabel(filters.category)}` },
+    filters.amountMin && { key: "amountMin", label: `金额下限：${filters.amountMin}` },
+    filters.amountMax && { key: "amountMax", label: `金额上限：${filters.amountMax}` },
+    filters.invoiceState !== "all" && { key: "invoiceState", label: `发票：${invoiceStateLabel(filters.invoiceState)}` },
+    filters.hasAttachment !== "all" && { key: "hasAttachment", label: attachmentLabel(filters.hasAttachment) },
+    filters.subsidyDaysMin && { key: "subsidyDaysMin", label: `天数下限：${filters.subsidyDaysMin}` },
+    filters.subsidyDaysMax && { key: "subsidyDaysMax", label: `天数上限：${filters.subsidyDaysMax}` },
+  ].filter(Boolean);
 
   const handleConfirmDelete = async () => {
     if (!pendingDelete) return;
@@ -109,7 +194,7 @@ export default function ReportList() {
           <Typography variant="h5" fontWeight={700}>
             报销单管理
           </Typography>
-          <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与状态筛选。</Typography>
+          <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
         </div>
         <Button component={RouterLink} to="/reports/new" variant="contained">
           新增报销单
@@ -124,6 +209,155 @@ export default function ReportList() {
             <Tab key={tab.value} value={tab.value} label={tab.label} />
           ))}
         </Tabs>
+
+        <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
+          <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} alignItems={{ xs: "stretch", lg: "center" }}>
+            <TextField
+              size="small"
+              label="关键词"
+              value={filters.keyword}
+              onChange={handleFilterChange("keyword")}
+              placeholder="事由 / 人员 / 部门 / ID"
+              sx={{ minWidth: { lg: 260 }, flex: 1.4 }}
+              InputProps={{
+                startAdornment: (
+                  <InputAdornment position="start">
+                    <SearchIcon fontSize="small" />
+                  </InputAdornment>
+                ),
+              }}
+            />
+            <TextField
+              size="small"
+              label="行程开始"
+              type="date"
+              value={filters.tripStart}
+              onChange={handleFilterChange("tripStart")}
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: { lg: 158 } }}
+            />
+            <TextField
+              size="small"
+              label="行程结束"
+              type="date"
+              value={filters.tripEnd}
+              onChange={handleFilterChange("tripEnd")}
+              InputLabelProps={{ shrink: true }}
+              sx={{ minWidth: { lg: 158 } }}
+            />
+            <TextField
+              select
+              size="small"
+              label="费用类别"
+              value={filters.category}
+              onChange={handleFilterChange("category")}
+              sx={{ minWidth: { lg: 170 } }}
+            >
+              {categoryOptions.map((option) => (
+                <MenuItem key={option.value} value={option.value}>
+                  {option.label}
+                </MenuItem>
+              ))}
+            </TextField>
+            <Button
+              variant={advancedOpen ? "contained" : "outlined"}
+              startIcon={<TuneIcon />}
+              endIcon={
+                <ExpandMoreIcon
+                  sx={{
+                    transform: advancedOpen ? "rotate(180deg)" : "rotate(0deg)",
+                    transition: "transform 160ms ease",
+                  }}
+                />
+              }
+              onClick={() => setAdvancedOpen((open) => !open)}
+              sx={{ minHeight: 40, whiteSpace: "nowrap" }}
+            >
+              更多筛选
+            </Button>
+            <Button variant="text" onClick={handleResetFilters} disabled={activeFilterChips.length === 0}>
+              重置
+            </Button>
+          </Stack>
+
+          <Collapse in={advancedOpen} timeout="auto" unmountOnExit>
+            <Box
+              sx={{
+                mt: 1.5,
+                display: "grid",
+                gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
+                gap: 1.5,
+              }}
+            >
+              <TextField
+                size="small"
+                label="金额下限"
+                type="number"
+                value={filters.amountMin}
+                onChange={handleFilterChange("amountMin")}
+                inputProps={{ min: 0, step: "0.01" }}
+              />
+              <TextField
+                size="small"
+                label="金额上限"
+                type="number"
+                value={filters.amountMax}
+                onChange={handleFilterChange("amountMax")}
+                inputProps={{ min: 0, step: "0.01" }}
+              />
+              <TextField
+                select
+                size="small"
+                label="发票状态"
+                value={filters.invoiceState}
+                onChange={handleFilterChange("invoiceState")}
+              >
+                {INVOICE_STATE_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                select
+                size="small"
+                label="附件"
+                value={filters.hasAttachment}
+                onChange={handleFilterChange("hasAttachment")}
+              >
+                {HAS_ATTACHMENT_OPTIONS.map((option) => (
+                  <MenuItem key={option.value} value={option.value}>
+                    {option.label}
+                  </MenuItem>
+                ))}
+              </TextField>
+              <TextField
+                size="small"
+                label="天数下限"
+                type="number"
+                value={filters.subsidyDaysMin}
+                onChange={handleFilterChange("subsidyDaysMin")}
+                inputProps={{ min: 0, step: 1 }}
+              />
+              <TextField
+                size="small"
+                label="天数上限"
+                type="number"
+                value={filters.subsidyDaysMax}
+                onChange={handleFilterChange("subsidyDaysMax")}
+                inputProps={{ min: 0, step: 1 }}
+              />
+            </Box>
+          </Collapse>
+
+          {activeFilterChips.length > 0 && (
+            <Stack direction="row" flexWrap="wrap" sx={{ gap: 1, mt: 1.5 }}>
+              {activeFilterChips.map((chip) => (
+                <Chip key={chip.key} size="small" label={chip.label} onDelete={() => clearFilter(chip.key)} />
+              ))}
+            </Stack>
+          )}
+        </Box>
 
         <TableContainer>
           <Table>

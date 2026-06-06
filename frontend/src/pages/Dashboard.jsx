@@ -28,6 +28,7 @@ import {
   Pie,
   PieChart,
   ResponsiveContainer,
+  Sector,
   Tooltip,
   XAxis,
   YAxis,
@@ -35,6 +36,7 @@ import {
 import { getStatsCalendar, getStatsCategory, getStatsSummary } from "../api/client";
 import {
   buildCategoryChartData,
+  buildCategoryLegendItems,
   buildMonthCalendarWeeks,
   buildSummaryCards,
   buildYearCalendarMonths,
@@ -52,6 +54,7 @@ export default function Dashboard() {
   const [selectedYear, setSelectedYear] = useState(today.getFullYear());
   const [selectedMonth, setSelectedMonth] = useState(today.getMonth() + 1);
   const [monthDialogOpen, setMonthDialogOpen] = useState(false);
+  const [activeCategoryIndex, setActiveCategoryIndex] = useState(null);
   const [loading, setLoading] = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [error, setError] = useState("");
@@ -101,6 +104,7 @@ export default function Dashboard() {
   const cards = useMemo(() => buildSummaryCards(summary), [summary]);
   const trendData = summary?.monthly_trend || [];
   const categoryData = useMemo(() => buildCategoryChartData(category?.items || []), [category?.items]);
+  const categoryLegendItems = useMemo(() => buildCategoryLegendItems(categoryData), [categoryData]);
   const yearDates = calendar?.year_dates || [];
   const yearMonths = useMemo(() => buildYearCalendarMonths(selectedYear, yearDates), [selectedYear, yearDates]);
   const yearOptions = useMemo(() => {
@@ -134,7 +138,7 @@ export default function Dashboard() {
           总览看板
         </Typography>
         <Typography variant="body2" color="text.secondary">
-          金额统计不含草稿，趋势图使用已报销口径
+          快速查看报销进度、出差天数和年度出差分布
         </Typography>
       </Box>
 
@@ -162,7 +166,7 @@ export default function Dashboard() {
 
       <Grid container spacing={2.5}>
         <Grid item xs={12} lg={7}>
-          <Card sx={{ height: 360, borderRadius: 2 }}>
+          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
             <CardContent sx={{ height: "100%" }}>
               <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ mb: 2 }}>
                 <Box>
@@ -170,11 +174,11 @@ export default function Dashboard() {
                     近 6 个月趋势
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
-                    已报销金额与已报销出差天数
+                    按月对比已报销金额和出差天数
                   </Typography>
                 </Box>
               </Stack>
-              <Box sx={{ height: 260 }}>
+              <Box sx={{ height: 300 }}>
                 <ResponsiveContainer width="100%" height="100%">
                   <LineChart data={trendData} margin={{ top: 8, right: 16, bottom: 0, left: 0 }}>
                     <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -209,29 +213,85 @@ export default function Dashboard() {
         </Grid>
 
         <Grid item xs={12} lg={5}>
-          <Card sx={{ height: 360, borderRadius: 2 }}>
+          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
             <CardContent sx={{ height: "100%" }}>
               <Typography variant="h6" fontWeight={800}>
                 已报销费用分布
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                包含途中补贴
+                查看已报销费用的类别占比
               </Typography>
               {categoryData.length === 0 ? (
                 <EmptyPanel text="暂无已报销费用数据" />
               ) : (
-                <Box sx={{ height: 260 }}>
+                <Box sx={{ height: { xs: 190, sm: 220, lg: 255 } }}>
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
-                      <Pie data={categoryData} dataKey="amount" nameKey="label" innerRadius={54} outerRadius={88} paddingAngle={2}>
+                      <Pie
+                        data={categoryData}
+                        dataKey="amount"
+                        nameKey="label"
+                        innerRadius="48%"
+                        outerRadius="78%"
+                        paddingAngle={2}
+                        isAnimationActive
+                        animationBegin={120}
+                        animationDuration={900}
+                        animationEasing="ease-out"
+                        activeIndex={activeCategoryIndex ?? undefined}
+                        activeShape={renderActivePieSector}
+                        onMouseEnter={(_, index) => setActiveCategoryIndex(index)}
+                        onMouseLeave={() => setActiveCategoryIndex(null)}
+                      >
                         {categoryData.map((item, index) => (
                           <Cell key={item.category} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
                         ))}
                       </Pie>
                       <Tooltip formatter={(value) => formatStatsAmount(value)} />
-                      <Legend />
                     </PieChart>
                   </ResponsiveContainer>
+                </Box>
+              )}
+              {categoryLegendItems.length > 0 && (
+                <Box
+                  sx={{
+                    display: "grid",
+                    gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
+                    columnGap: 4,
+                    rowGap: 0.75,
+                    mt: 1,
+                  }}
+                >
+                  {categoryLegendItems.map((item, index) => (
+                    <Box
+                      key={item.category}
+                      sx={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: 0.75,
+                        minWidth: 0,
+                      }}
+                    >
+                      <Box
+                        sx={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: "50%",
+                          bgcolor: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
+                          flex: "0 0 auto",
+                        }}
+                      />
+                      <Typography variant="caption" noWrap sx={{ flex: 1 }}>
+                        {item.label}
+                      </Typography>
+                      <Typography variant="caption" fontWeight={700}>
+                        {item.amountText}
+                      </Typography>
+                      <Typography variant="caption" color="text.secondary">
+                        {item.percentText}
+                      </Typography>
+                    </Box>
+                  ))}
                 </Box>
               )}
             </CardContent>
@@ -304,6 +364,22 @@ export default function Dashboard() {
         </DialogContent>
       </Dialog>
     </Stack>
+  );
+}
+
+function renderActivePieSector(props) {
+  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
+  return (
+    <Sector
+      cx={cx}
+      cy={cy}
+      innerRadius={innerRadius}
+      outerRadius={outerRadius + 8}
+      startAngle={startAngle}
+      endAngle={endAngle}
+      fill={fill}
+      style={{ filter: "drop-shadow(0 6px 10px rgba(15, 23, 42, 0.22))" }}
+    />
   );
 }
 
