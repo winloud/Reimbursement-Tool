@@ -17,6 +17,11 @@ export const getSettings = async () => {
   return response.data;
 };
 
+export const getSettingFonts = async () => {
+  const response = await apiClient.get("/api/settings/fonts");
+  return response.data;
+};
+
 export const updateSettings = async (payload) => {
   const response = await apiClient.put("/api/settings", payload);
   return response.data;

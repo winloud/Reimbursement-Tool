@@ -14,4 +14,5 @@ class Settings(Base):
     department: Mapped[str | None] = mapped_column(String, nullable=True)
     employee_name: Mapped[str | None] = mapped_column(String, nullable=True)
     daily_subsidy: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
+    pdf_fill_font_key: Mapped[str] = mapped_column(String, default="system:simsun", nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

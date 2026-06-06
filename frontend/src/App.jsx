@@ -14,16 +14,19 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+import SettingsIcon from "@mui/icons-material/Settings";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { NavigationGuardProvider, useNavigationGuard } from "./navigationGuard";
 import Dashboard from "./pages/Dashboard";
 import ReportEdit from "./pages/ReportEdit";
 import ReportList from "./pages/ReportList";
 import ReportPrint from "./pages/ReportPrint";
+import SettingsPage from "./pages/SettingsPage";
 
 const NAV_ITEMS = [
   { label: "总览看板", to: "/", icon: <DashboardIcon fontSize="small" /> },
   { label: "报销单管理", to: "/reports", icon: <ReceiptLongIcon fontSize="small" /> },
+  { label: "个性化设置", to: "/settings", icon: <SettingsIcon fontSize="small" /> },
 ];
 
 const APP_CONTENT_MAX_WIDTH = 1440;
@@ -105,6 +108,7 @@ function AppRoutes() {
             <Route path="/reports/new" element={<ReportEdit />} />
             <Route path="/reports/:id/edit" element={<ReportEdit />} />
             <Route path="/reports/:id/print" element={<ReportPrint />} />
+            <Route path="/settings" element={<SettingsPage />} />
           </Routes>
         </Box>
       </Box>

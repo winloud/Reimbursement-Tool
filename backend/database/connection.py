@@ -37,6 +37,9 @@ def migrate_sqlite_schema() -> None:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_start BOOLEAN NOT NULL DEFAULT 0"))
         if "subsidy_end" not in trip_columns:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_end BOOLEAN NOT NULL DEFAULT 0"))
+        settings_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(settings)")).fetchall()}
+        if "pdf_fill_font_key" not in settings_columns:
+            connection.execute(text("ALTER TABLE settings ADD COLUMN pdf_fill_font_key VARCHAR DEFAULT 'system:simsun'"))
 
 
 def recalculate_existing_reports() -> None:

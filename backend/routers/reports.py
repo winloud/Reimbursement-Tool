@@ -20,6 +20,7 @@ from backend.services.pdf_generator import (
     content_disposition_for_filename,
     render_report_preview_pages,
 )
+from backend.services.settings_service import get_or_create_settings
 from backend.services.report_service import (
     create_report,
     get_report_or_404,
@@ -62,7 +63,11 @@ def get_report_pdf_preview(
     db: Session = Depends(get_db),
 ) -> ApiResponse[PdfPreviewRead]:
     report = get_report_or_404(db, report_id)
-    return ApiResponse(data=PdfPreviewRead(pages=render_report_preview_pages(report)), message="PDF 预览已生成")
+    settings = get_or_create_settings(db)
+    return ApiResponse(
+        data=PdfPreviewRead(pages=render_report_preview_pages(report, settings.pdf_fill_font_key)),
+        message="PDF 预览已生成",
+    )
 
 
 @router.get("/{report_id}/pdf")
@@ -71,7 +76,8 @@ def get_report_pdf(
     db: Session = Depends(get_db),
 ) -> Response:
     report = get_report_or_404(db, report_id)
-    pdf_bytes = build_merged_report_pdf(report)
+    settings = get_or_create_settings(db)
+    pdf_bytes = build_merged_report_pdf(report, settings.pdf_fill_font_key)
     filename = build_pdf_filename(report)
     if report.status == "draft":
         report.status = "printed"
