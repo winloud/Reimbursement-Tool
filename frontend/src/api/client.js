@@ -127,3 +127,23 @@ export const deleteInvoice = async (id) => {
 };
 
 export const getInvoiceFileUrl = (id) => `${apiClient.defaults.baseURL}/api/invoices/${id}/file`;
+
+export const getStatsSummary = async () => {
+  const response = await apiClient.get("/api/stats/summary");
+  return response.data;
+};
+
+export const getStatsCategory = async () => {
+  const response = await apiClient.get("/api/stats/category");
+  return response.data;
+};
+
+export const getStatsCalendar = async ({ year, month } = {}) => {
+  const response = await apiClient.get("/api/stats/calendar", {
+    params: {
+      ...(year ? { year } : {}),
+      ...(month ? { month } : {}),
+    },
+  });
+  return response.data;
+};
