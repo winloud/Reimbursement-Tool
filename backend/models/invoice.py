@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,6 +12,7 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    invoice_uid: Mapped[str] = mapped_column(String, default=lambda: uuid4().hex, nullable=False, unique=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("expense_reports.id"), nullable=False, index=True)
     trip_id: Mapped[int | None] = mapped_column(ForeignKey("trips.id"), nullable=True, index=True)
     expense_category: Mapped[str] = mapped_column(String, nullable=False)

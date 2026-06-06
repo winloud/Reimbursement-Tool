@@ -136,6 +136,7 @@ reimbursement-tool/
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | INTEGER PK | 自增主键 |
+| report_uid | TEXT UNIQUE | 后台稳定唯一标识，用于导入导出冲突判断，不作为用户可见报销单号 |
 | status | TEXT | 状态：`draft` / `printed` / `reimbursed` |
 | report_date | DATE | 报销日期 |
 | department | TEXT | 部门 |
@@ -158,6 +159,7 @@ reimbursement-tool/
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | INTEGER PK | 自增主键 |
+| invoice_uid | TEXT UNIQUE | 后台稳定唯一标识，用于导入导出发票和附件匹配 |
 | report_id | INTEGER FK | 关联报销单 |
 | sort_order | INTEGER | 行程顺序（从 1 开始） |
 | depart_month | INTEGER | 出发月 |
@@ -206,7 +208,7 @@ reimbursement-tool/
 | report_id | INTEGER FK | 关联报销单 |
 | trip_id | INTEGER FK | 关联行程（车船费专用，其他类别为 NULL） |
 | expense_category | TEXT | 费用类别（与 expense_items.category 枚举一致） |
-| file_path | TEXT | 文件存储相对路径（`uploads/{report_id}/{expense_category}_invoice_{uuid}.{ext}`） |
+| file_path | TEXT | 文件存储相对路径（`uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`） |
 | file_type | TEXT | 文件类型：`pdf` / `image` |
 | invoice_no | TEXT | 发票号码（解析获取，可为空） |
 | invoice_date | DATE | 发票日期（解析获取，可为空） |
@@ -280,6 +282,18 @@ reimbursement-tool/
 | GET | `/api/stats/summary` | 看板汇总数据：本月/今年待报销与已报销金额、单数、出差天数，以及近 6 个月已报销金额和出差天数趋势 |
 | GET | `/api/stats/category` | 已报销费用类别分布，包含发票类别和途中补贴 |
 | GET | `/api/stats/calendar?year={year}&month={month}` | 出差日历数据：全年出差日期、全年出差天数、选中月份出差日期 |
+
+### 5.6 数据导入导出
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| POST | `/api/data/export` | 按筛选条件导出完整报销数据 ZIP，包含 manifest 和发票附件 |
+| POST | `/api/data/import/preview` | 上传 ZIP 并生成导入预览，校验版本、附件完整性、UID 冲突和恶意路径 |
+| POST | `/api/data/import/execute` | 按预览 ID 和冲突策略执行导入；执行前强制备份数据库和受影响附件 |
+
+**导入冲突口径：**
+- 只将未删除的本地报销单和发票作为 UID 冲突对象；已软删除记录不再提示重复
+- 若导入包 UID 与软删除记录重复，导入新增时自动生成新的本地 UID，避免唯一索引冲突
+- 导入预览和执行结果仅展示来源 UID，不将来源 UID 持久保存到业务表
 
 ---
 
@@ -674,6 +688,30 @@ Phase 5 当前验证基线：
 Phase 5.1 验证基线：
 - 后端：`python -m pytest`，76 passed
 - 前端工具函数：`node --test frontend/src/**/*.test.js`，19 passed
+- 前端构建：`npm run build`，通过；Vite chunk size 警告不影响当前功能
+
+---
+
+### Phase 5.2：完整报销数据 ZIP 导入导出
+**验收标准：可按筛选条件导出完整报销数据和发票附件；导入前可预览冲突，执行前自动备份，导入后数据和附件关联正确**
+
+- [x] `expense_reports.report_uid` 和 `invoices.invoice_uid` 后台稳定 UID 字段
+- [x] SQLite 安全迁移：先补列、为历史数据补 UID，再创建唯一索引
+- [x] 发票附件正式存储规则统一为 `uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`
+- [x] `POST /api/data/export`：按 Phase5.1 筛选条件导出 ZIP，包含 manifest、报销单、行程、费用项、发票元数据和附件
+- [x] `POST /api/data/import/preview`：保存临时 ZIP，校验 schema、附件 hash、路径安全，并返回 UID 冲突预览
+- [x] `POST /api/data/import/execute`：支持新增、覆盖、跳过策略；覆盖已报销记录需要二次确认
+- [x] 导入执行前自动备份 SQLite 数据库和受影响附件目录到 `data/backups/import_{timestamp}_*/`
+- [x] 导入冲突判断忽略已软删除报销单和发票；删除后再导入按新增处理，并自动生成新的本地 UID
+- [x] 导入执行时重新映射本地 ID，不复用 ZIP 内原始数据库 ID；UID 冲突新增时自动生成新 UID
+- [x] `.gitignore` 忽略 `data/import_staging/` 和 `data/backups/`，保留 `data/.gitkeep`
+- [x] 报销单管理页新增“导出当前筛选”和“导入数据包”入口；导入弹窗支持预览、策略选择、二次确认和结果摘要
+- [x] 后端测试覆盖 UID 生成、导出 manifest、恶意路径拒绝、冲突新增 UID 重生成和附件写入
+- [x] 前端工具测试覆盖导出 payload 不包含分页参数
+
+Phase 5.2 验证基线：
+- 后端：`python -m pytest`，81 passed
+- 前端工具函数：`node --test frontend/src/**/*.test.js`，20 passed
 - 前端构建：`npm run build`，通过；Vite chunk size 警告不影响当前功能
 
 ---

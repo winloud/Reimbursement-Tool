@@ -30,6 +30,8 @@ node_modules/
 
 # Local SQLite data
 data/*.db
+data/import_staging/
+data/backups/
 
 # Backend uploads
 backend/uploads/

@@ -1,4 +1,5 @@
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase
@@ -32,6 +33,7 @@ def create_db_and_tables() -> None:
 
 def migrate_sqlite_schema() -> None:
     with engine.begin() as connection:
+        tables = {row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         trip_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(trips)")).fetchall()}
         if "subsidy_start" not in trip_columns:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_start BOOLEAN NOT NULL DEFAULT 0"))
@@ -40,6 +42,34 @@ def migrate_sqlite_schema() -> None:
         settings_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(settings)")).fetchall()}
         if "pdf_fill_font_key" not in settings_columns:
             connection.execute(text("ALTER TABLE settings ADD COLUMN pdf_fill_font_key VARCHAR DEFAULT 'system:simsun'"))
+        if "expense_reports" in tables:
+            report_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_reports)")).fetchall()}
+            if "report_uid" not in report_columns:
+                connection.execute(text("ALTER TABLE expense_reports ADD COLUMN report_uid VARCHAR"))
+            backfill_unique_uid(connection, "expense_reports", "report_uid")
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_expense_reports_report_uid ON expense_reports(report_uid)"))
+        if "invoices" in tables:
+            invoice_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(invoices)")).fetchall()}
+            if "invoice_uid" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_uid VARCHAR"))
+            backfill_unique_uid(connection, "invoices", "invoice_uid")
+            connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_invoices_invoice_uid ON invoices(invoice_uid)"))
+
+
+def backfill_unique_uid(connection, table_name: str, column_name: str) -> None:
+    rows = connection.execute(text(f"SELECT id, {column_name} FROM {table_name} ORDER BY id")).fetchall()
+    seen: set[str] = set()
+    for row_id, current_uid in rows:
+        uid = (current_uid or "").strip()
+        if not uid or uid in seen:
+            uid = uuid4().hex
+            while uid in seen:
+                uid = uuid4().hex
+            connection.execute(
+                text(f"UPDATE {table_name} SET {column_name} = :uid WHERE id = :id"),
+                {"uid": uid, "id": row_id},
+            )
+        seen.add(uid)
 
 
 def recalculate_existing_reports() -> None:

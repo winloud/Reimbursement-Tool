@@ -1,5 +1,5 @@
 import axios from "axios";
-import { buildReportQueryParams } from "./reportFilters";
+import { buildReportExportPayload, buildReportQueryParams } from "./reportFilters";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
 
@@ -37,6 +37,42 @@ export const getReports = async ({ page = 1, pageSize = 20, status, filters } = 
 
 export const getReportFilterOptions = async () => {
   const response = await apiClient.get("/api/reports/filter-options");
+  return response.data;
+};
+
+export const downloadDataExport = async ({ status, filters } = {}) => {
+  try {
+    const response = await apiClient.post("/api/data/export", buildReportExportPayload({ status, filters }), {
+      responseType: "blob",
+    });
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
+    };
+  } catch (err) {
+    if (err.response?.data instanceof Blob) {
+      const text = await err.response.data.text();
+      try {
+        err.response.data = JSON.parse(text);
+      } catch {
+        err.response.data = { message: text };
+      }
+    }
+    throw err;
+  }
+};
+
+export const previewDataImport = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiClient.post("/api/data/import/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+};
+
+export const executeDataImport = async (payload) => {
+  const response = await apiClient.post("/api/data/import/execute", payload);
   return response.data;
 };
 

@@ -119,6 +119,30 @@ def save_upload_file(upload_file: UploadFile, report_id: int, expense_category: 
     return relative_path.as_posix()
 
 
+def build_invoice_storage_path(report_id: int, invoice_id: int, expense_category: str, file_hash: str, ext: str) -> Path:
+    filename_prefix = safe_category_filename_prefix(expense_category)
+    safe_ext = ext.lower() if ext.startswith(".") else f".{ext.lower()}"
+    return Path("uploads") / str(report_id) / f"{invoice_id}_{filename_prefix}_{file_hash[:8]}_{uuid4().hex}{safe_ext}"
+
+
+def relocate_invoice_file(invoice: Invoice, file_hash: str) -> None:
+    current_relative = Path(invoice.file_path)
+    source = PROJECT_ROOT / "backend" / current_relative
+    if not source.exists():
+        return
+    final_relative = build_invoice_storage_path(
+        report_id=invoice.report_id,
+        invoice_id=invoice.id,
+        expense_category=invoice.expense_category,
+        file_hash=file_hash,
+        ext=source.suffix or invoice.file_type,
+    )
+    target = PROJECT_ROOT / "backend" / final_relative
+    target.parent.mkdir(parents=True, exist_ok=True)
+    source.replace(target)
+    invoice.file_path = final_relative.as_posix()
+
+
 def upload_invoice(
     db: Session,
     report_id: int,
@@ -159,6 +183,7 @@ def upload_invoice(
     )
     db.add(invoice)
     db.flush()
+    relocate_invoice_file(invoice, upload_hash)
     recalculate_report_totals(report)
     db.commit()
     db.refresh(invoice)

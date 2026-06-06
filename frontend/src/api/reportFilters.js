@@ -59,3 +59,13 @@ export const buildReportQueryParams = ({ page = 1, pageSize = 20, status = "all"
 
   return params;
 };
+
+export const buildReportExportPayload = ({ status = "all", filters = {} } = {}) => {
+  const { page: _page, page_size: _pageSize, ...payload } = buildReportQueryParams({
+    page: 1,
+    pageSize: 20,
+    status,
+    filters,
+  });
+  return payload;
+};

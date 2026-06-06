@@ -4,6 +4,7 @@ import {
   Box,
   Button,
   Card,
+  Checkbox,
   Chip,
   CircularProgress,
   Collapse,
@@ -12,6 +13,7 @@ import {
   DialogContent,
   DialogContentText,
   DialogTitle,
+  FormControlLabel,
   InputAdornment,
   MenuItem,
   Stack,
@@ -27,11 +29,20 @@ import {
   TextField,
   Typography,
 } from "@mui/material";
+import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
+import UploadFileIcon from "@mui/icons-material/UploadFile";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
-import { deleteReport, getReportFilterOptions, getReports } from "../api/client";
+import {
+  deleteReport,
+  downloadDataExport,
+  executeDataImport,
+  getReportFilterOptions,
+  getReports,
+  previewDataImport,
+} from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 
 const STATUS_TABS = [
@@ -91,6 +102,15 @@ export default function ReportList() {
   const [error, setError] = useState("");
   const [pendingDelete, setPendingDelete] = useState(null);
   const [deleting, setDeleting] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [importOpen, setImportOpen] = useState(false);
+  const [importFile, setImportFile] = useState(null);
+  const [importPreview, setImportPreview] = useState(null);
+  const [importStrategy, setImportStrategy] = useState("import_as_new");
+  const [confirmReimbursedOverwrite, setConfirmReimbursedOverwrite] = useState(false);
+  const [importLoading, setImportLoading] = useState(false);
+  const [importError, setImportError] = useState("");
+  const [importResult, setImportResult] = useState(null);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -187,6 +207,82 @@ export default function ReportList() {
     }
   };
 
+  const handleExport = async () => {
+    setExporting(true);
+    setError("");
+    try {
+      const { blob, filename } = await downloadDataExport({ status, filters });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = filename || "expense-data.zip";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.response?.data?.message || err.message || "导出失败");
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  const resetImportDialog = () => {
+    setImportFile(null);
+    setImportPreview(null);
+    setImportStrategy("import_as_new");
+    setConfirmReimbursedOverwrite(false);
+    setImportError("");
+    setImportResult(null);
+  };
+
+  const handleOpenImport = () => {
+    resetImportDialog();
+    setImportOpen(true);
+  };
+
+  const handlePreviewImport = async () => {
+    if (!importFile) return;
+    setImportLoading(true);
+    setImportError("");
+    setImportResult(null);
+    try {
+      const res = await previewDataImport(importFile);
+      if (res.success) {
+        setImportPreview(res.data);
+      } else {
+        setImportError(res.message || "导入预览失败");
+      }
+    } catch (err) {
+      setImportError(err.response?.data?.message || err.message || "导入预览失败");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
+  const handleExecuteImport = async () => {
+    if (!importPreview) return;
+    setImportLoading(true);
+    setImportError("");
+    try {
+      const res = await executeDataImport({
+        preview_id: importPreview.preview_id,
+        strategy: importStrategy,
+        confirm_reimbursed_overwrite: confirmReimbursedOverwrite,
+      });
+      if (res.success) {
+        setImportResult(res.data);
+        await fetchReports();
+      } else {
+        setImportError(res.message || "导入失败");
+      }
+    } catch (err) {
+      setImportError(err.response?.data?.message || err.message || "导入失败");
+    } finally {
+      setImportLoading(false);
+    }
+  };
+
   return (
     <Stack spacing={3}>
       <Stack direction="row" justifyContent="space-between" alignItems="center">
@@ -196,9 +292,17 @@ export default function ReportList() {
           </Typography>
           <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
         </div>
-        <Button component={RouterLink} to="/reports/new" variant="contained">
-          新增报销单
-        </Button>
+        <Stack direction="row" spacing={1} alignItems="center">
+          <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={handleOpenImport}>
+            导入数据包
+          </Button>
+          <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleExport} disabled={exporting}>
+            {exporting ? "导出中..." : "导出当前筛选"}
+          </Button>
+          <Button component={RouterLink} to="/reports/new" variant="contained">
+            新增报销单
+          </Button>
+        </Stack>
       </Stack>
 
       {error && <Alert severity="error">{error}</Alert>}
@@ -447,6 +551,119 @@ export default function ReportList() {
           </Button>
           <Button onClick={handleConfirmDelete} color="error" disabled={deleting}>
             {deleting ? "删除中..." : "确认删除"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={importOpen} onClose={() => !importLoading && setImportOpen(false)} maxWidth="md" fullWidth>
+        <DialogTitle>导入报销数据包</DialogTitle>
+        <DialogContent>
+          <Stack spacing={2} sx={{ mt: 1 }}>
+            {importError && <Alert severity="error">{importError}</Alert>}
+            {importResult && (
+              <Alert severity="success">
+                导入完成：新增 {importResult.reports_created} 单，覆盖 {importResult.reports_overwritten} 单，跳过{" "}
+                {importResult.reports_skipped} 单；备份位置：{importResult.backup_path}
+              </Alert>
+            )}
+            <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} alignItems={{ xs: "stretch", sm: "center" }}>
+              <Button component="label" variant="outlined" startIcon={<UploadFileIcon />}>
+                选择 ZIP
+                <input
+                  hidden
+                  type="file"
+                  accept=".zip,application/zip"
+                  onChange={(event) => {
+                    setImportFile(event.target.files?.[0] || null);
+                    setImportPreview(null);
+                    setImportResult(null);
+                    setImportError("");
+                  }}
+                />
+              </Button>
+              <Typography color="text.secondary">{importFile ? importFile.name : "未选择文件"}</Typography>
+              <Button onClick={handlePreviewImport} disabled={!importFile || importLoading} variant="contained">
+                {importLoading && !importPreview ? "预览中..." : "生成预览"}
+              </Button>
+            </Stack>
+
+            {importPreview && (
+              <Stack spacing={2}>
+                <Alert severity={importPreview.requires_reimbursed_confirm ? "warning" : "info"}>
+                  共 {importPreview.summary.reports_total} 张报销单，预计新增 {importPreview.summary.reports_new} 张，冲突{" "}
+                  {importPreview.summary.reports_conflict} 张；发票 {importPreview.summary.invoices_total} 张，附件{" "}
+                  {importPreview.summary.attachments_total} 个。
+                </Alert>
+
+                {importPreview.conflicts.length > 0 && (
+                  <Box sx={{ maxHeight: 220, overflow: "auto", border: 1, borderColor: "divider", borderRadius: 1 }}>
+                    <Table size="small">
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>类型</TableCell>
+                          <TableCell>来源 UID</TableCell>
+                          <TableCell>本地 ID</TableCell>
+                          <TableCell>原因</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {importPreview.conflicts.map((conflict, index) => (
+                          <TableRow key={`${conflict.item_type}-${conflict.source_uid}-${index}`}>
+                            <TableCell>{conflict.item_type === "report" ? "报销单" : "发票"}</TableCell>
+                            <TableCell>{conflict.source_uid}</TableCell>
+                            <TableCell>{conflict.local_id || "—"}</TableCell>
+                            <TableCell>{conflict.reason}</TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </Box>
+                )}
+
+                <TextField
+                  select
+                  size="small"
+                  label="冲突处理"
+                  value={importStrategy}
+                  onChange={(event) => {
+                    setImportStrategy(event.target.value);
+                    setConfirmReimbursedOverwrite(false);
+                  }}
+                >
+                  <MenuItem value="import_as_new">新增记录</MenuItem>
+                  <MenuItem value="overwrite">覆盖匹配记录</MenuItem>
+                  <MenuItem value="skip">跳过冲突记录</MenuItem>
+                </TextField>
+
+                {importStrategy === "overwrite" && importPreview.requires_reimbursed_confirm && (
+                  <FormControlLabel
+                    control={
+                      <Checkbox
+                        checked={confirmReimbursedOverwrite}
+                        onChange={(event) => setConfirmReimbursedOverwrite(event.target.checked)}
+                      />
+                    }
+                    label="我确认要覆盖已报销记录"
+                  />
+                )}
+              </Stack>
+            )}
+          </Stack>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setImportOpen(false)} disabled={importLoading}>
+            关闭
+          </Button>
+          <Button
+            onClick={handleExecuteImport}
+            disabled={
+              !importPreview ||
+              importLoading ||
+              (importStrategy === "overwrite" && importPreview.requires_reimbursed_confirm && !confirmReimbursedOverwrite)
+            }
+            variant="contained"
+          >
+            {importLoading && importPreview ? "导入中..." : "执行导入"}
           </Button>
         </DialogActions>
       </Dialog>

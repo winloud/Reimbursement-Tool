@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { buildReportQueryParams } from "./reportFilters.js";
+import { buildReportExportPayload, buildReportQueryParams } from "./reportFilters.js";
 
 describe("buildReportQueryParams", () => {
   it("keeps pagination and omits empty filter values", () => {
@@ -54,6 +54,19 @@ describe("buildReportQueryParams", () => {
         filters: { hasAttachment: "no" },
       }).has_attachment,
       false,
+    );
+  });
+
+  it("builds export payload without pagination", () => {
+    assert.deepEqual(
+      buildReportExportPayload({
+        status: "reimbursed",
+        filters: { keyword: "差旅" },
+      }),
+      {
+        status: "reimbursed",
+        keyword: "差旅",
+      },
     );
   });
 });
