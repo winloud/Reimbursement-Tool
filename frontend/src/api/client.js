@@ -35,6 +35,13 @@ export const getReports = async ({ page = 1, pageSize = 20, status, filters } = 
   return response.data;
 };
 
+export const getTrashReports = async ({ page = 1, pageSize = 20, filters } = {}) => {
+  const response = await apiClient.get("/api/reports/trash", {
+    params: buildReportQueryParams({ page, pageSize, status: "all", filters }),
+  });
+  return response.data;
+};
+
 export const getReportFilterOptions = async () => {
   const response = await apiClient.get("/api/reports/filter-options");
   return response.data;
@@ -96,6 +103,31 @@ export const deleteReport = async (id) => {
   return response.data;
 };
 
+export const purgeReport = async (id) => {
+  const response = await apiClient.delete(`/api/reports/${id}/purge`);
+  return response.data;
+};
+
+export const restoreReport = async (id) => {
+  const response = await apiClient.post(`/api/reports/${id}/restore`);
+  return response.data;
+};
+
+export const batchDeleteReports = async (reportIds) => {
+  const response = await apiClient.post("/api/reports/batch/delete", { report_ids: reportIds });
+  return response.data;
+};
+
+export const batchPurgeReports = async (reportIds) => {
+  const response = await apiClient.post("/api/reports/batch/purge", { report_ids: reportIds });
+  return response.data;
+};
+
+export const batchRestoreReports = async (reportIds) => {
+  const response = await apiClient.post("/api/reports/batch/restore", { report_ids: reportIds });
+  return response.data;
+};
+
 export const updateReportStatus = async (id, status) => {
   const response = await apiClient.patch(`/api/reports/${id}/status`, { status });
   return response.data;
@@ -115,6 +147,18 @@ const filenameFromContentDisposition = (contentDisposition) => {
   return fallbackMatch?.[1] || "expense-report.pdf";
 };
 
+const normalizeBlobError = async (err) => {
+  if (err.response?.data instanceof Blob) {
+    const text = await err.response.data.text();
+    try {
+      err.response.data = JSON.parse(text);
+    } catch {
+      err.response.data = { message: text };
+    }
+  }
+  throw err;
+};
+
 export const downloadReportPdf = async (id) => {
   try {
     const response = await apiClient.get(`/api/reports/${id}/pdf`, { responseType: "blob" });
@@ -123,15 +167,23 @@ export const downloadReportPdf = async (id) => {
       filename: filenameFromContentDisposition(response.headers["content-disposition"]),
     };
   } catch (err) {
-    if (err.response?.data instanceof Blob) {
-      const text = await err.response.data.text();
-      try {
-        err.response.data = JSON.parse(text);
-      } catch {
-        err.response.data = { message: text };
-      }
-    }
-    throw err;
+    return normalizeBlobError(err);
+  }
+};
+
+export const downloadReportBatchPdf = async (reportIds) => {
+  try {
+    const response = await apiClient.post(
+      "/api/reports/batch/pdf",
+      { report_ids: reportIds },
+      { responseType: "blob" },
+    );
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
+    };
+  } catch (err) {
+    return normalizeBlobError(err);
   }
 };
 

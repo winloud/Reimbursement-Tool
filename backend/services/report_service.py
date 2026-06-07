@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 import re
 
 from fastapi import HTTPException, status
@@ -64,6 +65,8 @@ FIXED_CATEGORY_LABEL_ALIASES = {
 CUSTOM_CATEGORY_PREFIX = "custom:"
 CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
 MAX_TRIP_TRAVEL_DAYS = 7
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+UPLOAD_ROOT = PROJECT_ROOT / "backend" / "uploads"
 
 
 class TripDateError(ValueError):
@@ -354,6 +357,25 @@ def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     return report
 
 
+def get_report_any_state_or_404(db: Session, report_id: int) -> ExpenseReport:
+    report = db.scalar(select(ExpenseReport).where(ExpenseReport.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报销单不存在")
+    return report
+
+
+def get_deleted_report_or_404(db: Session, report_id: int) -> ExpenseReport:
+    report = db.scalar(
+        select(ExpenseReport).where(
+            ExpenseReport.id == report_id,
+            ExpenseReport.deleted_at.is_not(None),
+        )
+    )
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="回收站中不存在该报销单")
+    return report
+
+
 def trip_date_range(report: ExpenseReport, trip: Trip) -> tuple[date, date]:
     report_year = report.report_date.year if report.report_date else date.today().year
     depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
@@ -386,12 +408,18 @@ def report_matches_keyword(report: ExpenseReport, keyword: str | None) -> bool:
     return any(normalized in value.lower() for value in values)
 
 
-def active_invoices(report: ExpenseReport) -> list[Invoice]:
+def active_invoices(report: ExpenseReport, include_deleted: bool = False) -> list[Invoice]:
+    if include_deleted:
+        return list(report.invoices)
     return [invoice for invoice in report.invoices if invoice.deleted_at is None]
 
 
-def report_matches_invoice_state(report: ExpenseReport, invoice_state: ReportInvoiceState) -> bool:
-    invoices = active_invoices(report)
+def report_matches_invoice_state(
+    report: ExpenseReport,
+    invoice_state: ReportInvoiceState,
+    include_deleted_invoices: bool = False,
+) -> bool:
+    invoices = active_invoices(report, include_deleted=include_deleted_invoices)
     if invoice_state == "all":
         return True
     if invoice_state == "no_invoice":
@@ -403,15 +431,15 @@ def report_matches_invoice_state(report: ExpenseReport, invoice_state: ReportInv
     return True
 
 
-def report_matches_category(report: ExpenseReport, category: str | None) -> bool:
+def report_matches_category(report: ExpenseReport, category: str | None, include_deleted_invoices: bool = False) -> bool:
     normalized = (category or "").strip()
     if not normalized:
         return True
     category_key = validate_expense_category(normalized)
-    return any(invoice.expense_category == category_key for invoice in active_invoices(report))
+    return any(invoice.expense_category == category_key for invoice in active_invoices(report, include_deleted=include_deleted_invoices))
 
 
-def report_matches_filters(report: ExpenseReport, filters: ReportFilters) -> bool:
+def report_matches_filters(report: ExpenseReport, filters: ReportFilters, include_deleted_invoices: bool = False) -> bool:
     if not report_has_trip_overlap(report, filters.trip_start, filters.trip_end):
         return False
     if not report_matches_keyword(report, filters.keyword):
@@ -420,11 +448,11 @@ def report_matches_filters(report: ExpenseReport, filters: ReportFilters) -> boo
         return False
     if filters.amount_max is not None and report.total_amount > filters.amount_max:
         return False
-    if not report_matches_invoice_state(report, filters.invoice_state):
+    if not report_matches_invoice_state(report, filters.invoice_state, include_deleted_invoices=include_deleted_invoices):
         return False
-    if not report_matches_category(report, filters.category):
+    if not report_matches_category(report, filters.category, include_deleted_invoices=include_deleted_invoices):
         return False
-    if filters.has_attachment is not None and bool(active_invoices(report)) != filters.has_attachment:
+    if filters.has_attachment is not None and bool(active_invoices(report, include_deleted=include_deleted_invoices)) != filters.has_attachment:
         return False
     if filters.subsidy_days_min is not None and report.subsidy_days < filters.subsidy_days_min:
         return False
@@ -460,24 +488,45 @@ def list_reports(
     page_size: int = 20,
     report_status: ReportStatus | None = None,
     filters: ReportFilters | None = None,
+    deleted_only: bool = False,
 ) -> tuple[list[ExpenseReport], int]:
     filters = filters or ReportFilters(report_status=report_status)
     report_status = filters.report_status if filters.report_status is not None else report_status
-    statement: Select[tuple[ExpenseReport]] = select(ExpenseReport).where(ExpenseReport.deleted_at.is_(None))
+    statement: Select[tuple[ExpenseReport]] = select(ExpenseReport)
+    if deleted_only:
+        statement = statement.where(ExpenseReport.deleted_at.is_not(None))
+    else:
+        statement = statement.where(ExpenseReport.deleted_at.is_(None))
 
     if report_status is not None:
         statement = statement.where(ExpenseReport.status == report_status)
 
-    statement = statement.order_by(
-        ExpenseReport.report_date.is_(None),
-        ExpenseReport.report_date.desc(),
-        ExpenseReport.created_at.desc(),
-    )
+    if deleted_only:
+        statement = statement.order_by(ExpenseReport.deleted_at.desc(), ExpenseReport.created_at.desc())
+    else:
+        statement = statement.order_by(
+            ExpenseReport.report_date.is_(None),
+            ExpenseReport.report_date.desc(),
+            ExpenseReport.created_at.desc(),
+        )
 
-    all_items = [report for report in db.scalars(statement).all() if report_matches_filters(report, filters)]
+    all_items = [
+        report
+        for report in db.scalars(statement).all()
+        if report_matches_filters(report, filters, include_deleted_invoices=deleted_only)
+    ]
     total = len(all_items)
     start = (page - 1) * page_size
     return all_items[start : start + page_size], total
+
+
+def list_deleted_reports(
+    db: Session,
+    page: int = 1,
+    page_size: int = 20,
+    filters: ReportFilters | None = None,
+) -> tuple[list[ExpenseReport], int]:
+    return list_reports(db, page=page, page_size=page_size, filters=filters, deleted_only=True)
 
 
 def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:
@@ -530,6 +579,47 @@ def soft_delete_report(db: Session, report_id: int) -> None:
     for invoice in report.invoices:
         invoice.deleted_at = report.deleted_at
     db.commit()
+
+
+def restore_deleted_report(db: Session, report_id: int) -> ExpenseReport:
+    report = get_deleted_report_or_404(db, report_id)
+    ensure_report_deletable(report)
+    report.deleted_at = None
+    for invoice in report.invoices:
+        invoice.deleted_at = None
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+def _safe_invoice_file_paths(report: ExpenseReport) -> list[Path]:
+    upload_root = UPLOAD_ROOT.resolve()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for invoice in report.invoices:
+        path = (PROJECT_ROOT / "backend" / invoice.file_path).resolve()
+        if not path.is_relative_to(upload_root):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="发票附件路径不安全，无法彻底删除")
+        if path not in seen:
+            paths.append(path)
+            seen.add(path)
+    return paths
+
+
+def purge_report(db: Session, report_id: int) -> int:
+    report = get_report_any_state_or_404(db, report_id)
+    ensure_report_deletable(report)
+    file_paths = _safe_invoice_file_paths(report)
+    db.delete(report)
+    db.commit()
+
+    deleted_files = 0
+    for path in file_paths:
+        if not path.exists():
+            continue
+        path.unlink()
+        deleted_files += 1
+    return deleted_files
 
 
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:

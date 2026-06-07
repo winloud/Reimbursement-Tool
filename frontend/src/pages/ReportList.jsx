@@ -30,26 +30,44 @@ import {
   Typography,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import VisibilityIcon from "@mui/icons-material/Visibility";
 import { Link as RouterLink, useNavigate } from "react-router-dom";
 import {
+  batchDeleteReports,
+  batchPurgeReports,
+  batchRestoreReports,
   deleteReport,
   downloadDataExport,
+  downloadReportBatchPdf,
+  downloadReportPdf,
   executeDataImport,
   getReportFilterOptions,
+  getReportPdfPreview,
   getReports,
+  getTrashReports,
   previewDataImport,
+  purgeReport,
+  restoreReport,
 } from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
+import {
+  formatBatchPdfFailureMessage,
+  isTrashStatus,
+  toggleCurrentPageSelection,
+  toggleReportSelection,
+} from "./reportListUtils";
 
 const STATUS_TABS = [
   { value: "all", label: "全部" },
   { value: "draft", label: "草稿" },
   { value: "printed", label: "已打印" },
   { value: "reimbursed", label: "已报销" },
+  { value: "trash", label: "回收站" },
 ];
 
 const STATUS_META = {
@@ -88,6 +106,36 @@ const formatAmount = (value) =>
 
 const formatDate = (value) => value || "—";
 
+const formatDateTime = (value) => {
+  if (!value) return "—";
+  return new Date(value).toLocaleString("zh-CN", { hour12: false });
+};
+
+const DELETE_WARNING_TEXT =
+  "彻底删除会永久删除报销单、行程、费用项、发票记录和发票附件，无法恢复。放入回收站后可在回收站恢复或彻底删除。";
+
+const saveBlob = (blob, filename) => {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+};
+
+const errorMessage = (err, fallback) => {
+  const data = err.response?.data;
+  if (data?.detail?.failures?.length) {
+    return formatBatchPdfFailureMessage(data.detail.failures);
+  }
+  if (typeof data?.detail === "string") {
+    return data.detail;
+  }
+  return data?.message || err.message || fallback;
+};
+
 export default function ReportList() {
   const navigate = useNavigate();
   const [status, setStatus] = useState("all");
@@ -100,8 +148,22 @@ export default function ReportList() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [batchResult, setBatchResult] = useState(null);
   const [pendingDelete, setPendingDelete] = useState(null);
+  const [pendingBatchDelete, setPendingBatchDelete] = useState(false);
+  const [pendingPurge, setPendingPurge] = useState(null);
+  const [pendingBatchPurge, setPendingBatchPurge] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [selectedIds, setSelectedIds] = useState([]);
+  const [previewState, setPreviewState] = useState({
+    open: false,
+    report: null,
+    pages: [],
+    loading: false,
+    error: "",
+  });
+  const [downloadingId, setDownloadingId] = useState(null);
+  const [batchLoading, setBatchLoading] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -111,12 +173,16 @@ export default function ReportList() {
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
+  const isTrash = isTrashStatus(status);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
     setError("");
     try {
-      const res = await getReports({ page: page + 1, pageSize, status, filters });
+      const res =
+        status === "trash"
+          ? await getTrashReports({ page: page + 1, pageSize, filters })
+          : await getReports({ page: page + 1, pageSize, status, filters });
       if (res.success) {
         setItems(res.data.items);
         setTotal(res.data.total);
@@ -133,6 +199,10 @@ export default function ReportList() {
   useEffect(() => {
     fetchReports();
   }, [fetchReports]);
+
+  useEffect(() => {
+    setSelectedIds([]);
+  }, [filters, page, pageSize, status]);
 
   useEffect(() => {
     let ignore = false;
@@ -188,20 +258,40 @@ export default function ReportList() {
     filters.subsidyDaysMax && { key: "subsidyDaysMax", label: `天数上限：${filters.subsidyDaysMax}` },
   ].filter(Boolean);
 
-  const handleConfirmDelete = async () => {
+  const selectedSet = new Set(selectedIds);
+  const pageIds = items.map((item) => item.id);
+  const selectedCount = selectedIds.length;
+  const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedSet.has(id));
+  const somePageSelected = pageIds.some((id) => selectedSet.has(id));
+
+  const handleToggleReport = (reportId) => {
+    setSelectedIds((current) => toggleReportSelection(current, reportId));
+  };
+
+  const handleToggleCurrentPage = (event) => {
+    setSelectedIds((current) => toggleCurrentPageSelection(current, pageIds, event.target.checked));
+  };
+
+  const handleDeleteReport = async (action) => {
     if (!pendingDelete) return;
     setDeleting(true);
     setError("");
+    setBatchResult(null);
     try {
-      const res = await deleteReport(pendingDelete.id);
+      const res = action === "purge" ? await purgeReport(pendingDelete.id) : await deleteReport(pendingDelete.id);
       if (res.success) {
         setPendingDelete(null);
+        setSelectedIds((current) => current.filter((id) => id !== pendingDelete.id));
+        setBatchResult({
+          severity: "success",
+          message: action === "purge" ? "报销单已彻底删除" : "报销单已放入回收站",
+        });
         await fetchReports();
       } else {
         setError(res.message || "删除失败");
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "删除失败");
+      setError(errorMessage(err, "删除失败"));
     } finally {
       setDeleting(false);
     }
@@ -212,18 +302,190 @@ export default function ReportList() {
     setError("");
     try {
       const { blob, filename } = await downloadDataExport({ status, filters });
-      const url = URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename || "expense-data.zip";
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      URL.revokeObjectURL(url);
+      saveBlob(blob, filename || "expense-data.zip");
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "导出失败");
+      setError(errorMessage(err, "导出失败"));
     } finally {
       setExporting(false);
+    }
+  };
+
+  const handlePreviewReport = async (report) => {
+    setPreviewState({ open: true, report, pages: [], loading: true, error: "" });
+    try {
+      const res = await getReportPdfPreview(report.id);
+      if (res.success) {
+        setPreviewState({ open: true, report, pages: res.data.pages || [], loading: false, error: "" });
+      } else {
+        setPreviewState({ open: true, report, pages: [], loading: false, error: res.message || "预览失败" });
+      }
+    } catch (err) {
+      setPreviewState({ open: true, report, pages: [], loading: false, error: errorMessage(err, "预览失败") });
+    }
+  };
+
+  const handleDownloadReport = async (report) => {
+    setDownloadingId(report.id);
+    setError("");
+    setBatchResult(null);
+    try {
+      const { blob, filename } = await downloadReportPdf(report.id);
+      saveBlob(blob, filename || "expense-report.pdf");
+      await fetchReports();
+    } catch (err) {
+      setError(errorMessage(err, "下载失败"));
+    } finally {
+      setDownloadingId(null);
+    }
+  };
+
+  const handleBatchDownload = async () => {
+    if (selectedIds.length === 0) return;
+    setBatchLoading(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const { blob, filename } = await downloadReportBatchPdf(selectedIds);
+      saveBlob(blob, filename || "expense-reports.zip");
+      setBatchResult({ severity: "success", message: `已下载 ${selectedIds.length} 张报销单 PDF。` });
+      setSelectedIds([]);
+      await fetchReports();
+    } catch (err) {
+      setError(errorMessage(err, "批量下载失败"));
+    } finally {
+      setBatchLoading(false);
+    }
+  };
+
+  const handleConfirmBatchDelete = async (action) => {
+    setDeleting(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = action === "purge" ? await batchPurgeReports(selectedIds) : await batchDeleteReports(selectedIds);
+      if (res.success) {
+        const skippedText = res.data.skipped_count
+          ? `，跳过 ${res.data.skipped_count} 张：${res.data.skipped
+              .map((item) => `${item.report_id} ${item.reason}`)
+              .join("；")}`
+          : "";
+        const handledCount = action === "purge" ? res.data.purged_count : res.data.deleted_count;
+        setBatchResult({
+          severity: res.data.skipped_count ? "warning" : "success",
+          message:
+            action === "purge"
+              ? `已彻底删除 ${handledCount} 张草稿${skippedText}`
+              : `已放入回收站 ${handledCount} 张草稿${skippedText}`,
+        });
+        setPendingBatchDelete(false);
+        setSelectedIds([]);
+        await fetchReports();
+      } else {
+        setError(res.message || "批量删除失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "批量删除失败"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleBatchRestore = async () => {
+    setDeleting(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await batchRestoreReports(selectedIds);
+      if (res.success) {
+        const skippedText = res.data.skipped_count
+          ? `，跳过 ${res.data.skipped_count} 张：${res.data.skipped
+              .map((item) => `${item.report_id} ${item.reason}`)
+              .join("；")}`
+          : "";
+        setBatchResult({
+          severity: res.data.skipped_count ? "warning" : "success",
+          message: `已恢复 ${res.data.restored_count} 张草稿${skippedText}`,
+        });
+        setSelectedIds([]);
+        await fetchReports();
+      } else {
+        setError(res.message || "批量恢复失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "批量恢复失败"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleConfirmBatchPurge = async () => {
+    setDeleting(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await batchPurgeReports(selectedIds);
+      if (res.success) {
+        const skippedText = res.data.skipped_count
+          ? `，跳过 ${res.data.skipped_count} 张：${res.data.skipped
+              .map((item) => `${item.report_id} ${item.reason}`)
+              .join("；")}`
+          : "";
+        setBatchResult({
+          severity: res.data.skipped_count ? "warning" : "success",
+          message: `已彻底删除 ${res.data.purged_count} 张草稿${skippedText}`,
+        });
+        setPendingBatchPurge(false);
+        setSelectedIds([]);
+        await fetchReports();
+      } else {
+        setError(res.message || "批量彻底删除失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "批量彻底删除失败"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handlePurgeReport = async () => {
+    if (!pendingPurge) return;
+    setDeleting(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await purgeReport(pendingPurge.id);
+      if (res.success) {
+        setPendingPurge(null);
+        setSelectedIds((current) => current.filter((id) => id !== pendingPurge.id));
+        setBatchResult({ severity: "success", message: "报销单已彻底删除" });
+        await fetchReports();
+      } else {
+        setError(res.message || "彻底删除失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "彻底删除失败"));
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleRestoreReport = async (report) => {
+    setDeleting(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await restoreReport(report.id);
+      if (res.success) {
+        setSelectedIds((current) => current.filter((id) => id !== report.id));
+        setBatchResult({ severity: "success", message: "报销单已恢复" });
+        await fetchReports();
+      } else {
+        setError(res.message || "恢复失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "恢复失败"));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -285,27 +547,57 @@ export default function ReportList() {
 
   return (
     <Stack spacing={3}>
-      <Stack direction="row" justifyContent="space-between" alignItems="center">
+      <Stack
+        direction={{ xs: "column", lg: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "stretch", lg: "center" }}
+        spacing={2}
+      >
         <div>
           <Typography variant="h5" fontWeight={700}>
             报销单管理
           </Typography>
           <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
         </div>
-        <Stack direction="row" spacing={1} alignItems="center">
-          <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={handleOpenImport}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(3, minmax(0, 1fr))", lg: "auto auto auto" },
+            gap: 1,
+            alignItems: "center",
+            width: { xs: "100%", lg: "auto" },
+          }}
+        >
+          <Button
+            variant="outlined"
+            startIcon={<UploadFileIcon />}
+            onClick={handleOpenImport}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             导入数据包
           </Button>
-          <Button variant="outlined" startIcon={<FileDownloadIcon />} onClick={handleExport} disabled={exporting}>
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            onClick={handleExport}
+            disabled={exporting || isTrash}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             {exporting ? "导出中..." : "导出当前筛选"}
           </Button>
-          <Button component={RouterLink} to="/reports/new" variant="contained">
+          <Button
+            component={RouterLink}
+            to="/reports/new"
+            variant="contained"
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             新增报销单
           </Button>
-        </Stack>
+        </Box>
       </Stack>
 
       {error && <Alert severity="error">{error}</Alert>}
+      {batchResult && <Alert severity={batchResult.severity}>{batchResult.message}</Alert>}
 
       <Card>
         <Tabs value={status} onChange={handleStatusChange} sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
@@ -463,28 +755,103 @@ export default function ReportList() {
           )}
         </Box>
 
+        {selectedCount > 0 && (
+          <Box
+            sx={{
+              px: 2,
+              py: 1.25,
+              borderBottom: 1,
+              borderColor: "divider",
+              bgcolor: "action.hover",
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 1,
+              alignItems: "center",
+              justifyContent: "space-between",
+            }}
+          >
+            <Typography variant="body2" fontWeight={600}>
+              已选 {selectedCount} 张报销单
+            </Typography>
+            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ gap: 1 }}>
+              {isTrash ? (
+                <>
+                  <Button size="small" variant="contained" onClick={handleBatchRestore} disabled={batchLoading || deleting}>
+                    批量恢复
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={() => setPendingBatchPurge(true)}
+                    disabled={batchLoading || deleting}
+                  >
+                    彻底删除
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    size="small"
+                    variant="contained"
+                    startIcon={<FileDownloadIcon />}
+                    onClick={handleBatchDownload}
+                    disabled={batchLoading || deleting}
+                  >
+                    {batchLoading ? "下载中..." : "批量下载"}
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    color="error"
+                    startIcon={<DeleteOutlineIcon />}
+                    onClick={() => setPendingBatchDelete(true)}
+                    disabled={batchLoading || deleting}
+                  >
+                    删除草稿
+                  </Button>
+                </>
+              )}
+              <Button size="small" variant="text" onClick={() => setSelectedIds([])} disabled={batchLoading || deleting}>
+                清除选择
+              </Button>
+            </Stack>
+          </Box>
+        )}
+
         <TableContainer>
           <Table>
             <TableHead>
               <TableRow>
+                <TableCell padding="checkbox">
+                  <Checkbox
+                    size="small"
+                    checked={allPageSelected}
+                    indeterminate={!allPageSelected && somePageSelected}
+                    onChange={handleToggleCurrentPage}
+                    disabled={items.length === 0 || loading}
+                  />
+                </TableCell>
                 <TableCell>报销日期</TableCell>
                 <TableCell>出差事由</TableCell>
                 <TableCell align="center">补贴天数</TableCell>
                 <TableCell align="right">报销总金额</TableCell>
                 <TableCell align="center">状态</TableCell>
+                {isTrash && <TableCell>删除时间</TableCell>}
                 <TableCell align="right">操作</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isTrash ? 8 : 7} align="center" sx={{ py: 6 }}>
                     <CircularProgress size={28} />
                   </TableCell>
                 </TableRow>
               ) : items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={6} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isTrash ? 8 : 7} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">暂无数据</Typography>
                   </TableCell>
                 </TableRow>
@@ -492,7 +859,14 @@ export default function ReportList() {
                 items.map((report) => {
                   const meta = STATUS_META[report.status] || { label: report.status, color: "default" };
                   return (
-                    <TableRow key={report.id} hover>
+                    <TableRow key={report.id} hover selected={selectedSet.has(report.id)}>
+                      <TableCell padding="checkbox">
+                        <Checkbox
+                          size="small"
+                          checked={selectedSet.has(report.id)}
+                          onChange={() => handleToggleReport(report.id)}
+                        />
+                      </TableCell>
                       <TableCell>{formatDate(report.report_date)}</TableCell>
                       <TableCell>{report.purpose || "—"}</TableCell>
                       <TableCell align="center">{report.subsidy_days ?? 0}</TableCell>
@@ -500,19 +874,44 @@ export default function ReportList() {
                       <TableCell align="center">
                         <Chip size="small" color={meta.color} label={meta.label} />
                       </TableCell>
+                      {isTrash && <TableCell>{formatDateTime(report.deleted_at)}</TableCell>}
                       <TableCell align="right">
-                        <Box sx={{ display: "flex", gap: 1, justifyContent: "flex-end" }}>
-                          <Button size="small" onClick={() => navigate(`/reports/${report.id}/edit`)}>
-                            编辑
-                          </Button>
-                          <Button
-                            size="small"
-                            color="error"
-                            disabled={report.status !== "draft"}
-                            onClick={() => setPendingDelete(report)}
-                          >
-                            删除
-                          </Button>
+                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, justifyContent: "flex-end" }}>
+                          {isTrash ? (
+                            <>
+                              <Button size="small" onClick={() => handleRestoreReport(report)} disabled={deleting}>
+                                恢复
+                              </Button>
+                              <Button size="small" color="error" onClick={() => setPendingPurge(report)} disabled={deleting}>
+                                彻底删除
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              <Button size="small" startIcon={<VisibilityIcon />} onClick={() => handlePreviewReport(report)}>
+                                预览
+                              </Button>
+                              <Button
+                                size="small"
+                                startIcon={<FileDownloadIcon />}
+                                onClick={() => handleDownloadReport(report)}
+                                disabled={downloadingId === report.id}
+                              >
+                                {downloadingId === report.id ? "下载中" : "下载"}
+                              </Button>
+                              <Button size="small" onClick={() => navigate(`/reports/${report.id}/edit`)}>
+                                编辑
+                              </Button>
+                              <Button
+                                size="small"
+                                color="error"
+                                disabled={report.status !== "draft"}
+                                onClick={() => setPendingDelete(report)}
+                              >
+                                删除
+                              </Button>
+                            </>
+                          )}
                         </Box>
                       </TableCell>
                     </TableRow>
@@ -542,15 +941,123 @@ export default function ReportList() {
         <DialogTitle>确认删除</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            确定要删除报销单「{pendingDelete?.purpose || "未命名"}」吗？此操作将软删除该报销单。
+            报销单「{pendingDelete?.purpose || "未命名"}」可以彻底删除，或先放入回收站。
+            {DELETE_WARNING_TEXT}
           </DialogContentText>
         </DialogContent>
         <DialogActions>
           <Button onClick={() => setPendingDelete(null)} disabled={deleting}>
             取消
           </Button>
-          <Button onClick={handleConfirmDelete} color="error" disabled={deleting}>
-            {deleting ? "删除中..." : "确认删除"}
+          <Button onClick={() => handleDeleteReport("purge")} color="error" disabled={deleting}>
+            {deleting ? "删除中..." : "彻底删除"}
+          </Button>
+          <Button onClick={() => handleDeleteReport("trash")} variant="contained" disabled={deleting}>
+            放入回收站
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pendingBatchDelete} onClose={() => !deleting && setPendingBatchDelete(false)}>
+        <DialogTitle>删除草稿</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            将处理已勾选项中的草稿报销单；已打印和已报销报销单会自动跳过。当前已选 {selectedCount} 张。
+            {DELETE_WARNING_TEXT}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingBatchDelete(false)} disabled={deleting}>
+            取消
+          </Button>
+          <Button onClick={() => handleConfirmBatchDelete("purge")} color="error" disabled={deleting}>
+            {deleting ? "删除中..." : "彻底删除"}
+          </Button>
+          <Button onClick={() => handleConfirmBatchDelete("trash")} variant="contained" disabled={deleting}>
+            放入回收站
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(pendingPurge)} onClose={() => !deleting && setPendingPurge(null)}>
+        <DialogTitle>彻底删除</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            确定要彻底删除报销单「{pendingPurge?.purpose || "未命名"}」吗？此操作会永久删除报销单、行程、费用项、发票记录和发票附件，无法恢复。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingPurge(null)} disabled={deleting}>
+            取消
+          </Button>
+          <Button onClick={handlePurgeReport} color="error" disabled={deleting}>
+            {deleting ? "删除中..." : "彻底删除"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={pendingBatchPurge} onClose={() => !deleting && setPendingBatchPurge(false)}>
+        <DialogTitle>彻底删除</DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            确定要彻底删除已勾选的 {selectedCount} 张回收站报销单吗？此操作会永久删除报销单、行程、费用项、发票记录和发票附件，无法恢复。
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPendingBatchPurge(false)} disabled={deleting}>
+            取消
+          </Button>
+          <Button onClick={handleConfirmBatchPurge} color="error" disabled={deleting}>
+            {deleting ? "删除中..." : "彻底删除"}
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={previewState.open}
+        onClose={() => !previewState.loading && setPreviewState((current) => ({ ...current, open: false }))}
+        maxWidth="md"
+        fullWidth
+      >
+        <DialogTitle>预览报销单：{previewState.report?.purpose || `#${previewState.report?.id || ""}`}</DialogTitle>
+        <DialogContent dividers>
+          {previewState.loading ? (
+            <Box sx={{ display: "flex", justifyContent: "center", py: 6 }}>
+              <CircularProgress size={28} />
+            </Box>
+          ) : previewState.error ? (
+            <Alert severity="error">{previewState.error}</Alert>
+          ) : (
+            <Stack spacing={2}>
+              {previewState.pages.map((page) => (
+                <Box
+                  key={page.page}
+                  component="img"
+                  src={page.image_url}
+                  alt={`报销单第 ${page.page} 页`}
+                  sx={{
+                    width: "100%",
+                    border: 1,
+                    borderColor: "divider",
+                    borderRadius: 1,
+                    bgcolor: "background.paper",
+                  }}
+                />
+              ))}
+            </Stack>
+          )}
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPreviewState((current) => ({ ...current, open: false }))} disabled={previewState.loading}>
+            关闭
+          </Button>
+          <Button
+            variant="contained"
+            startIcon={<FileDownloadIcon />}
+            onClick={() => previewState.report && handleDownloadReport(previewState.report)}
+            disabled={previewState.loading || !previewState.report || downloadingId === previewState.report.id}
+          >
+            下载
           </Button>
         </DialogActions>
       </Dialog>

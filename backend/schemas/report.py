@@ -70,6 +70,40 @@ class ReportStatusUpdate(BaseModel):
     status: ReportStatus
 
 
+class ReportBatchRequest(BaseModel):
+    report_ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class ReportBatchPdfFailure(BaseModel):
+    report_id: int
+    reason: str
+
+
+class ReportBatchDeleteSkipped(BaseModel):
+    report_id: int
+    reason: str
+    status: ReportStatus | None = None
+
+
+class ReportBatchDeleteResult(BaseModel):
+    deleted_count: int
+    skipped_count: int
+    skipped: list[ReportBatchDeleteSkipped] = Field(default_factory=list)
+
+
+class ReportBatchRestoreResult(BaseModel):
+    restored_count: int
+    skipped_count: int
+    skipped: list[ReportBatchDeleteSkipped] = Field(default_factory=list)
+
+
+class ReportBatchPurgeResult(BaseModel):
+    purged_count: int
+    skipped_count: int
+    files_deleted_count: int = 0
+    skipped: list[ReportBatchDeleteSkipped] = Field(default_factory=list)
+
+
 class PdfPreviewPage(BaseModel):
     page: int
     image_url: str
@@ -138,6 +172,7 @@ class ReportRead(ReportBase):
     status: ReportStatus
     created_at: datetime
     updated_at: datetime
+    deleted_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 
