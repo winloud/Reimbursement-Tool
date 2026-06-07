@@ -52,6 +52,8 @@ def migrate_sqlite_schema() -> None:
             invoice_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(invoices)")).fetchall()}
             if "invoice_uid" not in invoice_columns:
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_uid VARCHAR"))
+            if "invoice_type" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR NOT NULL DEFAULT 'unknown'"))
             backfill_unique_uid(connection, "invoices", "invoice_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_invoices_invoice_uid ON invoices(invoice_uid)"))
 

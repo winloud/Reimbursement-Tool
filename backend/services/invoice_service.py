@@ -176,6 +176,7 @@ def upload_invoice(
         expense_category=expense_category,
         file_path=relative_path,
         file_type=file_type,
+        invoice_type=parsed.invoice_type,
         invoice_no=parsed.invoice_no,
         invoice_date=parsed.invoice_date,
         amount=parsed.amount,

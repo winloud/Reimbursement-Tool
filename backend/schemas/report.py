@@ -158,6 +158,7 @@ class InvoiceRead(BaseModel):
     expense_category: str
     file_path: str
     file_type: str
+    invoice_type: str = "unknown"
     invoice_no: str | None = None
     invoice_date: date | None = None
     amount: Decimal

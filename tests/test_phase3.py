@@ -39,11 +39,30 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
 
     assert parsed.invoice_no == "987654321"
     assert parsed.invoice_date == date(2026, 5, 31)
+    assert parsed.invoice_type == "normal"
     assert parsed.amount == Decimal("266.50")
     assert parsed.preview_image == "data:image/png;base64,abc"
     assert parsed.raw["parse_method"] == "text_regex"
     assert parsed.raw["parse_success"] is True
     assert parsed.raw["amount_source"] == "tax_total_small"
+
+
+def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "增值税专用发票\n发票号码: 12345678\n开票日期: 2026年6月8日\n价税合计（小写） ￥128.00",
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_type == "vat_special"
+    assert parsed.raw["parsed_result"]["invoice_type"] == "vat_special"
 
 
 def test_parse_pdf_invoice_cross_validates_uppercase_amount(monkeypatch, tmp_path: Path):
@@ -341,7 +360,11 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     )
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_file",
-        lambda _path, _file_type: InvoiceParsedData(invoice_no="987654321", amount=parsed_amount),
+        lambda _path, _file_type: InvoiceParsedData(
+            invoice_no="987654321",
+            invoice_type="vat_special",
+            amount=parsed_amount,
+        ),
     )
 
     invoice, parsed = upload_invoice(
@@ -352,6 +375,8 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     )
 
     assert parsed.amount == parsed_amount
+    assert parsed.invoice_type == "vat_special"
+    assert invoice.invoice_type == "vat_special"
     assert invoice.amount == parsed_amount
     assert invoice.amount_confirmed is False
     db.refresh(report)

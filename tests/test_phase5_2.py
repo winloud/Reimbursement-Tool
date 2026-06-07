@@ -33,7 +33,7 @@ def configure_transfer_paths(monkeypatch, tmp_path):
     return project_root
 
 
-def attach_invoice(db, project_root, report, content=b"invoice-pdf"):
+def attach_invoice(db, project_root, report, content=b"invoice-pdf", invoice_type: str = "unknown"):
     upload_dir = project_root / "backend" / "uploads" / str(report.id)
     upload_dir.mkdir(parents=True, exist_ok=True)
     file_path = upload_dir / "invoice.pdf"
@@ -43,6 +43,7 @@ def attach_invoice(db, project_root, report, content=b"invoice-pdf"):
         expense_category="accommodation",
         file_path=f"uploads/{report.id}/invoice.pdf",
         file_type="pdf",
+        invoice_type=invoice_type,
         invoice_no="INV-001",
         invoice_date=date(2026, 5, 2),
         amount=Decimal("88.00"),
@@ -80,7 +81,7 @@ def test_report_and_invoice_uid_generated(db):
 def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="导出"))
-    invoice = attach_invoice(db, project_root, report)
+    invoice = attach_invoice(db, project_root, report, invoice_type="vat_special")
 
     zip_bytes, filename = build_export_zip(db, DataExportRequest())
 
@@ -91,6 +92,7 @@ def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_p
         exported_invoice = exported_report["invoices"][0]
         assert exported_report["report"]["report_uid"] == report.report_uid
         assert exported_invoice["invoice_uid"] == invoice.invoice_uid
+        assert exported_invoice["invoice_type"] == "vat_special"
         assert exported_invoice["attachment_path"] in archive.namelist()
 
 
@@ -151,7 +153,7 @@ def test_import_preview_rejects_unsafe_attachment_path(db, monkeypatch, tmp_path
 def test_import_as_new_regenerates_conflicting_uids_and_writes_backup(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="原始"))
-    invoice = attach_invoice(db, project_root, report, content=b"original")
+    invoice = attach_invoice(db, project_root, report, content=b"original", invoice_type="vat_special")
     zip_bytes, _filename = build_export_zip(db, DataExportRequest())
 
     preview = create_import_preview(db, upload_from_bytes(zip_bytes))
@@ -169,6 +171,7 @@ def test_import_as_new_regenerates_conflicting_uids_and_writes_backup(db, monkey
     assert len({item.invoice_uid for item in invoices}) == 2
     assert Path(result.backup_path).exists()
     imported_invoice = invoices[-1]
+    assert imported_invoice.invoice_type == invoice.invoice_type
     assert (project_root / "backend" / imported_invoice.file_path).exists()
 
 

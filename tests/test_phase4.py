@@ -199,6 +199,33 @@ def test_merged_pdf_appends_all_invoice_pdf_pages(monkeypatch, tmp_path, db):
     assert float(reader.pages[1].mediabox.height) == 444
 
 
+def test_merged_pdf_appends_vat_special_invoice_pdf_twice(monkeypatch, tmp_path, db):
+    configure_pdf_paths(monkeypatch, tmp_path)
+    invoice_path = tmp_path / "backend" / "uploads" / "1" / "special.pdf"
+    write_blank_pdf(invoice_path, pages=2, pagesize=(333, 444))
+    report = create_report(db, ReportCreate(report_date="2026-06-04"))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="luggage",
+            file_path="uploads/1/special.pdf",
+            file_type="pdf",
+            invoice_type="vat_special",
+            amount=Decimal("10.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    pdf_bytes = build_merged_report_pdf(report)
+
+    reader = PdfReader(BytesIO(pdf_bytes))
+    assert len(reader.pages) == 5
+    assert float(reader.pages[1].mediabox.width) == 333
+    assert float(reader.pages[4].mediabox.height) == 444
+
+
 def test_download_route_marks_draft_report_printed(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))

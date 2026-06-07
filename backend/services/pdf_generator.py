@@ -24,6 +24,7 @@ from backend.models.report import ExpenseReport
 from backend.models.trip import Trip
 from backend.services.amount_converter import amount_to_chinese_upper, quantize_currency
 from backend.services.font_service import DEFAULT_PDF_FILL_FONT_KEY, resolve_font_file
+from backend.services.invoice_parser import INVOICE_TYPE_VAT_SPECIAL
 from backend.services.report_service import FIXED_CATEGORY_LABELS, custom_category_name, is_custom_category
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -449,18 +450,27 @@ def _build_image_attachment_pdf(path: Path) -> bytes:
     return buffer.getvalue()
 
 
+def _invoice_attachment_copies(invoice: Invoice) -> int:
+    return 2 if (invoice.invoice_type or "").strip() == INVOICE_TYPE_VAT_SPECIAL else 1
+
+
+def _append_single_invoice_attachment(writer: PdfWriter, invoice: Invoice, path: Path) -> None:
+    if invoice.file_type == "pdf":
+        reader = PdfReader(str(path))
+        for page in reader.pages:
+            writer.add_page(page)
+    else:
+        reader = PdfReader(BytesIO(_build_image_attachment_pdf(path)))
+        writer.add_page(reader.pages[0])
+
+
 def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport) -> None:
     for invoice in _active_invoices(report):
         path = PROJECT_ROOT / "backend" / invoice.file_path
         if not path.exists():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"发票文件不存在：{invoice.file_path}")
-        if invoice.file_type == "pdf":
-            reader = PdfReader(str(path))
-            for page in reader.pages:
-                writer.add_page(page)
-        else:
-            reader = PdfReader(BytesIO(_build_image_attachment_pdf(path)))
-            writer.add_page(reader.pages[0])
+        for _copy_index in range(_invoice_attachment_copies(invoice)):
+            _append_single_invoice_attachment(writer, invoice, path)
 
 
 def build_merged_report_pdf(report: ExpenseReport, fill_font_key: str | None = DEFAULT_PDF_FILL_FONT_KEY) -> bytes:

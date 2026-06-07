@@ -18,6 +18,7 @@ class Invoice(Base):
     expense_category: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
     file_type: Mapped[str] = mapped_column(String, nullable=False)
+    invoice_type: Mapped[str] = mapped_column(String, default="unknown", nullable=False)
     invoice_no: Mapped[str | None] = mapped_column(String, nullable=True)
     invoice_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)

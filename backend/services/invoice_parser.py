@@ -9,6 +9,9 @@ from backend.schemas.invoice import InvoiceParsedData
 
 
 MONEY_QUANT = Decimal("0.01")
+INVOICE_TYPE_UNKNOWN = "unknown"
+INVOICE_TYPE_NORMAL = "normal"
+INVOICE_TYPE_VAT_SPECIAL = "vat_special"
 WECHAT_MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "wechat_qrcode"
 WECHAT_MODEL_FILES = {
     "detect_prototxt": "detect.prototxt",
@@ -172,6 +175,16 @@ def extract_pdf_text_with_pypdf(file_path: Path) -> str:
         return "\n".join(page.extract_text() or "" for page in reader.pages)
     except Exception:
         return ""
+
+
+def extract_pdf_text(file_path: Path) -> str:
+    try:
+        import fitz
+
+        with fitz.open(str(file_path)) as doc:
+            return "\n".join(page.get_text("text") or "" for page in doc)
+    except Exception:
+        return extract_pdf_text_with_pypdf(file_path)
 
 
 def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]:
@@ -340,6 +353,25 @@ def extract_invoice_no(text: str) -> str | None:
 def extract_invoice_date(text: str) -> date | None:
     match = DATE_PATTERN.search(compact_text(text))
     return parse_date(match.group(1)) if match else None
+
+
+def extract_invoice_type(text: str) -> str:
+    compacted = compact_text(text)
+    if not compacted:
+        return INVOICE_TYPE_UNKNOWN
+    if "增值税专用发票" in compacted or "电子专用发票" in compacted:
+        return INVOICE_TYPE_VAT_SPECIAL
+    if "专用发票" in compacted and "增值税" in compacted:
+        return INVOICE_TYPE_VAT_SPECIAL
+    if "普通发票" in compacted or "旅客运输服务" in compacted or "增值税" in compacted or "发票" in compacted:
+        return INVOICE_TYPE_NORMAL
+    return INVOICE_TYPE_UNKNOWN
+
+
+def detect_invoice_type_from_file(file_path: Path, file_type: str) -> str:
+    if file_type != "pdf":
+        return INVOICE_TYPE_UNKNOWN
+    return extract_invoice_type(extract_pdf_text(file_path))
 
 
 def extract_tax_total_small_line_amount(text: str) -> Decimal | None:
@@ -528,6 +560,7 @@ def parse_standard_qr_payload(payload: str) -> dict[str, Any] | None:
     return {
         "invoice_no": invoice_no,
         "invoice_date": invoice_date,
+        "invoice_type": INVOICE_TYPE_UNKNOWN,
         "amount": amount,
         "amount_source": "qr",
         "amount_uppercase": None,
@@ -547,6 +580,7 @@ def extract_fields_from_text(text: str) -> dict[str, Any]:
     return {
         "invoice_no": extract_invoice_no(text),
         "invoice_date": extract_invoice_date(text),
+        "invoice_type": extract_invoice_type(text),
         "amount": amount,
         "amount_source": amount_source,
         "amount_uppercase": uppercase_amount,
@@ -569,6 +603,7 @@ def parse_qr_payload(payload: str) -> dict[str, Any]:
     result: dict[str, Any] = {
         "invoice_no": None,
         "invoice_date": None,
+        "invoice_type": INVOICE_TYPE_UNKNOWN,
         "amount": Decimal("0.00"),
         "amount_source": None,
         "qr_payload_format": "fallback",
@@ -682,6 +717,9 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
 
     invoice_no = qr_fields.get("invoice_no") or text_fields["invoice_no"]
     invoice_date = qr_fields.get("invoice_date") or text_fields["invoice_date"]
+    invoice_type = text_fields.get("invoice_type") or INVOICE_TYPE_UNKNOWN
+    if invoice_type == INVOICE_TYPE_UNKNOWN:
+        invoice_type = qr_fields.get("invoice_type") or INVOICE_TYPE_UNKNOWN
     normalized_amount = parse_decimal(amount)
     qr_success = bool(qr_fields)
     text_success = bool(
@@ -692,11 +730,13 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     parsed_result = {
         "invoice_no": invoice_no,
         "invoice_date": invoice_date.isoformat() if invoice_date else None,
+        "invoice_type": invoice_type,
         "amount": str(normalized_amount),
     }
     text_result = {
         "invoice_no": text_fields["invoice_no"],
         "invoice_date": text_fields["invoice_date"].isoformat() if text_fields["invoice_date"] else None,
+        "invoice_type": text_fields["invoice_type"],
         "amount": str(text_fields["amount"]),
         "amount_source": text_fields["amount_source"],
         "amount_uppercase": str(amount_uppercase) if amount_uppercase is not None else None,
@@ -727,6 +767,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
         "parse_method": parse_method,
         "parse_success": parse_success,
         "parsed_result": parsed_result,
+        "invoice_type": invoice_type,
         "parse_attempts": parse_attempts,
         "qr_payloads": qr_payloads,
         "amount_source": amount_source,
@@ -739,6 +780,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     return InvoiceParsedData(
         invoice_no=invoice_no,
         invoice_date=invoice_date,
+        invoice_type=invoice_type,
         amount=normalized_amount,
         preview_image=artifacts.get("preview_image"),
         raw=raw,
