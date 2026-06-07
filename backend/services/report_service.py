@@ -85,6 +85,9 @@ class SubsidyTrip:
 @dataclass(frozen=True)
 class ReportFilters:
     report_status: ReportStatus | None = None
+    report_statuses: set[ReportStatus] | None = None
+    report_start: date | None = None
+    report_end: date | None = None
     trip_start: date | None = None
     trip_end: date | None = None
     keyword: str | None = None
@@ -440,6 +443,10 @@ def report_matches_category(report: ExpenseReport, category: str | None, include
 
 
 def report_matches_filters(report: ExpenseReport, filters: ReportFilters, include_deleted_invoices: bool = False) -> bool:
+    if filters.report_start is not None and (report.report_date is None or report.report_date < filters.report_start):
+        return False
+    if filters.report_end is not None and (report.report_date is None or report.report_date > filters.report_end):
+        return False
     if not report_has_trip_overlap(report, filters.trip_start, filters.trip_end):
         return False
     if not report_matches_keyword(report, filters.keyword):
@@ -500,6 +507,8 @@ def list_reports(
 
     if report_status is not None:
         statement = statement.where(ExpenseReport.status == report_status)
+    elif filters.report_statuses:
+        statement = statement.where(ExpenseReport.status.in_(filters.report_statuses))
 
     if deleted_only:
         statement = statement.order_by(ExpenseReport.deleted_at.desc(), ExpenseReport.created_at.desc())

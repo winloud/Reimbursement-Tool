@@ -11,6 +11,9 @@ ImportConflictStrategy = Literal["import_as_new", "overwrite", "skip"]
 
 class DataExportRequest(BaseModel):
     status: ReportStatus | None = None
+    statuses: str | None = None
+    report_start: date | None = None
+    report_end: date | None = None
     trip_start: date | None = None
     trip_end: date | None = None
     keyword: str | None = None

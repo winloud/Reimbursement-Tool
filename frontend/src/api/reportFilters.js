@@ -1,6 +1,9 @@
 export const DEFAULT_REPORT_FILTERS = {
+  reportStart: "",
+  reportEnd: "",
   tripStart: "",
   tripEnd: "",
+  statuses: "",
   keyword: "",
   amountMin: "",
   amountMax: "",
@@ -40,6 +43,11 @@ export const buildReportQueryParams = ({ page = 1, pageSize = 20, status = "all"
   if (status && status !== "all") {
     params.status = status;
   }
+  if (status === "all") {
+    addStringParam(params, "statuses", merged.statuses);
+  }
+  addStringParam(params, "report_start", merged.reportStart);
+  addStringParam(params, "report_end", merged.reportEnd);
   addStringParam(params, "trip_start", merged.tripStart);
   addStringParam(params, "trip_end", merged.tripEnd);
   addStringParam(params, "keyword", merged.keyword);

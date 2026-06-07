@@ -218,21 +218,31 @@ export const deleteInvoice = async (id) => {
 
 export const getInvoiceFileUrl = (id) => `${apiClient.defaults.baseURL}/api/invoices/${id}/file`;
 
-export const getStatsSummary = async () => {
-  const response = await apiClient.get("/api/stats/summary");
+const buildStatsRangeParams = ({ startMonth, endMonth } = {}) => ({
+  ...(startMonth ? { start_month: startMonth } : {}),
+  ...(endMonth ? { end_month: endMonth } : {}),
+});
+
+export const getStatsSummary = async ({ startMonth, endMonth } = {}) => {
+  const response = await apiClient.get("/api/stats/summary", {
+    params: buildStatsRangeParams({ startMonth, endMonth }),
+  });
   return response.data;
 };
 
-export const getStatsCategory = async () => {
-  const response = await apiClient.get("/api/stats/category");
+export const getStatsCategory = async ({ startMonth, endMonth } = {}) => {
+  const response = await apiClient.get("/api/stats/category", {
+    params: buildStatsRangeParams({ startMonth, endMonth }),
+  });
   return response.data;
 };
 
-export const getStatsCalendar = async ({ year, month } = {}) => {
+export const getStatsCalendar = async ({ year, month, startMonth, endMonth } = {}) => {
   const response = await apiClient.get("/api/stats/calendar", {
     params: {
       ...(year ? { year } : {}),
       ...(month ? { month } : {}),
+      ...buildStatsRangeParams({ startMonth, endMonth }),
     },
   });
   return response.data;

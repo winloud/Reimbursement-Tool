@@ -18,6 +18,8 @@ describe("buildReportQueryParams", () => {
         pageSize: 20,
         status: "printed",
         filters: {
+          reportStart: "2026-04-01",
+          reportEnd: "2026-04-30",
           tripStart: "2026-05-01",
           tripEnd: "2026-05-31",
           keyword: " 客户 ",
@@ -34,6 +36,8 @@ describe("buildReportQueryParams", () => {
         page: 1,
         page_size: 20,
         status: "printed",
+        report_start: "2026-04-01",
+        report_end: "2026-04-30",
         trip_start: "2026-05-01",
         trip_end: "2026-05-31",
         keyword: "客户",
@@ -54,6 +58,26 @@ describe("buildReportQueryParams", () => {
         filters: { hasAttachment: "no" },
       }).has_attachment,
       false,
+    );
+  });
+
+  it("maps dashboard multi-status drilldown filters", () => {
+    assert.deepEqual(
+      buildReportQueryParams({
+        status: "all",
+        filters: {
+          statuses: "printed,reimbursed",
+          tripStart: "2024-02-01",
+          tripEnd: "2024-02-29",
+        },
+      }),
+      {
+        page: 1,
+        page_size: 20,
+        statuses: "printed,reimbursed",
+        trip_start: "2024-02-01",
+        trip_end: "2024-02-29",
+      },
     );
   });
 

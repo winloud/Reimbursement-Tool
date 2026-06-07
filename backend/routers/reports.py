@@ -57,6 +57,9 @@ def get_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
     status: ReportStatus | None = None,
+    statuses: Annotated[str | None, Query(max_length=100)] = None,
+    report_start: date | None = None,
+    report_end: date | None = None,
     trip_start: date | None = None,
     trip_end: date | None = None,
     keyword: Annotated[str | None, Query(max_length=100)] = None,
@@ -71,6 +74,9 @@ def get_reports(
 ) -> ApiResponse[PaginationData[ReportRead]]:
     filters = ReportFilters(
         report_status=status,
+        report_statuses=parse_report_statuses(statuses),
+        report_start=report_start,
+        report_end=report_end,
         trip_start=trip_start,
         trip_end=trip_end,
         keyword=keyword,
@@ -90,6 +96,8 @@ def get_reports(
 def get_trash_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    report_start: date | None = None,
+    report_end: date | None = None,
     trip_start: date | None = None,
     trip_end: date | None = None,
     keyword: Annotated[str | None, Query(max_length=100)] = None,
@@ -103,6 +111,8 @@ def get_trash_reports(
     db: Session = Depends(get_db),
 ) -> ApiResponse[PaginationData[ReportRead]]:
     filters = ReportFilters(
+        report_start=report_start,
+        report_end=report_end,
         trip_start=trip_start,
         trip_end=trip_end,
         keyword=keyword,
@@ -116,6 +126,20 @@ def get_trash_reports(
     )
     items, total = list_deleted_reports(db, page=page, page_size=page_size, filters=filters)
     return ApiResponse(data=PaginationData(items=items, total=total, page=page, page_size=page_size))
+
+
+def parse_report_statuses(value: str | None) -> set[ReportStatus] | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    valid_statuses = {"draft", "printed", "reimbursed"}
+    items = {item.strip() for item in normalized.split(",") if item.strip()}
+    invalid = items - valid_statuses
+    if invalid:
+        from fastapi import HTTPException, status as http_status
+
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="无效报销单状态筛选")
+    return items or None
 
 
 @router.get("/filter-options", response_model=ApiResponse[ReportFilterOptionsRead])

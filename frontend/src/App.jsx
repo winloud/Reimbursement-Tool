@@ -17,6 +17,7 @@ import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { Route, Routes, useLocation } from "react-router-dom";
 import { NavigationGuardProvider, useNavigationGuard } from "./navigationGuard";
+import CalendarDesignDemos from "./pages/CalendarDesignDemos";
 import Dashboard from "./pages/Dashboard";
 import ReportEdit from "./pages/ReportEdit";
 import ReportList from "./pages/ReportList";
@@ -109,6 +110,7 @@ function AppRoutes() {
             <Route path="/reports/:id/edit" element={<ReportEdit />} />
             <Route path="/reports/:id/print" element={<ReportPrint />} />
             <Route path="/settings" element={<SettingsPage />} />
+            <Route path="/calendar-demos" element={<CalendarDesignDemos />} />
           </Routes>
         </Box>
       </Box>

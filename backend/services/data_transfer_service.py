@@ -84,6 +84,9 @@ def _bytes_hash(payload: bytes) -> str:
 def _filters_from_export_request(payload: DataExportRequest) -> ReportFilters:
     return ReportFilters(
         report_status=payload.status,
+        report_statuses=_parse_export_statuses(payload.statuses),
+        report_start=payload.report_start,
+        report_end=payload.report_end,
         trip_start=payload.trip_start,
         trip_end=payload.trip_end,
         keyword=payload.keyword,
@@ -95,6 +98,18 @@ def _filters_from_export_request(payload: DataExportRequest) -> ReportFilters:
         subsidy_days_min=payload.subsidy_days_min,
         subsidy_days_max=payload.subsidy_days_max,
     )
+
+
+def _parse_export_statuses(value: str | None) -> set[str] | None:
+    normalized = (value or "").strip()
+    if not normalized:
+        return None
+    valid_statuses = {"draft", "printed", "reimbursed"}
+    items = {item.strip() for item in normalized.split(",") if item.strip()}
+    invalid = items - valid_statuses
+    if invalid:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效报销单状态筛选")
+    return items or None
 
 
 def _serialize_report(report: ExpenseReport) -> dict:

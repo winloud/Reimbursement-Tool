@@ -94,6 +94,31 @@ def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_p
         assert exported_invoice["attachment_path"] in archive.namelist()
 
 
+def test_export_zip_respects_report_date_and_multi_status_filters(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    included = create_report(db, ReportCreate(report_date=date(2024, 6, 1), purpose="命中导出"))
+    attach_invoice(db, project_root, included)
+    included.status = "reimbursed"
+    excluded = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="不应导出"))
+    attach_invoice(db, project_root, excluded)
+    excluded.status = "printed"
+    db.commit()
+
+    zip_bytes, _filename = build_export_zip(
+        db,
+        DataExportRequest(
+            statuses="printed,reimbursed",
+            report_start=date(2024, 1, 1),
+            report_end=date(2024, 12, 31),
+        ),
+    )
+
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        purposes = [item["report"]["purpose"] for item in manifest["reports"]]
+        assert purposes == ["命中导出"]
+
+
 def test_import_preview_rejects_unsafe_attachment_path(db, monkeypatch, tmp_path):
     configure_transfer_paths(monkeypatch, tmp_path)
     manifest = {

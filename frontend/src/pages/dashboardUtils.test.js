@@ -2,12 +2,18 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 import {
+  buildAmountAxisMax,
   buildCategoryChartData,
   buildCategoryLegendItems,
+  buildDashboardCardReportTarget,
   buildMonthCalendarWeeks,
+  buildRangeCalendarMonths,
   buildSummaryCards,
+  buildTripHeatLevels,
+  buildTrendChartData,
   buildYearCalendarMonths,
   formatStatsAmount,
+  monthRangeToDates,
 } from "./dashboardUtils.js";
 
 describe("dashboard utilities", () => {
@@ -16,48 +22,48 @@ describe("dashboard utilities", () => {
     assert.equal(formatStatsAmount(null), "¥0.00");
   });
 
-  it("builds four summary cards with amount and trip-day priorities", () => {
+  it("builds four summary cards for the selected period", () => {
     const summary = {
-      current_month: {
+      selected_period: {
         pending_amount: "120.00",
         pending_count: 1,
         reimbursed_amount: "300.00",
         reimbursed_count: 2,
+        total_amount: "420.00",
+        total_count: 3,
         trip_days: 5,
-      },
-      current_year: {
-        pending_amount: "800.00",
-        pending_count: 3,
-        reimbursed_amount: "1500.00",
-        reimbursed_count: 4,
-        trip_days: 18,
       },
     };
 
     assert.deepEqual(buildSummaryCards(summary), [
       {
-        key: "month_amount",
-        title: "本月金额",
-        primary: "已报销 ¥300.00",
-        secondary: "待报销 ¥120.00 · 共 3 单",
+        key: "total_amount",
+        title: "总报销金额",
+        primary: "¥420.00",
+        secondary: "共 3 单 · 点击查看明细",
+        target: "total",
       },
       {
-        key: "year_amount",
-        title: "今年金额",
-        primary: "已报销 ¥1,500.00",
-        secondary: "待报销 ¥800.00 · 共 7 单",
+        key: "reimbursed_amount",
+        title: "已报销金额",
+        primary: "¥300.00",
+        secondary: "2 单 · 点击查看明细",
+        target: "reimbursed",
       },
       {
-        key: "month_days",
-        title: "本月出差天数",
+        key: "pending_amount",
+        title: "待报销金额",
+        primary: "¥120.00",
+        secondary: "1 单 · 点击查看明细",
+        target: "pending",
+      },
+      {
+        key: "trip_days",
+        title: "出差天数",
         primary: "5 天",
-        secondary: "",
-      },
-      {
-        key: "year_days",
-        title: "今年出差天数",
-        primary: "18 天",
-        secondary: "",
+        secondary: "按实际行程日期统计",
+        target: "trip_days",
+        clickable: false,
       },
     ]);
   });
@@ -65,8 +71,34 @@ describe("dashboard utilities", () => {
   it("builds empty summary cards before API data loads", () => {
     assert.deepEqual(
       buildSummaryCards(null).map((card) => card.primary),
-      ["已报销 ¥0.00", "已报销 ¥0.00", "0 天", "0 天"],
+      ["¥0.00", "¥0.00", "¥0.00", "0 天"],
     );
+  });
+
+  it("builds report-list targets for dashboard card drilldowns", () => {
+    assert.deepEqual(monthRangeToDates("2023-01", "2023-02"), {
+      startDate: "2023-01-01",
+      endDate: "2023-02-28",
+    });
+    assert.equal(
+      buildDashboardCardReportTarget({ target: "reimbursed", startMonth: "2023-01", endMonth: "2023-02" }),
+      "/reports?page=1&status=reimbursed&report_start=2023-01-01&report_end=2023-02-28",
+    );
+    assert.equal(
+      buildDashboardCardReportTarget({ target: "total", startMonth: "2024-02", endMonth: "2024-02" }),
+      "/reports?page=1&statuses=printed%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
+    );
+  });
+
+  it("adapts trend data and computes a padded amount axis max", () => {
+    const trend = buildTrendChartData([
+      { month: "2023-01", total_amount: "10000.00", pending_amount: "100.00", reimbursed_amount: "9900.00", trip_days: "8" },
+      { month: "2023-02", total_amount: "65000.00", pending_amount: "0.00", reimbursed_amount: "65000.00", trip_days: 12 },
+    ]);
+
+    assert.equal(trend[0].total_amount, 10000);
+    assert.equal(trend[0].trip_days, 8);
+    assert.ok(buildAmountAxisMax(trend) > 65000);
   });
 
   it("converts category amounts to numbers for chart rendering", () => {
@@ -109,5 +141,59 @@ describe("dashboard utilities", () => {
     assert.equal(weeks[0][1].active, true);
     assert.equal(weeks[1][3].date, 10);
     assert.equal(weeks[1][3].active, true);
+  });
+
+  it("builds continuous range calendar month cards", () => {
+    assert.deepEqual(
+      buildRangeCalendarMonths([
+        { month: "2024-02", dates: ["2024-02-01", "2024-02-29"], days: 2 },
+        { month: "2024-03", dates: [], days: 0 },
+      ]),
+      [
+        {
+          month: "2024-02",
+          year: 2024,
+          monthNumber: 2,
+          label: "2024年2月",
+          showYear: true,
+          activeDates: [1, 29],
+          days: 2,
+          dates: ["2024-02-01", "2024-02-29"],
+        },
+        {
+          month: "2024-03",
+          year: 2024,
+          monthNumber: 3,
+          label: "2024年3月",
+          showYear: false,
+          activeDates: [],
+          days: 0,
+          dates: [],
+        },
+      ],
+    );
+  });
+
+  it("builds trip heat levels from consecutive dates and resets after gaps", () => {
+    const heat = buildTripHeatLevels([
+      "2024-01-30",
+      "2024-01-31",
+      "2024-02-01",
+      "2024-02-02",
+      "2024-02-10",
+    ]);
+
+    assert.equal(heat["2024-01-30"].streak, 1);
+    assert.equal(heat["2024-02-01"].streak, 3);
+    assert.equal(heat["2024-02-01"].level, 1);
+    assert.equal(heat["2024-02-02"].streak, 4);
+    assert.equal(heat["2024-02-02"].level, 2);
+    assert.equal(heat["2024-02-10"].streak, 1);
+
+    const weeks = buildMonthCalendarWeeks(2024, 2, ["2024-02-01", "2024-02-02", "2024-02-10"], heat);
+    assert.equal(weeks[0][4].date, 1);
+    assert.equal(weeks[0][4].heatLevel, 1);
+    assert.equal(weeks[1][6].date, 10);
+    assert.equal(weeks[1][6].heatLevel, 1);
   });
 });

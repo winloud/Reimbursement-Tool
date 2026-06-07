@@ -6,36 +6,81 @@ export const formatStatsAmount = (value) =>
 
 export const buildSummaryCards = (summary = {}) => {
   const safeSummary = summary || {};
-  const month = safeSummary.current_month || {};
-  const year = safeSummary.current_year || {};
-  const monthCount = Number(month.pending_count || 0) + Number(month.reimbursed_count || 0);
-  const yearCount = Number(year.pending_count || 0) + Number(year.reimbursed_count || 0);
+  const period = safeSummary.selected_period || safeSummary.current_year || {};
+  const totalAmount = Number(period.total_amount ?? 0);
+  const pendingAmount = Number(period.pending_amount ?? 0);
+  const reimbursedAmount = Number(period.reimbursed_amount ?? 0);
+  const totalCount =
+    Number(period.total_count ?? 0) ||
+    Number(period.pending_count || 0) + Number(period.reimbursed_count || 0);
   return [
     {
-      key: "month_amount",
-      title: "本月金额",
-      primary: `已报销 ${formatStatsAmount(month.reimbursed_amount)}`,
-      secondary: `待报销 ${formatStatsAmount(month.pending_amount)} · 共 ${monthCount} 单`,
+      key: "total_amount",
+      title: "总报销金额",
+      primary: formatStatsAmount(totalAmount || pendingAmount + reimbursedAmount),
+      secondary: `共 ${totalCount} 单 · 点击查看明细`,
+      target: "total",
     },
     {
-      key: "year_amount",
-      title: "今年金额",
-      primary: `已报销 ${formatStatsAmount(year.reimbursed_amount)}`,
-      secondary: `待报销 ${formatStatsAmount(year.pending_amount)} · 共 ${yearCount} 单`,
+      key: "reimbursed_amount",
+      title: "已报销金额",
+      primary: formatStatsAmount(reimbursedAmount),
+      secondary: `${Number(period.reimbursed_count || 0)} 单 · 点击查看明细`,
+      target: "reimbursed",
     },
     {
-      key: "month_days",
-      title: "本月出差天数",
-      primary: `${Number(month.trip_days || 0)} 天`,
-      secondary: "",
+      key: "pending_amount",
+      title: "待报销金额",
+      primary: formatStatsAmount(pendingAmount),
+      secondary: `${Number(period.pending_count || 0)} 单 · 点击查看明细`,
+      target: "pending",
     },
     {
-      key: "year_days",
-      title: "今年出差天数",
-      primary: `${Number(year.trip_days || 0)} 天`,
-      secondary: "",
+      key: "trip_days",
+      title: "出差天数",
+      primary: `${Number(period.trip_days || 0)} 天`,
+      secondary: "按实际行程日期统计",
+      target: "trip_days",
+      clickable: false,
     },
   ];
+};
+
+export const monthValueFromDate = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+
+export const monthRangeToDates = (startMonth, endMonth) => {
+  const [startYear, start] = startMonth.split("-").map(Number);
+  const [endYear, end] = endMonth.split("-").map(Number);
+  const endDate = new Date(endYear, end, 0);
+  return {
+    startDate: `${startYear}-${String(start).padStart(2, "0")}-01`,
+    endDate: `${endYear}-${String(end).padStart(2, "0")}-${String(endDate.getDate()).padStart(2, "0")}`,
+  };
+};
+
+export const buildDashboardCardReportTarget = ({ target, startMonth, endMonth }) => {
+  const { startDate, endDate } = monthRangeToDates(startMonth, endMonth);
+  const params = new URLSearchParams();
+  params.set("page", "1");
+  if (target === "reimbursed") {
+    params.set("status", "reimbursed");
+    params.set("report_start", startDate);
+    params.set("report_end", endDate);
+  } else if (target === "pending") {
+    params.set("status", "printed");
+    params.set("report_start", startDate);
+    params.set("report_end", endDate);
+  } else if (target === "trip_days") {
+    params.set("statuses", "printed,reimbursed");
+    params.set("trip_start", startDate);
+    params.set("trip_end", endDate);
+  } else {
+    params.set("statuses", "printed,reimbursed");
+    params.set("report_start", startDate);
+    params.set("report_end", endDate);
+  }
+  return `/reports?${params.toString()}`;
 };
 
 export const buildCategoryChartData = (items = []) =>
@@ -43,6 +88,23 @@ export const buildCategoryChartData = (items = []) =>
     ...item,
     amount: Number(item.amount || 0),
   }));
+
+export const buildTrendChartData = (items = []) =>
+  items.map((item) => ({
+    ...item,
+    pending_amount: Number(item.pending_amount || 0),
+    reimbursed_amount: Number(item.reimbursed_amount || 0),
+    total_amount: Number(item.total_amount || 0),
+    trip_days: Number(item.trip_days || 0),
+  }));
+
+export const buildAmountAxisMax = (items = []) => {
+  const maxAmount = items.reduce((max, item) => Math.max(max, Number(item.total_amount || 0)), 0);
+  if (maxAmount <= 0) return 1000;
+  const padded = maxAmount * 1.15;
+  const magnitude = 10 ** Math.max(0, Math.floor(Math.log10(padded)) - 1);
+  return Math.ceil(padded / magnitude) * magnitude;
+};
 
 export const buildCategoryLegendItems = (items = []) => {
   const total = items.reduce((sum, item) => sum + Number(item.amount || 0), 0);
@@ -82,7 +144,54 @@ export const buildYearCalendarMonths = (year, dateValues = []) => {
   });
 };
 
-export const buildMonthCalendarWeeks = (year, month, dateValues = []) => {
+export const buildRangeCalendarMonths = (items = []) =>
+  items.map((item, index) => {
+    const [year, month] = item.month.split("-").map(Number);
+    return {
+      month: item.month,
+      year,
+      monthNumber: month,
+      label: `${year}年${month}月`,
+      showYear: index === 0 || month === 1,
+      activeDates: (item.dates || [])
+        .map(dateKey)
+        .map((key) => Number(key.split("-")[2]))
+        .filter(Boolean)
+        .sort((a, b) => a - b),
+      days: Number(item.days || 0),
+      dates: item.dates || [],
+    };
+  });
+
+const nextDateKey = (value) => {
+  const [year, month, day] = value.split("-").map(Number);
+  const next = new Date(year, month - 1, day + 1);
+  return `${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}-${String(next.getDate()).padStart(2, "0")}`;
+};
+
+export const tripHeatLevelFromStreak = (streak) => {
+  return Math.max(1, Math.min(10, Math.ceil(Number(streak || 1) / 3)));
+};
+
+export const buildTripHeatLevels = (dateValues = []) => {
+  const dates = [...new Set(dateValues.map(dateKey).filter(Boolean))].sort();
+  const heatByDate = {};
+  let previous = "";
+  let streak = 0;
+
+  dates.forEach((key) => {
+    streak = previous && key === nextDateKey(previous) ? streak + 1 : 1;
+    heatByDate[key] = {
+      streak,
+      level: tripHeatLevelFromStreak(streak),
+    };
+    previous = key;
+  });
+
+  return heatByDate;
+};
+
+export const buildMonthCalendarWeeks = (year, month, dateValues = [], heatByDate = {}) => {
   const activeDays = new Set(
     dateValues
       .map(dateKey)
@@ -96,7 +205,14 @@ export const buildMonthCalendarWeeks = (year, month, dateValues = []) => {
     ...Array.from({ length: firstDay }, () => null),
     ...Array.from({ length: daysInMonth }, (_, index) => {
       const day = index + 1;
-      return { date: day, active: activeDays.has(day) };
+      const key = `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
+      const active = activeDays.has(day);
+      return {
+        date: day,
+        active,
+        heatLevel: active ? heatByDate[key]?.level || 1 : 0,
+        streak: active ? heatByDate[key]?.streak || 1 : 0,
+      };
     }),
   ];
   while (cells.length % 7 !== 0) cells.push(null);

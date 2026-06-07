@@ -36,7 +36,7 @@ import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import { Link as RouterLink, useNavigate } from "react-router-dom";
+import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import {
   batchDeleteReports,
   batchPurgeReports,
@@ -136,13 +136,31 @@ const errorMessage = (err, fallback) => {
   return data?.message || err.message || fallback;
 };
 
+const reportListStateFromSearch = (search) => {
+  const params = new URLSearchParams(search);
+  return {
+    status: params.get("status") || "all",
+    page: Math.max(0, Number(params.get("page") || 1) - 1),
+    filters: {
+      ...DEFAULT_REPORT_FILTERS,
+      reportStart: params.get("report_start") || DEFAULT_REPORT_FILTERS.reportStart,
+      reportEnd: params.get("report_end") || DEFAULT_REPORT_FILTERS.reportEnd,
+      tripStart: params.get("trip_start") || DEFAULT_REPORT_FILTERS.tripStart,
+      tripEnd: params.get("trip_end") || DEFAULT_REPORT_FILTERS.tripEnd,
+      statuses: params.get("statuses") || DEFAULT_REPORT_FILTERS.statuses,
+    },
+  };
+};
+
 export default function ReportList() {
   const navigate = useNavigate();
-  const [status, setStatus] = useState("all");
-  const [filters, setFilters] = useState(() => ({ ...DEFAULT_REPORT_FILTERS }));
+  const location = useLocation();
+  const initialState = reportListStateFromSearch(location.search);
+  const [status, setStatus] = useState(initialState.status);
+  const [filters, setFilters] = useState(initialState.filters);
   const [advancedOpen, setAdvancedOpen] = useState(false);
   const [categoryOptions, setCategoryOptions] = useState(CATEGORY_OPTIONS);
-  const [page, setPage] = useState(0);
+  const [page, setPage] = useState(initialState.page);
   const [pageSize, setPageSize] = useState(20);
   const [items, setItems] = useState([]);
   const [total, setTotal] = useState(0);
@@ -174,6 +192,13 @@ export default function ReportList() {
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const isTrash = isTrashStatus(status);
+
+  useEffect(() => {
+    const nextState = reportListStateFromSearch(location.search);
+    setStatus(nextState.status);
+    setFilters(nextState.filters);
+    setPage(nextState.page);
+  }, [location.search]);
 
   const fetchReports = useCallback(async () => {
     setLoading(true);
@@ -224,6 +249,7 @@ export default function ReportList() {
 
   const handleStatusChange = (_event, value) => {
     setStatus(value);
+    setFilters((current) => ({ ...current, statuses: DEFAULT_REPORT_FILTERS.statuses }));
     setPage(0);
   };
 
@@ -246,6 +272,9 @@ export default function ReportList() {
   const invoiceStateLabel = (value) => INVOICE_STATE_OPTIONS.find((option) => option.value === value)?.label || value;
   const attachmentLabel = (value) => HAS_ATTACHMENT_OPTIONS.find((option) => option.value === value)?.label || value;
   const activeFilterChips = [
+    filters.statuses && { key: "statuses", label: "状态：待报销 + 已报销" },
+    filters.reportStart && { key: "reportStart", label: `报销开始：${filters.reportStart}` },
+    filters.reportEnd && { key: "reportEnd", label: `报销结束：${filters.reportEnd}` },
     filters.keyword && { key: "keyword", label: `关键词：${filters.keyword}` },
     filters.tripStart && { key: "tripStart", label: `开始：${filters.tripStart}` },
     filters.tripEnd && { key: "tripEnd", label: `结束：${filters.tripEnd}` },
@@ -685,6 +714,22 @@ export default function ReportList() {
                 gap: 1.5,
               }}
             >
+              <TextField
+                size="small"
+                label="报销开始"
+                type="date"
+                value={filters.reportStart}
+                onChange={handleFilterChange("reportStart")}
+                InputLabelProps={{ shrink: true }}
+              />
+              <TextField
+                size="small"
+                label="报销结束"
+                type="date"
+                value={filters.reportEnd}
+                onChange={handleFilterChange("reportEnd")}
+                InputLabelProps={{ shrink: true }}
+              />
               <TextField
                 size="small"
                 label="金额下限"
