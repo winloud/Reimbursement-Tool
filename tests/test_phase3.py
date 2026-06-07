@@ -137,6 +137,49 @@ def test_parse_pdf_invoice_uses_text_tax_total_over_standard_qr_untaxed_amount(m
     assert parsed.raw["amount_selection_reason"] == "text_tax_total_over_standard_qr"
 
 
+def test_parse_pdf_invoice_reads_tax_total_when_currency_symbol_follows_number(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "电子发票（普通发票）",
+                    "发票号码: 24337000000084378505",
+                    "开票日期: 2024年06月24日",
+                    "金额",
+                    "税额",
+                    "66.22",
+                    "3%",
+                    "1.99",
+                    "合",
+                    "计",
+                    "66.22",
+                    "¥",
+                    "1.99",
+                    "¥",
+                    "价税合计（大写）",
+                    "（小写）",
+                    "68.21",
+                    "¥",
+                    "陆拾捌圆贰角壹分",
+                ]
+            ),
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_no == "24337000000084378505"
+    assert parsed.invoice_date == date(2024, 6, 24)
+    assert parsed.amount == Decimal("68.21")
+    assert parsed.raw["amount_source"] == "tax_total_nearby"
+    assert parsed.raw["amount_validation"] == "matched"
+
+
 def test_parse_qr_payload_supports_comma_separated_invoice_tokens():
     parsed = parse_qr_payload("01,10,044001800111,28104068,181.52,20260603,checksum")
 

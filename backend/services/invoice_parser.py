@@ -30,12 +30,19 @@ AMOUNT_PATTERNS = [
     ),
     ("generic_currency", re.compile(r"[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)")),
 ]
-TAX_TOTAL_AMOUNT_SOURCES = {"tax_total_small", "tax_total", "tax_total_small_line", "currency_sum"}
+TAX_TOTAL_AMOUNT_SOURCES = {
+    "tax_total_small",
+    "tax_total",
+    "tax_total_small_line",
+    "tax_total_nearby",
+    "currency_sum",
+}
 COMMON_TAX_RATES = (Decimal("0.01"), Decimal("0.03"), Decimal("0.06"), Decimal("0.09"), Decimal("0.13"))
 MONEY_TOKEN_PATTERN = re.compile(r"[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)")
 SMALL_AMOUNT_PATTERN = re.compile(
     r"[（(]\s*小写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)"
 )
+MONEY_VALUE_PATTERN = re.compile(r"[¥￥]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*[¥￥]?")
 UPPER_AMOUNT_PATTERN = re.compile(
     r"(?:价税合计|税价合计)\s*[（(]\s*[大⼤]\s*写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
 )
@@ -346,6 +353,32 @@ def extract_tax_total_small_line_amount(text: str) -> Decimal | None:
     return None
 
 
+def extract_tax_total_nearby_amount(text: str) -> Decimal | None:
+    lines = normalize_text(text).splitlines()
+    uppercase_amount = extract_uppercase_amount(text)
+    for index, line in enumerate(lines):
+        compacted_line = compact_text(line)
+        if "小写" not in compacted_line:
+            continue
+        nearby_label = compact_text("".join(lines[max(0, index - 4) : index + 1]))
+        if "价税合计" not in nearby_label and "税价合计" not in nearby_label:
+            continue
+        for offset in range(0, 4):
+            candidate_line = compact_text(lines[index + offset]) if index + offset < len(lines) else ""
+            candidate_line = candidate_line.replace("小写", "").replace("(", "").replace(")", "")
+            candidate_line = candidate_line.replace("（", "").replace("）", "")
+            if not candidate_line or "%" in candidate_line:
+                continue
+            match = MONEY_VALUE_PATTERN.fullmatch(candidate_line)
+            if match:
+                amount = parse_decimal(match.group(1))
+                if amount > Decimal("0.00"):
+                    if uppercase_amount is not None and amount != uppercase_amount:
+                        continue
+                    return amount
+    return None
+
+
 def currency_amount_candidates(text: str) -> list[dict[str, Any]]:
     candidates: list[dict[str, Any]] = []
     for line_no, line in enumerate(normalize_text(text).splitlines()):
@@ -432,6 +465,10 @@ def extract_amount_from_text(text: str) -> tuple[Decimal, str | None]:
     line_amount = extract_tax_total_small_line_amount(text)
     if line_amount is not None:
         return line_amount, "tax_total_small_line"
+
+    nearby_amount = extract_tax_total_nearby_amount(text)
+    if nearby_amount is not None:
+        return nearby_amount, "tax_total_nearby"
 
     currency_sum_amount = extract_currency_sum_amount(text)
     if currency_sum_amount is not None:

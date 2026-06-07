@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.services.invoice_parser import parse_invoice_file
+from backend.services.invoice_parser import parse_invoice_file, parse_pdf_invoice
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -41,3 +41,20 @@ def test_parser_uses_tax_total_for_local_invoice_samples(invoice_id, relative_pa
     assert parsed.invoice_no == invoice_no
     assert parsed.invoice_date == invoice_date
     assert parsed.raw["amount_selection_reason"] == "text_tax_total_over_standard_qr"
+
+
+def test_parser_reads_split_tax_total_from_report_144_sample_without_qr(monkeypatch):
+    path = PROJECT_ROOT / "backend" / "uploads/144/151_luggage_741aa440_00ecea3bdfc84e1e8b196a049d038cd1.pdf"
+    if not path.exists():
+        pytest.skip("local invoice sample 151 is not present")
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False: ([], []) if include_details else [],
+    )
+
+    parsed = parse_pdf_invoice(path)
+
+    assert parsed.amount == Decimal("68.21")
+    assert parsed.invoice_no == "24337000000084378505"
+    assert parsed.invoice_date == date(2024, 6, 24)
+    assert parsed.raw["amount_source"] == "tax_total_nearby"
