@@ -63,6 +63,8 @@ const TRIP_HEAT_COLORS = Array.from({ length: 10 }, (_, index) => {
 
 const addMonths = (date, months) => new Date(date.getFullYear(), date.getMonth() + months, 1);
 const shiftMonthValue = (value, months) => monthValueFromDate(addMonths(dateFromMonthValue(value, 1), months));
+const dateValueFromDate = (value) =>
+  `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, "0")}-${String(value.getDate()).padStart(2, "0")}`;
 const monthLabel = (value) => value || "";
 const rangeIsValid = (startMonth, endMonth) => startMonth && endMonth && startMonth <= endMonth;
 const monthParts = (value) => {
@@ -70,8 +72,9 @@ const monthParts = (value) => {
   return { year, month };
 };
 const monthStartDateValue = (value) => (value ? `${value}-01` : "");
-const monthEndDateValue = (value) => {
+const monthEndDateValue = (value, referenceDate) => {
   if (!value) return "";
+  if (referenceDate && value === monthValueFromDate(referenceDate)) return dateValueFromDate(referenceDate);
   const { year, month } = monthParts(value);
   return `${value}-${String(new Date(year, month, 0).getDate()).padStart(2, "0")}`;
 };
@@ -170,7 +173,7 @@ export default function Dashboard() {
     { value: "last_12", label: "近一年", icon: <CalendarMonthIcon fontSize="small" />, start: monthValueFromDate(addMonths(today, -11)), end: currentMonth },
     { value: "prev_year", label: "前一年", icon: <ChevronLeftIcon fontSize="small" />, action: "shift", months: -12 },
     { value: "next_year", label: "后一年", icon: <ChevronRightIcon fontSize="small" />, action: "shift", months: 12 },
-    { value: "all", label: "所有", icon: <AllInclusiveIcon fontSize="small" />, start: "2023-01", end: "2025-12" },
+    { value: "all", label: "所有", icon: <AllInclusiveIcon fontSize="small" />, start: "2023-01", end: currentMonth },
   ];
   const activeQuickRange = quickRanges.find((range) => range.start === startMonth && range.end === endMonth)?.value || "custom";
   const handleQuickRangeChange = (_, value) => {
@@ -238,7 +241,7 @@ export default function Dashboard() {
                 <TextField
                   size="small"
                   type="date"
-                  value={monthEndDateValue(endMonth)}
+                  value={monthEndDateValue(endMonth, today)}
                   onChange={handleEndDateChange}
                   inputProps={{ "aria-label": "结束日期" }}
                   sx={{ width: 158, flex: "0 0 auto" }}

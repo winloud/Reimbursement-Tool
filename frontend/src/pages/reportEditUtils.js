@@ -166,23 +166,65 @@ const makeDate = (year, month, day) => {
   return parsed;
 };
 
-export const calculateSubsidyDays = (reportDate, trips) => {
-  const year = reportDate ? new Date(`${reportDate}T00:00:00`).getFullYear() : new Date().getFullYear();
-  const markedTrips = trips.some((trip) => trip.subsidy_start || trip.subsidy_end)
-    ? trips.map((trip, index) => normalizeTrip(trip, index))
-    : applyDefaultSubsidyMarkers(trips);
-  const ranges = markedTrips
-    .map((trip) => {
+const MS_PER_DAY = 86400000;
+
+const reportDateAnchor = (reportDate) => {
+  if (typeof reportDate === "number") {
+    return makeDate(reportDate, 12, 31) || new Date();
+  }
+  if (reportDate instanceof Date && !Number.isNaN(reportDate.getTime())) {
+    return makeDate(reportDate.getFullYear(), reportDate.getMonth() + 1, reportDate.getDate()) || new Date();
+  }
+  if (typeof reportDate === "string" && reportDate.trim()) {
+    const [year, month, day] = reportDate.split("-").map(Number);
+    const parsed = makeDate(year, month, day);
+    if (parsed) return parsed;
+  }
+  const today = new Date();
+  return makeDate(today.getFullYear(), today.getMonth() + 1, today.getDate()) || today;
+};
+
+const daysBetween = (start, end) => Math.floor((end.getTime() - start.getTime()) / MS_PER_DAY);
+
+const compareMonthDay = ([leftMonth, leftDay], [rightMonth, rightDay]) =>
+  leftMonth === rightMonth ? leftDay - rightDay : leftMonth - rightMonth;
+
+export const buildTripDateRanges = (reportDate, trips = []) => {
+  const normalized = trips.map((trip, index) => normalizeTrip(trip, index));
+  if (normalized.length === 0) return [];
+
+  const anchor = reportDateAnchor(reportDate);
+  let currentYear = anchor.getFullYear();
+  let previousDepartMonthDay = null;
+
+  return normalized
+    .map((trip, index) => {
       const departMonth = Number(trip.depart_month);
       const departDay = Number(trip.depart_day);
       const arriveMonth = Number(trip.arrive_month);
       const arriveDay = Number(trip.arrive_day);
-      const arriveYear =
-        arriveMonth < departMonth || (arriveMonth === departMonth && arriveDay < departDay) ? year + 1 : year;
-      const depart = makeDate(year, departMonth, departDay);
+      const departMonthDay = [departMonth, departDay];
+      let depart;
+
+      if (index === 0) {
+        depart = makeDate(currentYear, departMonth, departDay);
+        if (depart && daysBetween(anchor, depart) > 180) {
+          currentYear -= 1;
+          depart = makeDate(currentYear, departMonth, departDay);
+        }
+      } else {
+        if (previousDepartMonthDay && compareMonthDay(departMonthDay, previousDepartMonthDay) < 0) {
+          currentYear += 1;
+        }
+        depart = makeDate(currentYear, departMonth, departDay);
+      }
+
+      const arriveYear = compareMonthDay([arriveMonth, arriveDay], departMonthDay) < 0 ? currentYear + 1 : currentYear;
       const arrive = makeDate(arriveYear, arriveMonth, arriveDay);
+      previousDepartMonthDay = departMonthDay;
       if (!depart || !arrive) return null;
-      const travelDays = Math.floor((arrive.getTime() - depart.getTime()) / 86400000);
+
+      const travelDays = daysBetween(depart, arrive);
       if (travelDays < 0 || travelDays > 7) return null;
       if (
         travelDays === 0 &&
@@ -196,9 +238,34 @@ export const calculateSubsidyDays = (reportDate, trips) => {
       ) {
         return null;
       }
-      return depart && arrive ? { trip, depart, arrive } : null;
+      return { trip, depart, arrive };
     })
     .filter(Boolean);
+};
+
+const formatYearMonth = (value) => `${value.getFullYear()}/${value.getMonth() + 1}`;
+
+export const getTripYearRangeLabel = (reportDate, trips = []) => {
+  const ranges = buildTripDateRanges(reportDate, trips);
+  if (ranges.length === 0) return "";
+
+  const anchorYear = reportDateAnchor(reportDate).getFullYear();
+  const dates = ranges.flatMap((range) => [range.depart, range.arrive]);
+  const years = new Set(dates.map((item) => item.getFullYear()));
+  if (years.size === 1 && years.has(anchorYear)) return "";
+
+  const firstDate = dates.reduce((earliest, item) => (item.getTime() < earliest.getTime() ? item : earliest), dates[0]);
+  const lastDate = dates.reduce((latest, item) => (item.getTime() > latest.getTime() ? item : latest), dates[0]);
+  const firstMonth = formatYearMonth(firstDate);
+  const lastMonth = formatYearMonth(lastDate);
+  return firstMonth === lastMonth ? `行程按 ${firstMonth} 计算` : `行程按 ${firstMonth} - ${lastMonth} 计算`;
+};
+
+export const calculateSubsidyDays = (reportDate, trips) => {
+  const markedTrips = trips.some((trip) => trip.subsidy_start || trip.subsidy_end)
+    ? trips.map((trip, index) => normalizeTrip(trip, index))
+    : applyDefaultSubsidyMarkers(trips);
+  const ranges = buildTripDateRanges(reportDate, markedTrips);
 
   if (ranges.length === 0) return 0;
   const intervals = [];
@@ -220,13 +287,13 @@ export const calculateSubsidyDays = (reportDate, trips) => {
   const merged = [];
   for (const interval of intervals) {
     const previous = merged.at(-1);
-    if (!previous || interval.start.getTime() > previous.end.getTime() + 86400000) {
+    if (!previous || interval.start.getTime() > previous.end.getTime() + MS_PER_DAY) {
       merged.push({ ...interval });
     } else if (interval.end.getTime() > previous.end.getTime()) {
       previous.end = interval.end;
     }
   }
-  return merged.reduce((sum, interval) => sum + Math.floor((interval.end - interval.start) / 86400000) + 1, 0);
+  return merged.reduce((sum, interval) => sum + daysBetween(interval.start, interval.end) + 1, 0);
 };
 
 export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices }) => {

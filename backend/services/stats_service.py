@@ -8,7 +8,6 @@ from sqlalchemy.orm import Session
 
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
-from backend.models.trip import Trip
 from backend.schemas.stats import (
     MonthlyTrendItem,
     StatsCalendarMonth,
@@ -22,12 +21,11 @@ from backend.services.report_service import (
     FIXED_CATEGORY_LABELS,
     SubsidyTrip,
     build_subsidy_intervals,
-    build_trip_date,
     custom_category_name,
     derive_default_subsidy_markers,
+    infer_trip_date_ranges,
     is_custom_category,
     quantize_amount,
-    validate_trip_chronology,
 )
 
 PENDING_STATUS = "printed"
@@ -236,33 +234,23 @@ def report_trip_intervals(report: ExpenseReport) -> list[tuple[date, date]]:
     if report.report_date is None or not report.trips:
         return []
 
-    report_year = report.report_date.year
     sorted_trips = sorted(report.trips, key=lambda trip: trip.sort_order)
     has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
     default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
     subsidy_trips: list[SubsidyTrip] = []
 
-    for trip in sorted_trips:
-        depart, arrive = trip_dates(report_year, trip)
-        validate_trip_chronology(trip, depart, arrive)
-        default_start, default_end = default_markers.get(id(trip), (False, False))
+    for trip_range in infer_trip_date_ranges(report.report_date, sorted_trips):
+        default_start, default_end = default_markers.get(id(trip_range.trip), (False, False))
         subsidy_trips.append(
             SubsidyTrip(
-                trip=trip,
-                depart=depart,
-                arrive=arrive,
-                subsidy_start=trip.subsidy_start if has_manual_markers else default_start,
-                subsidy_end=trip.subsidy_end if has_manual_markers else default_end,
+                trip=trip_range.trip,
+                depart=trip_range.depart,
+                arrive=trip_range.arrive,
+                subsidy_start=trip_range.trip.subsidy_start if has_manual_markers else default_start,
+                subsidy_end=trip_range.trip.subsidy_end if has_manual_markers else default_end,
             )
         )
     return build_subsidy_intervals(subsidy_trips)
-
-
-def trip_dates(report_year: int, trip: Trip) -> tuple[date, date]:
-    depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
-    arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
-    arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-    return depart, arrive
 
 
 def add_months(value: date, months: int) -> date:

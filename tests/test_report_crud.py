@@ -120,6 +120,28 @@ def test_list_reports_filters_by_trip_date_overlap(db):
     assert [item.id for item in items] == [may_report.id]
 
 
+def test_list_reports_filters_previous_year_december_trip_from_january_report(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 1, 5),
+            purpose="上年十二月出差",
+            trips=[
+                TripWrite(sort_order=1, depart_month=12, depart_day=30, arrive_month=12, arrive_day=31),
+                TripWrite(sort_order=2, depart_month=1, depart_day=2, arrive_month=1, arrive_day=2),
+            ],
+        ),
+    )
+
+    items, total = list_reports(
+        db,
+        filters=ReportFilters(trip_start=date(2025, 12, 1), trip_end=date(2025, 12, 31)),
+    )
+
+    assert total == 1
+    assert [item.id for item in items] == [report.id]
+
+
 def test_list_reports_filters_by_keyword_amount_and_subsidy_days(db):
     matched = create_report(
         db,

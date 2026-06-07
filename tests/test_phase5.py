@@ -225,6 +225,27 @@ def test_stats_month_range_supports_cross_year_trend_and_trip_days(db):
     assert [item.month for item in summary.monthly_trend] == ["2025-12", "2026-01"]
 
 
+def test_stats_calendar_places_january_report_december_trip_in_previous_year(db):
+    make_report(
+        db,
+        report_date=date(2026, 1, 5),
+        status="printed",
+        trips=[
+            TripWrite(sort_order=1, depart_month=12, depart_day=30, arrive_month=12, arrive_day=31),
+            TripWrite(sort_order=2, depart_month=1, depart_day=2, arrive_month=1, arrive_day=2),
+        ],
+    )
+
+    calendar = get_stats_calendar(db, year=2025, month=12, start_month="2025-12", end_month="2026-01")
+
+    assert calendar.total_days == 4
+    assert calendar.month_dates == [date(2025, 12, 30), date(2025, 12, 31)]
+    assert [(item.month, item.dates) for item in calendar.months] == [
+        ("2025-12", [date(2025, 12, 30), date(2025, 12, 31)]),
+        ("2026-01", [date(2026, 1, 1), date(2026, 1, 2)]),
+    ]
+
+
 def test_stats_calendar_returns_continuous_month_cards_for_cross_year_range(db):
     make_report(
         db,

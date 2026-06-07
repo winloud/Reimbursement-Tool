@@ -162,7 +162,7 @@ function ParseDiagnosticsDialog({ invoice, parsed, loading, error, open, onClose
   );
 }
 
-export default function InvoiceViewer({ invoice, open, readonly = false, onClose, onUpdated }) {
+export default function InvoiceViewer({ invoice, open, readonly = false, onClose, onSkip, onUpdated }) {
   const [amount, setAmount] = useState(invoice ? Number(invoice.amount ?? 0).toFixed(2) : "0.00");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -357,6 +357,11 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
         </Grid>
       </DialogContent>
       <DialogActions>
+        {onSkip && (
+          <Button onClick={onSkip} disabled={saving}>
+            跳过
+          </Button>
+        )}
         <Button onClick={onClose}>关闭</Button>
         <Button onClick={handleConfirm} variant="contained" disabled={saving || readonly}>
           {saving ? "确认中..." : "确认金额"}

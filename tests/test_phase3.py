@@ -149,6 +149,15 @@ def test_calculate_subsidy_days_allows_short_cross_year_trip():
     assert calculate_subsidy_days(2026, trips) == 4
 
 
+def test_calculate_subsidy_days_infers_previous_year_for_january_report_date():
+    trips = [
+        Trip(depart_month=12, depart_day=30, arrive_month=12, arrive_day=31, sort_order=1),
+        Trip(depart_month=1, depart_day=2, arrive_month=1, arrive_day=2, sort_order=2),
+    ]
+
+    assert calculate_subsidy_days(date(2026, 1, 5), trips) == 4
+
+
 def test_calculate_subsidy_days_rejects_arrival_month_day_before_departure_in_same_year():
     trips = [
         Trip(depart_month=3, depart_day=10, arrive_month=3, arrive_day=9, sort_order=1),

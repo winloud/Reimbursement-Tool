@@ -66,6 +66,7 @@ import {
   emptyForm,
   formatAmount,
   getExpenseCategoryOptions,
+  getTripYearRangeLabel,
   isEmptyDraft,
   isCustomExpenseCategory,
   makeBlankTrip,
@@ -328,6 +329,7 @@ export default function ReportEdit() {
     [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
   );
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
+  const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
   const hasUnconfirmedInvoices = useMemo(
     () => invoices.some((invoice) => !invoice.amount_confirmed),
     [invoices],
@@ -602,6 +604,15 @@ export default function ReportEdit() {
     });
   };
 
+  const handleInvoiceSkipped = () => {
+    setInvoiceQueue((prev) => {
+      const next = prev.length > 0 ? prev.slice(1) : [];
+      setSelectedInvoice(next[0] || null);
+      setToast(next.length > 0 ? "已跳过当前发票，请确认下一张" : "已跳过当前发票");
+      return next;
+    });
+  };
+
   const handleDeleteEmptyDraftAndLeave = async () => {
     setLeaveBusy(true);
     setError("");
@@ -792,7 +803,7 @@ export default function ReportEdit() {
                         <Grid item xs={12}>
                           <Divider />
                         </Grid>
-                        <Grid item xs={6}>
+                        <Grid item xs={12} sm={4}>
                           <TextField
                             fullWidth
                             size="small"
@@ -804,7 +815,7 @@ export default function ReportEdit() {
                             inputProps={{ min: 1, max: 12 }}
                           />
                         </Grid>
-                        <Grid item xs={6}>
+                        <Grid item xs={12} sm={4}>
                           <TextField
                             fullWidth
                             size="small"
@@ -816,7 +827,7 @@ export default function ReportEdit() {
                             inputProps={{ min: 1, max: 31 }}
                           />
                         </Grid>
-                        <Grid item xs={12}>
+                        <Grid item xs={12} sm={4}>
                           <TextField
                             fullWidth
                             size="small"
@@ -839,9 +850,12 @@ export default function ReportEdit() {
             <Stack spacing={1.5}>
               <Stack direction="row" alignItems="center" justifyContent="space-between">
                 <Box>
-                  <Typography variant="h6" fontWeight={800}>
-                    行程列表
-                  </Typography>
+                  <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
+                    <Typography variant="h6" fontWeight={800}>
+                      行程列表
+                    </Typography>
+                    {tripYearRangeLabel && <Chip size="small" color="info" variant="outlined" label={tripYearRangeLabel} />}
+                  </Stack>
                   <Typography variant="body2" color="text.secondary">
                     复制、返程和排序都会自动保存。
                   </Typography>
@@ -1297,6 +1311,7 @@ export default function ReportEdit() {
           setSelectedInvoice(null);
           setInvoiceQueue([]);
         }}
+        onSkip={invoiceQueue.length > 0 ? handleInvoiceSkipped : undefined}
         onUpdated={handleInvoiceUpdated}
       />
 

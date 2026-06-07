@@ -74,6 +74,13 @@ class TripDateError(ValueError):
 
 
 @dataclass(frozen=True)
+class TripDateRange:
+    trip: Trip
+    depart: date
+    arrive: date
+
+
+@dataclass(frozen=True)
 class SubsidyTrip:
     trip: Trip
     depart: date
@@ -131,7 +138,44 @@ def build_trip_date(year: int, month: int, day: int) -> date:
         raise TripDateError(f"无效行程日期：{month}月{day}日") from exc
 
 
-def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
+def trip_date_anchor(report_reference: date | int) -> date:
+    if isinstance(report_reference, date):
+        return report_reference
+    return date(report_reference, 12, 31)
+
+
+def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> list[TripDateRange]:
+    if not trips:
+        return []
+
+    sorted_trips = sorted(trips, key=lambda trip: trip.sort_order)
+    anchor = trip_date_anchor(report_reference)
+    current_year = anchor.year
+    previous_depart_month_day: tuple[int, int] | None = None
+    ranges: list[TripDateRange] = []
+
+    for index, trip in enumerate(sorted_trips):
+        depart_month_day = (trip.depart_month, trip.depart_day)
+        if index == 0:
+            depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+            if (depart - anchor).days > 180:
+                current_year -= 1
+                depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+        else:
+            if previous_depart_month_day is not None and depart_month_day < previous_depart_month_day:
+                current_year += 1
+            depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+
+        arrive_year = current_year + 1 if (trip.arrive_month, trip.arrive_day) < depart_month_day else current_year
+        arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
+        validate_trip_chronology(trip, depart, arrive)
+        ranges.append(TripDateRange(trip=trip, depart=depart, arrive=arrive))
+        previous_depart_month_day = depart_month_day
+
+    return ranges
+
+
+def calculate_subsidy_days(report_reference: date | int, trips: list[Trip]) -> int:
     if not trips:
         return 0
 
@@ -139,19 +183,15 @@ def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
     has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
     default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
     subsidy_trips: list[SubsidyTrip] = []
-    for trip in sorted_trips:
-        depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
-        arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
-        arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        validate_trip_chronology(trip, depart, arrive)
-        default_start, default_end = default_markers.get(id(trip), (False, False))
+    for trip_range in infer_trip_date_ranges(report_reference, sorted_trips):
+        default_start, default_end = default_markers.get(id(trip_range.trip), (False, False))
         subsidy_trips.append(
             SubsidyTrip(
-                trip=trip,
-                depart=depart,
-                arrive=arrive,
-                subsidy_start=trip.subsidy_start if has_manual_markers else default_start,
-                subsidy_end=trip.subsidy_end if has_manual_markers else default_end,
+                trip=trip_range.trip,
+                depart=trip_range.depart,
+                arrive=trip_range.arrive,
+                subsidy_start=trip_range.trip.subsidy_start if has_manual_markers else default_start,
+                subsidy_end=trip_range.trip.subsidy_end if has_manual_markers else default_end,
             )
         )
 
@@ -232,9 +272,9 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
     report.daily_subsidy = quantize_amount(report.daily_subsidy or Decimal("0.00"))
     report.advance_amount = quantize_amount(report.advance_amount or Decimal("0.00"))
 
-    report_year = report.report_date.year if report.report_date else date.today().year
+    report_reference = report.report_date or date.today()
     try:
-        report.subsidy_days = calculate_subsidy_days(report_year, list(report.trips))
+        report.subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
     except TripDateError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -380,11 +420,13 @@ def get_deleted_report_or_404(db: Session, report_id: int) -> ExpenseReport:
 
 
 def trip_date_range(report: ExpenseReport, trip: Trip) -> tuple[date, date]:
-    report_year = report.report_date.year if report.report_date else date.today().year
-    depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
-    arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
-    arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-    return depart, arrive
+    report_reference = report.report_date or date.today()
+    for trip_range in infer_trip_date_ranges(report_reference, list(report.trips)):
+        same_persisted_trip = trip.id is not None and trip_range.trip.id == trip.id
+        if same_persisted_trip or trip_range.trip is trip:
+            return trip_range.depart, trip_range.arrive
+    trip_range = infer_trip_date_ranges(report_reference, [trip])[0]
+    return trip_range.depart, trip_range.arrive
 
 
 def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
@@ -395,7 +437,11 @@ def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip
 
     start = trip_start or date.min
     end = trip_end or date.max
-    return any(depart <= end and arrive >= start for depart, arrive in (trip_date_range(report, trip) for trip in report.trips))
+    report_reference = report.report_date or date.today()
+    return any(
+        trip_range.depart <= end and trip_range.arrive >= start
+        for trip_range in infer_trip_date_ranges(report_reference, list(report.trips))
+    )
 
 
 def report_matches_keyword(report: ExpenseReport, keyword: str | None) -> bool:

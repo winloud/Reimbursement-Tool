@@ -904,8 +904,16 @@ export default function ReportList() {
                 items.map((report) => {
                   const meta = STATUS_META[report.status] || { label: report.status, color: "default" };
                   return (
-                    <TableRow key={report.id} hover selected={selectedSet.has(report.id)}>
-                      <TableCell padding="checkbox">
+                    <TableRow
+                      key={report.id}
+                      hover
+                      selected={selectedSet.has(report.id)}
+                      onClick={() => {
+                        if (!isTrash) navigate(`/reports/${report.id}/edit`);
+                      }}
+                      sx={!isTrash ? { cursor: "pointer" } : undefined}
+                    >
+                      <TableCell padding="checkbox" onClick={(event) => event.stopPropagation()}>
                         <Checkbox
                           size="small"
                           checked={selectedSet.has(report.id)}
@@ -920,7 +928,7 @@ export default function ReportList() {
                         <Chip size="small" color={meta.color} label={meta.label} />
                       </TableCell>
                       {isTrash && <TableCell>{formatDateTime(report.deleted_at)}</TableCell>}
-                      <TableCell align="right">
+                      <TableCell align="right" onClick={(event) => event.stopPropagation()}>
                         <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, justifyContent: "flex-end" }}>
                           {isTrash ? (
                             <>
