@@ -78,9 +78,27 @@ def test_settings_default_pdf_fill_font_key(db):
     settings = settings_service.get_or_create_settings(db)
 
     assert settings.pdf_fill_font_key == "system:simsun"
+    assert settings.double_print_vat_special_invoices is True
 
 
-def test_migrate_sqlite_schema_adds_pdf_fill_font_key(monkeypatch):
+def test_update_settings_can_disable_vat_special_double_print(monkeypatch, db):
+    monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: True)
+
+    settings = settings_service.update_settings(
+        db,
+        SettingsUpdate(
+            department="财务部",
+            employee_name="李四",
+            daily_subsidy=Decimal("100.00"),
+            pdf_fill_font_key="system:simsun",
+            double_print_vat_special_invoices=False,
+        ),
+    )
+
+    assert settings.double_print_vat_special_invoices is False
+
+
+def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
     engine = create_engine("sqlite://")
     with engine.begin() as db:
         db.execute(text("CREATE TABLE trips (id INTEGER PRIMARY KEY)"))
@@ -101,3 +119,4 @@ def test_migrate_sqlite_schema_adds_pdf_fill_font_key(monkeypatch):
     with engine.begin() as db:
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(settings)")).fetchall()}
     assert "pdf_fill_font_key" in columns
+    assert "double_print_vat_special_invoices" in columns

@@ -214,7 +214,11 @@ def get_report_pdf(
 ) -> Response:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    pdf_bytes = build_merged_report_pdf(report, settings.pdf_fill_font_key)
+    pdf_bytes = build_merged_report_pdf(
+        report,
+        settings.pdf_fill_font_key,
+        settings.double_print_vat_special_invoices,
+    )
     filename = build_pdf_filename(report)
     if report.status == "draft":
         report.status = "printed"

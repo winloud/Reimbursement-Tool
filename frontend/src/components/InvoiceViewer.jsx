@@ -8,8 +8,11 @@ import {
   DialogActions,
   DialogContent,
   DialogTitle,
-  Divider,
+  FormControl,
+  FormControlLabel,
   Grid,
+  Radio,
+  RadioGroup,
   Stack,
   TextField,
   Typography,
@@ -23,6 +26,14 @@ import { getInvoiceFileUrl, parseInvoice, updateInvoice } from "../api/client";
 
 const formatAmount = (value) =>
   `¥${Number(value ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
+const INVOICE_TYPE_OPTIONS = [
+  { value: "unknown", label: "未知" },
+  { value: "normal", label: "普票" },
+  { value: "vat_special", label: "专票" },
+];
+
+const invoiceTypeLabel = (value) => INVOICE_TYPE_OPTIONS.find((option) => option.value === value)?.label || "未知";
 
 const METHOD_LABELS = {
   qrcode: "二维码识别",
@@ -42,13 +53,37 @@ const formatDiagnosticValue = (value) => {
   return String(value);
 };
 
-function FieldLine({ label, value }) {
+function PreviewHighlight({ highlight }) {
+  if (!highlight) return null;
   return (
-    <Stack spacing={0.25}>
-      <Typography variant="caption" color="text.secondary">
+    <Box
+      title={highlight.label || "高亮区域"}
+      sx={{
+        position: "absolute",
+        left: `${Number(highlight.x || 0) * 100}%`,
+        top: `${Number(highlight.y || 0) * 100}%`,
+        width: `${Number(highlight.width || 0) * 100}%`,
+        height: `${Number(highlight.height || 0) * 100}%`,
+        minWidth: 18,
+        minHeight: 14,
+        border: "2px solid",
+        borderColor: "warning.main",
+        borderRadius: 0.5,
+        bgcolor: "rgba(255, 193, 7, 0.22)",
+        boxShadow: "0 0 0 2px rgba(255, 193, 7, 0.18)",
+        pointerEvents: "none",
+      }}
+    />
+  );
+}
+
+function FieldLine({ label, value, dense = false, sx }) {
+  return (
+    <Stack spacing={dense ? 0 : 0.25} sx={sx}>
+      <Typography variant="caption" color="text.secondary" sx={dense ? { lineHeight: 1.2 } : undefined}>
         {label}
       </Typography>
-      <Typography variant="body2" fontWeight={700}>
+      <Typography variant="body2" fontWeight={700} sx={dense ? { fontSize: 13, lineHeight: 1.35, wordBreak: "break-word" } : undefined}>
         {value || "-"}
       </Typography>
     </Stack>
@@ -98,6 +133,9 @@ function ParseDiagnosticsDialog({ invoice, parsed, loading, error, open, onClose
                 </Grid>
                 <Grid item xs={12} sm={4}>
                   <FieldLine label="开票日期" value={result.invoice_date} />
+                </Grid>
+                <Grid item xs={12} sm={4}>
+                  <FieldLine label="发票类型" value={invoiceTypeLabel(result.invoice_type || parsed.invoice_type || invoice.invoice_type)} />
                 </Grid>
                 <Grid item xs={12} sm={4}>
                   <FieldLine label="金额" value={result.amount ? formatAmount(result.amount) : "-"} />
@@ -164,6 +202,7 @@ function ParseDiagnosticsDialog({ invoice, parsed, loading, error, open, onClose
 
 export default function InvoiceViewer({ invoice, open, readonly = false, onClose, onSkip, onUpdated }) {
   const [amount, setAmount] = useState(invoice ? Number(invoice.amount ?? 0).toFixed(2) : "0.00");
+  const [invoiceType, setInvoiceType] = useState(invoice?.invoice_type || "unknown");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [diagnosticsOpen, setDiagnosticsOpen] = useState(false);
@@ -175,6 +214,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
   const parsed = diagnosticsParsed || invoice?.parsed || {};
   const hasDiagnostics = Boolean(parsed.raw?.parse_method || parsed.raw?.parse_attempts?.length);
   const previewImage = parsed.preview_image || parsed.raw?.preview_image;
+  const previewHighlights = Array.isArray(parsed.raw?.preview_highlights) ? parsed.raw.preview_highlights : [];
 
   const fetchParsed = useCallback(async () => {
     if (!invoice || diagnosticsLoading) return null;
@@ -186,8 +226,10 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
         setDiagnosticsError(res.message || "解析依据获取失败");
         return null;
       }
-      setDiagnosticsParsed(res.data || null);
-      return res.data || null;
+      const nextParsed = res.data || null;
+      setDiagnosticsParsed(nextParsed);
+      setInvoiceType((prev) => (prev === "unknown" && nextParsed?.invoice_type ? nextParsed.invoice_type : prev));
+      return nextParsed;
     } catch (err) {
       setDiagnosticsError(err.response?.data?.message || err.message || "解析依据获取失败");
       return null;
@@ -199,6 +241,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
   useEffect(() => {
     if (invoice) {
       setAmount(Number(invoice.amount ?? 0).toFixed(2));
+      setInvoiceType(invoice.invoice_type || invoice.parsed?.invoice_type || "unknown");
       setError("");
       setDiagnosticsOpen(false);
       setDiagnosticsParsed(invoice.parsed || null);
@@ -218,14 +261,14 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
     setSaving(true);
     setError("");
     try {
-      const res = await updateInvoice(invoice.id, { amount, amount_confirmed: true });
+      const res = await updateInvoice(invoice.id, { amount, amount_confirmed: true, invoice_type: invoiceType });
       if (!res.success) {
-        setError(res.message || "金额确认失败");
+        setError(res.message || "发票信息确认失败");
         return;
       }
       onUpdated?.();
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "金额确认失败");
+      setError(err.response?.data?.message || err.message || "发票信息确认失败");
     } finally {
       setSaving(false);
     }
@@ -240,7 +283,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
   return (
     <>
       <Dialog open={open} onClose={onClose} maxWidth="lg" fullWidth>
-      <DialogTitle>发票金额确认</DialogTitle>
+      <DialogTitle>发票信息确认</DialogTitle>
       <DialogContent dividers>
         {error && (
           <Alert severity="error" sx={{ mb: 2 }}>
@@ -249,40 +292,87 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
         )}
         {readonly && (
           <Alert severity="info" sx={{ mb: 2 }}>
-            已报销状态为只读，不能修改发票金额。
+            已报销状态为只读，不能修改发票信息。
           </Alert>
         )}
         <Grid container spacing={2.5}>
           <Grid item xs={12} md={4}>
-            <Stack spacing={2}>
-              <Box>
+            <Stack spacing={1.25}>
+              <Box sx={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 1 }}>
                 <Typography variant="subtitle1" fontWeight={800}>
                   关键字段
                 </Typography>
-                <Typography variant="body2" color="text.secondary">
-                  未识别或识别错误时，可以手动修正金额后确认。
-                </Typography>
               </Box>
 
-              <Stack spacing={1.5}>
-                <FieldLine label="发票号码" value={invoice.invoice_no || parsed.invoice_no} />
-                <FieldLine label="发票日期" value={invoice.invoice_date || parsed.invoice_date} />
-                <FieldLine label="购买方" value={parsed.buyer_name} />
-                <FieldLine label="销售方" value={parsed.seller_name} />
-                <FieldLine label="当前金额" value={formatAmount(invoice.amount)} />
-                <FieldLine label="确认状态" value={invoice.amount_confirmed ? "已确认" : "待确认"} />
-              </Stack>
+              <Box
+                sx={{
+                  display: "grid",
+                  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+                  columnGap: 1.5,
+                  rowGap: 0.75,
+                }}
+              >
+                <FieldLine dense label="发票号码" value={invoice.invoice_no || parsed.invoice_no} sx={{ gridColumn: "1 / -1" }} />
+                <FieldLine dense label="发票日期" value={invoice.invoice_date || parsed.invoice_date} sx={{ gridColumn: "1 / -1" }} />
+                <FieldLine dense label="购买方" value={parsed.buyer_name} />
+                <FieldLine dense label="销售方" value={parsed.seller_name} />
+                <FieldLine dense label="当前金额" value={formatAmount(invoice.amount)} />
+                <FieldLine dense label="确认状态" value={invoice.amount_confirmed ? "已确认" : "待确认"} />
+              </Box>
 
-              <Divider />
+              <Box sx={{ pt: 1.25 }}>
+                <TextField
+                  fullWidth
+                  label="确认金额"
+                  type="number"
+                  size="small"
+                  value={amount}
+                  onChange={(event) => setAmount(event.target.value)}
+                  disabled={readonly}
+                  inputProps={{ min: 0, step: "0.01" }}
+                />
+              </Box>
 
-              <TextField
-                label="确认金额"
-                type="number"
-                value={amount}
-                onChange={(event) => setAmount(event.target.value)}
-                disabled={readonly}
-                inputProps={{ min: 0, step: "0.01" }}
-              />
+              <FormControl disabled={readonly}>
+                <Typography variant="caption" color="text.secondary">
+                  发票类型
+                </Typography>
+                <RadioGroup
+                  row
+                  value={invoiceType}
+                  onChange={(event) => setInvoiceType(event.target.value)}
+                  sx={{
+                    mt: 0.5,
+                    display: "grid",
+                    gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                    gap: 0.75,
+                  }}
+                >
+                  {INVOICE_TYPE_OPTIONS.map((option) => (
+                    <FormControlLabel
+                      key={option.value}
+                      value={option.value}
+                      control={<Radio size="small" sx={{ p: 0.5 }} />}
+                      label={
+                        <Typography variant="body2" fontWeight={invoiceType === option.value ? 700 : 500} sx={{ fontSize: 13 }}>
+                          {option.label}
+                        </Typography>
+                      }
+                      sx={{
+                        m: 0,
+                        px: 0.75,
+                        py: 0.25,
+                        minHeight: 30,
+                        justifyContent: "center",
+                        border: 1,
+                        borderColor: invoiceType === option.value ? "primary.main" : "divider",
+                        borderRadius: 1,
+                        bgcolor: invoiceType === option.value ? "action.selected" : "transparent",
+                      }}
+                    />
+                  ))}
+                </RadioGroup>
+              </FormControl>
 
               <Button
                 variant="outlined"
@@ -318,12 +408,17 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
                 </Stack>
               ) : previewImage ? (
                 <Box sx={{ p: 2, display: "flex", justifyContent: "center", alignItems: "center", minHeight: 480 }}>
-                  <Box
-                    component="img"
-                    src={previewImage}
-                    alt="invoice preview"
-                    sx={{ maxWidth: "100%", maxHeight: 500, objectFit: "contain" }}
-                  />
+                  <Box sx={{ position: "relative", display: "inline-block", maxWidth: "100%", lineHeight: 0 }}>
+                    <Box
+                      component="img"
+                      src={previewImage}
+                      alt="invoice preview"
+                      sx={{ display: "block", maxWidth: "100%", maxHeight: 500, objectFit: "contain" }}
+                    />
+                    {previewHighlights.map((highlight, index) => (
+                      <PreviewHighlight key={`${highlight.type || "highlight"}-${index}`} highlight={highlight} />
+                    ))}
+                  </Box>
                 </Box>
               ) : invoice.file_type === "pdf" ? (
                 <Stack spacing={1.5} alignItems="center" justifyContent="center" sx={{ minHeight: 480, p: 3 }}>
@@ -364,7 +459,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
         )}
         <Button onClick={onClose}>关闭</Button>
         <Button onClick={handleConfirm} variant="contained" disabled={saving || readonly}>
-          {saving ? "确认中..." : "确认金额"}
+          {saving ? "确认中..." : "确认信息"}
         </Button>
       </DialogActions>
     </Dialog>

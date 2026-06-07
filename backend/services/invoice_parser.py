@@ -46,6 +46,7 @@ SMALL_AMOUNT_PATTERN = re.compile(
     r"[（(]\s*小写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)"
 )
 MONEY_VALUE_PATTERN = re.compile(r"[¥￥]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*[¥￥]?")
+WORD_AMOUNT_PATTERN = re.compile(r"[¥￥]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)")
 UPPER_AMOUNT_PATTERN = re.compile(
     r"(?:价税合计|税价合计)\s*[（(]\s*[大⼤]\s*写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
 )
@@ -206,6 +207,12 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
 
             page = doc[0]
             text = page.get_text("text") or ""
+            words = [
+                {"x0": item[0], "y0": item[1], "x1": item[2], "y1": item[3], "text": item[4]}
+                for item in (page.get_text("words") or [])
+                if len(item) >= 5 and str(item[4]).strip()
+            ]
+            page_rect = page.rect
             pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csRGB, alpha=False)
             preview_image = "data:image/png;base64," + base64.b64encode(pix.tobytes("png")).decode("ascii")
 
@@ -221,7 +228,14 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
             except Exception:
                 image_bgr = None
 
-            return {"text": text, "preview_image": preview_image, "image_bgr": image_bgr, "render_error": None}
+            return {
+                "text": text,
+                "preview_image": preview_image,
+                "image_bgr": image_bgr,
+                "page_size": {"width": float(page_rect.width), "height": float(page_rect.height)},
+                "words": words,
+                "render_error": None,
+            }
     except Exception as exc:
         return {
             "text": extract_pdf_text_with_pypdf(file_path),
@@ -687,6 +701,94 @@ def select_amount(qr_fields: dict[str, Any], text_fields: dict[str, Any]) -> tup
     return Decimal("0.00"), None, "none"
 
 
+def word_amount(word_text: str) -> Decimal:
+    match = WORD_AMOUNT_PATTERN.search(str(word_text or ""))
+    return parse_decimal(match.group(1)) if match else Decimal("0.00")
+
+
+def word_center_y(word: dict[str, Any]) -> float:
+    return (float(word["y0"]) + float(word["y1"])) / 2
+
+
+def words_on_same_line(words: list[dict[str, Any]], target: dict[str, Any], tolerance: float = 6.0) -> list[dict[str, Any]]:
+    center_y = word_center_y(target)
+    return [word for word in words if abs(word_center_y(word) - center_y) <= tolerance]
+
+
+def nearby_words(words: list[dict[str, Any]], target: dict[str, Any], tolerance: float = 24.0) -> list[dict[str, Any]]:
+    center_y = word_center_y(target)
+    return [word for word in words if abs(word_center_y(word) - center_y) <= tolerance]
+
+
+def union_word_bbox(words: list[dict[str, Any]]) -> dict[str, float]:
+    return {
+        "x0": min(float(word["x0"]) for word in words),
+        "y0": min(float(word["y0"]) for word in words),
+        "x1": max(float(word["x1"]) for word in words),
+        "y1": max(float(word["y1"]) for word in words),
+    }
+
+
+def amount_highlight_words(words: list[dict[str, Any]], amount_word: dict[str, Any]) -> list[dict[str, Any]]:
+    line_words = words_on_same_line(words, amount_word)
+    highlight_words = [amount_word]
+    amount_x0 = float(amount_word["x0"])
+    for word in line_words:
+        text = compact_text(str(word.get("text") or ""))
+        if text not in {"¥", "￥"}:
+            continue
+        if 0 <= amount_x0 - float(word["x1"]) <= 10:
+            highlight_words.append(word)
+    return highlight_words
+
+
+def score_amount_word(words: list[dict[str, Any]], word: dict[str, Any], page_width: float, page_height: float) -> int:
+    context = compact_text("".join(str(item.get("text") or "") for item in nearby_words(words, word)))
+    score = 10
+    if "价税合计" in context or "税价合计" in context:
+        score += 60
+    if "小写" in context:
+        score += 30
+    if float(word["x0"]) > page_width * 0.45:
+        score += 5
+    if float(word["y0"]) > page_height * 0.45:
+        score += 3
+    return score
+
+
+def build_tax_total_amount_highlight(artifacts: dict[str, Any], amount: Decimal) -> dict[str, Any] | None:
+    normalized_amount = parse_decimal(amount)
+    if normalized_amount <= Decimal("0.00"):
+        return None
+    words = list(artifacts.get("words") or [])
+    page_size = artifacts.get("page_size") or {}
+    page_width = float(page_size.get("width") or 0)
+    page_height = float(page_size.get("height") or 0)
+    if not words or page_width <= 0 or page_height <= 0:
+        return None
+
+    candidates = [word for word in words if word_amount(str(word.get("text") or "")) == normalized_amount]
+    if not candidates:
+        return None
+    best = max(candidates, key=lambda word: score_amount_word(words, word, page_width, page_height))
+    bbox = union_word_bbox(amount_highlight_words(words, best))
+    padding = 4.0
+    x0 = max(0.0, bbox["x0"] - padding)
+    y0 = max(0.0, bbox["y0"] - padding)
+    x1 = min(page_width, bbox["x1"] + padding)
+    y1 = min(page_height, bbox["y1"] + padding)
+    return {
+        "type": "tax_total_amount",
+        "label": "价税合计金额",
+        "amount": str(normalized_amount),
+        "page": 1,
+        "x": x0 / page_width,
+        "y": y0 / page_height,
+        "width": max((x1 - x0) / page_width, 0.001),
+        "height": max((y1 - y0) / page_height, 0.001),
+    }
+
+
 def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     artifacts = extract_pdf_page_artifacts(file_path)
     text_fields = extract_fields_from_text(artifacts.get("text") or "")
@@ -721,6 +823,8 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     if invoice_type == INVOICE_TYPE_UNKNOWN:
         invoice_type = qr_fields.get("invoice_type") or INVOICE_TYPE_UNKNOWN
     normalized_amount = parse_decimal(amount)
+    tax_total_highlight = build_tax_total_amount_highlight(artifacts, normalized_amount)
+    preview_highlights = [tax_total_highlight] if tax_total_highlight is not None else []
     qr_success = bool(qr_fields)
     text_success = bool(
         text_fields["invoice_no"] or text_fields["invoice_date"] or text_fields["amount"] > Decimal("0.00")
@@ -774,6 +878,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
         "amount_selection_reason": amount_selection_reason,
         "amount_uppercase": str(amount_uppercase) if amount_uppercase is not None else None,
         "amount_validation": amount_validation,
+        "preview_highlights": preview_highlights,
         "render_error": artifacts.get("render_error"),
     }
 

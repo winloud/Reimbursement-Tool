@@ -47,6 +47,7 @@ class InvoiceUploadResult(BaseModel):
 class InvoiceUpdate(BaseModel):
     amount: Decimal = Field(ge=0)
     amount_confirmed: bool = True
+    invoice_type: InvoiceType | None = None
 
 
 class InvoiceRead(BaseModel):

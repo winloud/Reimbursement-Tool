@@ -64,7 +64,16 @@ def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[byte
             failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
             continue
         try:
-            pdf_items.append((report, build_merged_report_pdf(report, settings.pdf_fill_font_key)))
+            pdf_items.append(
+                (
+                    report,
+                    build_merged_report_pdf(
+                        report,
+                        settings.pdf_fill_font_key,
+                        settings.double_print_vat_special_invoices,
+                    ),
+                )
+            )
         except HTTPException as exc:
             failures.append({"report_id": report_id, "reason": str(exc.detail)})
 

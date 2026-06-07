@@ -8,6 +8,7 @@ from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
 from backend.models.invoice import Invoice
+from backend.models.settings import Settings
 from backend.routers.reports import get_report_pdf
 from backend.schemas.report import ExpenseItemWrite, ReportCreate, TripWrite
 from backend.services.amount_converter import amount_to_chinese_upper
@@ -226,6 +227,30 @@ def test_merged_pdf_appends_vat_special_invoice_pdf_twice(monkeypatch, tmp_path,
     assert float(reader.pages[4].mediabox.height) == 444
 
 
+def test_merged_pdf_respects_disabled_vat_special_double_print(monkeypatch, tmp_path, db):
+    configure_pdf_paths(monkeypatch, tmp_path)
+    invoice_path = tmp_path / "backend" / "uploads" / "1" / "special.pdf"
+    write_blank_pdf(invoice_path, pages=2, pagesize=(333, 444))
+    report = create_report(db, ReportCreate(report_date="2026-06-04"))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="luggage",
+            file_path="uploads/1/special.pdf",
+            file_type="pdf",
+            invoice_type="vat_special",
+            amount=Decimal("10.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    pdf_bytes = build_merged_report_pdf(report, double_print_vat_special_invoices=False)
+
+    assert len(PdfReader(BytesIO(pdf_bytes)).pages) == 3
+
+
 def test_download_route_marks_draft_report_printed(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
@@ -235,6 +260,34 @@ def test_download_route_marks_draft_report_printed(monkeypatch, tmp_path, db):
     db.refresh(report)
     assert response.media_type == "application/pdf"
     assert report.status == "printed"
+
+
+def test_download_route_uses_vat_special_double_print_setting(monkeypatch, db):
+    db.add(
+        Settings(
+            id=1,
+            daily_subsidy=Decimal("80.00"),
+            pdf_fill_font_key="system:simsun",
+            double_print_vat_special_invoices=False,
+        )
+    )
+    db.commit()
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    calls = {}
+
+    def build_pdf(_report, fill_font_key, double_print_vat_special_invoices):
+        calls["fill_font_key"] = fill_font_key
+        calls["double_print_vat_special_invoices"] = double_print_vat_special_invoices
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr("backend.routers.reports.build_merged_report_pdf", build_pdf)
+
+    get_report_pdf(report.id, db)
+
+    assert calls == {
+        "fill_font_key": "system:simsun",
+        "double_print_vat_special_invoices": False,
+    }
 
 
 def test_pdf_filename_uses_report_date_purpose_and_total(monkeypatch, tmp_path, db):

@@ -7,11 +7,13 @@ import {
   CardContent,
   CircularProgress,
   Divider,
+  FormControlLabel,
   MenuItem,
   Paper,
   Select,
   Snackbar,
   Stack,
+  Switch,
   TextField,
   Typography,
 } from "@mui/material";
@@ -27,6 +29,7 @@ const emptySettings = {
   employee_name: "",
   daily_subsidy: "0.00",
   pdf_fill_font_key: "system:simsun",
+  double_print_vat_special_invoices: true,
 };
 
 const toMoney = (value) => Number(value || 0).toFixed(2);
@@ -61,6 +64,7 @@ export default function SettingsPage() {
           employee_name: settings.employee_name || "",
           daily_subsidy: toMoney(settings.daily_subsidy),
           pdf_fill_font_key: settings.pdf_fill_font_key || "system:simsun",
+          double_print_vat_special_invoices: settings.double_print_vat_special_invoices ?? true,
         });
       } catch (err) {
         if (!cancelled) {
@@ -82,6 +86,10 @@ export default function SettingsPage() {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
+  const handleToggle = (field) => (event) => {
+    setForm((prev) => ({ ...prev, [field]: event.target.checked }));
+  };
+
   const handleSave = async () => {
     setSaving(true);
     setError("");
@@ -91,6 +99,7 @@ export default function SettingsPage() {
         employee_name: form.employee_name.trim() || null,
         daily_subsidy: form.daily_subsidy || "0.00",
         pdf_fill_font_key: form.pdf_fill_font_key,
+        double_print_vat_special_invoices: form.double_print_vat_special_invoices,
       };
       const res = await updateSettings(payload);
       if (!res.success) {
@@ -103,6 +112,7 @@ export default function SettingsPage() {
         employee_name: settings.employee_name || "",
         daily_subsidy: toMoney(settings.daily_subsidy),
         pdf_fill_font_key: settings.pdf_fill_font_key || form.pdf_fill_font_key,
+        double_print_vat_special_invoices: settings.double_print_vat_special_invoices ?? form.double_print_vat_special_invoices,
       });
       setToast("个性化设置已保存");
     } catch (err) {
@@ -188,6 +198,23 @@ export default function SettingsPage() {
                   inputProps={{ min: 0, step: "0.01" }}
                 />
               </Box>
+
+              <Divider />
+
+              <Stack spacing={1}>
+                <Typography variant="h6" fontWeight={800}>
+                  PDF 导出
+                </Typography>
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={Boolean(form.double_print_vat_special_invoices)}
+                      onChange={handleToggle("double_print_vat_special_invoices")}
+                    />
+                  }
+                  label="增值税专用发票附件打印两遍"
+                />
+              </Stack>
 
               <Divider />
 

@@ -10,6 +10,7 @@ from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
 from backend.models.invoice import Invoice
+from backend.models.settings import Settings
 from backend.schemas.report import ReportCreate
 from backend.services.report_batch_service import batch_soft_delete_draft_reports, build_batch_report_pdf_zip
 from backend.services.report_service import create_report, update_report_status
@@ -51,6 +52,32 @@ def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp
         for name in names:
             assert name.endswith(".pdf")
             assert len(PdfReader(BytesIO(archive.read(name))).pages) == 1
+
+
+def test_batch_pdf_uses_vat_special_double_print_setting(monkeypatch, db):
+    db.add(
+        Settings(
+            id=1,
+            daily_subsidy=Decimal("80.00"),
+            pdf_fill_font_key="system:simsun",
+            double_print_vat_special_invoices=False,
+        )
+    )
+    db.commit()
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="批量"))
+    calls = []
+
+    def build_pdf(_report, _fill_font_key, double_print_vat_special_invoices):
+        calls.append(double_print_vat_special_invoices)
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr("backend.services.report_batch_service.build_merged_report_pdf", build_pdf)
+
+    zip_bytes, _filename = build_batch_report_pdf_zip(db, [report.id])
+
+    assert calls == [False]
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        assert len(archive.namelist()) == 1
 
 
 def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, db):

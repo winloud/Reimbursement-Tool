@@ -32,6 +32,7 @@ def update_settings(db: Session, payload: SettingsUpdate) -> Settings:
     settings.employee_name = payload.employee_name
     settings.daily_subsidy = payload.daily_subsidy
     settings.pdf_fill_font_key = payload.pdf_fill_font_key
+    settings.double_print_vat_special_invoices = payload.double_print_vat_special_invoices
     db.commit()
     db.refresh(settings)
     return settings

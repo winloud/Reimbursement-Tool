@@ -30,6 +30,12 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
             "text": "发票号码: 987654321\n开票日期: 2026年5月31日\n价税合计（小写） ￥266.50",
             "preview_image": "data:image/png;base64,abc",
             "image_bgr": object(),
+            "page_size": {"width": 300, "height": 200},
+            "words": [
+                {"x0": 40, "y0": 150, "x1": 95, "y1": 162, "text": "价税合计"},
+                {"x0": 100, "y0": 150, "x1": 135, "y1": 162, "text": "（小写）"},
+                {"x0": 140, "y0": 150, "x1": 190, "y1": 162, "text": "￥266.50"},
+            ],
             "render_error": None,
         },
     )
@@ -45,6 +51,8 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
     assert parsed.raw["parse_method"] == "text_regex"
     assert parsed.raw["parse_success"] is True
     assert parsed.raw["amount_source"] == "tax_total_small"
+    assert parsed.raw["preview_highlights"][0]["type"] == "tax_total_amount"
+    assert parsed.raw["preview_highlights"][0]["amount"] == "266.50"
 
 
 def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Path):
@@ -405,14 +413,35 @@ def test_confirming_invoice_updates_report_totals(monkeypatch, db):
     confirmed = update_invoice(
         db,
         invoice.id,
-        InvoiceUpdate(amount=Decimal("266.50"), amount_confirmed=True),
+        InvoiceUpdate(amount=Decimal("266.50"), amount_confirmed=True, invoice_type="vat_special"),
     )
     db.refresh(report)
 
     assert confirmed.amount_confirmed is True
     assert confirmed.amount == Decimal("266.50")
+    assert confirmed.invoice_type == "vat_special"
     assert report.total_amount == Decimal("266.50")
     assert report.shortfall == Decimal("266.50")
+
+
+def test_update_invoice_keeps_existing_invoice_type_when_omitted(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="luggage",
+        file_path="uploads/1/invoice.pdf",
+        file_type="pdf",
+        invoice_type="vat_special",
+        amount=Decimal("10.00"),
+        amount_confirmed=False,
+    )
+    db.add(invoice)
+    db.commit()
+
+    updated = update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("20.00"), amount_confirmed=True))
+
+    assert updated.invoice_type == "vat_special"
+    assert updated.amount == Decimal("20.00")
 
 
 def test_upload_invoice_rejects_duplicate_file_in_same_report(monkeypatch, tmp_path: Path, db):

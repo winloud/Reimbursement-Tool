@@ -450,7 +450,9 @@ def _build_image_attachment_pdf(path: Path) -> bytes:
     return buffer.getvalue()
 
 
-def _invoice_attachment_copies(invoice: Invoice) -> int:
+def _invoice_attachment_copies(invoice: Invoice, double_print_vat_special_invoices: bool) -> int:
+    if not double_print_vat_special_invoices:
+        return 1
     return 2 if (invoice.invoice_type or "").strip() == INVOICE_TYPE_VAT_SPECIAL else 1
 
 
@@ -464,22 +466,26 @@ def _append_single_invoice_attachment(writer: PdfWriter, invoice: Invoice, path:
         writer.add_page(reader.pages[0])
 
 
-def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport) -> None:
+def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport, double_print_vat_special_invoices: bool) -> None:
     for invoice in _active_invoices(report):
         path = PROJECT_ROOT / "backend" / invoice.file_path
         if not path.exists():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"发票文件不存在：{invoice.file_path}")
-        for _copy_index in range(_invoice_attachment_copies(invoice)):
+        for _copy_index in range(_invoice_attachment_copies(invoice, double_print_vat_special_invoices)):
             _append_single_invoice_attachment(writer, invoice, path)
 
 
-def build_merged_report_pdf(report: ExpenseReport, fill_font_key: str | None = DEFAULT_PDF_FILL_FONT_KEY) -> bytes:
+def build_merged_report_pdf(
+    report: ExpenseReport,
+    fill_font_key: str | None = DEFAULT_PDF_FILL_FONT_KEY,
+    double_print_vat_special_invoices: bool = True,
+) -> bytes:
     report_pdf = build_report_pdf(report, fill_font_key)
     writer = PdfWriter()
 
     for page in PdfReader(BytesIO(report_pdf)).pages:
         writer.add_page(page)
-    _append_invoice_attachments(writer, report)
+    _append_invoice_attachments(writer, report, double_print_vat_special_invoices)
 
     output = BytesIO()
     writer.write(output)

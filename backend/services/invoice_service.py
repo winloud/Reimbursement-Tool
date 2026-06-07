@@ -204,6 +204,8 @@ def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invo
     ensure_report_writable(report)
     invoice.amount = payload.amount.quantize(Decimal("0.01"))
     invoice.amount_confirmed = payload.amount_confirmed
+    if payload.invoice_type is not None:
+        invoice.invoice_type = payload.invoice_type
     recalculate_report_totals(report)
     db.commit()
     db.refresh(invoice)

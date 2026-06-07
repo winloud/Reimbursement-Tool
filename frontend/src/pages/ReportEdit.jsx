@@ -531,7 +531,7 @@ export default function ReportEdit() {
       if (uploaded.length > 0) {
         setInvoiceQueue(uploaded);
         setSelectedInvoice(uploaded[0]);
-        setToast(fileList.length > 1 ? "批量上传完成，请逐张确认金额" : "发票已上传，请确认金额");
+        setToast(fileList.length > 1 ? "批量上传完成，请逐张确认发票信息" : "发票已上传，请确认发票信息");
       }
     } catch (err) {
       setError(getApiErrorMessage(err, "上传失败"));
@@ -1379,7 +1379,7 @@ export default function ReportEdit() {
         <DialogTitle>存在未确认发票</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            当前报销单存在未确认金额的发票，请先逐张确认发票金额后再预览或下载 PDF。
+            当前报销单存在未确认的发票，请先逐张确认发票信息后再预览或下载 PDF。
           </DialogContentText>
         </DialogContent>
         <DialogActions>
