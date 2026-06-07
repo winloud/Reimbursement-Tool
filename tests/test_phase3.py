@@ -96,12 +96,62 @@ def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
     assert parsed.raw["qr_payloads"]
 
 
+def test_parse_pdf_invoice_uses_text_tax_total_over_standard_qr_untaxed_amount(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "价税合计（大写）",
+                    "（小写）",
+                    "￥34.43",
+                    "￥1.03",
+                    "叁拾伍圆肆角陆分",
+                    "发票代码：033002300511",
+                    "发票号码：03810961",
+                    "开票日期：2024年03月29日",
+                    "￥35.46",
+                ]
+            ),
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False: (
+            ["01,10,033002300511,03810961,34.43,20240329,11299145375686719118,3488,"],
+            [],
+        )
+        if include_details
+        else ["01,10,033002300511,03810961,34.43,20240329,11299145375686719118,3488,"],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_no == "03810961"
+    assert parsed.invoice_date == date(2024, 3, 29)
+    assert parsed.amount == Decimal("35.46")
+    assert parsed.raw["amount_source"] == "currency_sum"
+    assert parsed.raw["amount_selection_reason"] == "text_tax_total_over_standard_qr"
+
+
 def test_parse_qr_payload_supports_comma_separated_invoice_tokens():
     parsed = parse_qr_payload("01,10,044001800111,28104068,181.52,20260603,checksum")
 
     assert parsed["invoice_no"] == "28104068"
     assert parsed["invoice_date"] == date(2026, 6, 3)
     assert parsed["amount"] == Decimal("181.52")
+
+
+def test_parse_qr_payload_uses_standard_field_positions_for_eight_digit_invoice_no():
+    parsed = parse_qr_payload("01,10,033002300511,03930130,65.33,20240410,03820321515066371103,044C,")
+
+    assert parsed["invoice_no"] == "03930130"
+    assert parsed["invoice_date"] == date(2024, 4, 10)
+    assert parsed["amount"] == Decimal("65.33")
+    assert parsed["invoice_code"] == "033002300511"
 
 
 def test_invoice_upload_rejects_xml_and_ofd():

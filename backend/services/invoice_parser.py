@@ -30,8 +30,17 @@ AMOUNT_PATTERNS = [
     ),
     ("generic_currency", re.compile(r"[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)")),
 ]
+TAX_TOTAL_AMOUNT_SOURCES = {"tax_total_small", "tax_total", "tax_total_small_line", "currency_sum"}
+COMMON_TAX_RATES = (Decimal("0.01"), Decimal("0.03"), Decimal("0.06"), Decimal("0.09"), Decimal("0.13"))
+MONEY_TOKEN_PATTERN = re.compile(r"[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)")
+SMALL_AMOUNT_PATTERN = re.compile(
+    r"[（(]\s*小写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*[¥￥]\s*([0-9][0-9,]*(?:\.\d{1,2})?)"
+)
 UPPER_AMOUNT_PATTERN = re.compile(
-    r"(?:价税合计|税价合计)\s*[（(]\s*大写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
+    r"(?:价税合计|税价合计)\s*[（(]\s*[大⼤]\s*写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
+)
+STANDALONE_UPPER_AMOUNT_PATTERN = re.compile(
+    r"(?:人民币)?([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
 )
 INVOICE_NO_PATTERNS = [
     re.compile(r"(?:发票号码|发票号)\s*[:：]?\s*([A-Z0-9]{6,30})", re.IGNORECASE),
@@ -97,8 +106,12 @@ def parse_date(value: str | None) -> date | None:
     return None
 
 
+def normalize_text(text: str | None) -> str:
+    return (text or "").replace("⼤", "大").replace("\u00a0", " ")
+
+
 def compact_text(text: str | None) -> str:
-    return re.sub(r"\s+", "", text or "")
+    return re.sub(r"\s+", "", normalize_text(text))
 
 
 def parse_chinese_integer(text: str) -> int:
@@ -322,9 +335,111 @@ def extract_invoice_date(text: str) -> date | None:
     return parse_date(match.group(1)) if match else None
 
 
+def extract_tax_total_small_line_amount(text: str) -> Decimal | None:
+    for line in normalize_text(text).splitlines():
+        compacted_line = compact_text(line)
+        if "小写" not in compacted_line:
+            continue
+        match = SMALL_AMOUNT_PATTERN.search(compacted_line)
+        if match:
+            return parse_decimal(match.group(1))
+    return None
+
+
+def currency_amount_candidates(text: str) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    for line_no, line in enumerate(normalize_text(text).splitlines()):
+        for match in MONEY_TOKEN_PATTERN.finditer(line):
+            candidates.append(
+                {
+                    "amount": parse_decimal(match.group(1)),
+                    "line_no": line_no,
+                    "line": line.strip(),
+                    "start": match.start(),
+                }
+            )
+    return [candidate for candidate in candidates if candidate["amount"] > Decimal("0.00")]
+
+
+def tax_rate_score(base: Decimal, tax: Decimal) -> int:
+    if base <= Decimal("0.00") or tax <= Decimal("0.00"):
+        return 0
+    rate = (tax / base).quantize(Decimal("0.0001"))
+    if rate > Decimal("0.30"):
+        return 0
+    score = 5
+    if any(abs(rate - common_rate) <= Decimal("0.003") for common_rate in COMMON_TAX_RATES):
+        score += 15
+    return score
+
+
+def nearby_tax_total_label(lines: list[str], line_no: int) -> bool:
+    start = max(0, line_no - 4)
+    end = min(len(lines), line_no + 5)
+    nearby = compact_text("".join(lines[start:end]))
+    return "价税合计" in nearby or "税价合计" in nearby or "小写" in nearby
+
+
+def extract_currency_sum_amount(text: str) -> Decimal | None:
+    candidates = currency_amount_candidates(text)
+    if len(candidates) < 3:
+        return None
+
+    lines = normalize_text(text).splitlines()
+    best: tuple[int, Decimal] | None = None
+    for total_index, total_candidate in enumerate(candidates):
+        total = total_candidate["amount"]
+        for base_index, base_candidate in enumerate(candidates):
+            if base_index == total_index:
+                continue
+            base = base_candidate["amount"]
+            for tax_index, tax_candidate in enumerate(candidates):
+                if tax_index in {total_index, base_index}:
+                    continue
+                tax = tax_candidate["amount"]
+                if base < tax:
+                    continue
+                if (base + tax).quantize(MONEY_QUANT) != total:
+                    continue
+
+                score = tax_rate_score(base, tax)
+                if score == 0:
+                    continue
+                if total == max(candidate["amount"] for candidate in candidates):
+                    score += 4
+                if total_candidate["line_no"] > max(base_candidate["line_no"], tax_candidate["line_no"]):
+                    score += 3
+                if nearby_tax_total_label(lines, total_candidate["line_no"]):
+                    score += 8
+                if "小写" in compact_text(total_candidate["line"]):
+                    score += 8
+
+                if best is None or score > best[0]:
+                    best = (score, total)
+
+    return best[1] if best is not None else None
+
+
 def extract_amount_from_text(text: str) -> tuple[Decimal, str | None]:
     compacted = compact_text(text)
     for source, pattern in AMOUNT_PATTERNS:
+        if source == "generic_currency":
+            continue
+        match = pattern.search(compacted)
+        if match:
+            return parse_decimal(match.group(1)), source
+
+    line_amount = extract_tax_total_small_line_amount(text)
+    if line_amount is not None:
+        return line_amount, "tax_total_small_line"
+
+    currency_sum_amount = extract_currency_sum_amount(text)
+    if currency_sum_amount is not None:
+        return currency_sum_amount, "currency_sum"
+
+    for source, pattern in AMOUNT_PATTERNS:
+        if source != "generic_currency":
+            continue
         match = pattern.search(compacted)
         if match:
             return parse_decimal(match.group(1)), source
@@ -332,8 +447,57 @@ def extract_amount_from_text(text: str) -> tuple[Decimal, str | None]:
 
 
 def extract_uppercase_amount(text: str) -> Decimal | None:
-    match = UPPER_AMOUNT_PATTERN.search(compact_text(text))
-    return parse_chinese_upper_amount(match.group(1)) if match else None
+    normalized = normalize_text(text)
+    match = UPPER_AMOUNT_PATTERN.search(compact_text(normalized))
+    if match:
+        return parse_chinese_upper_amount(match.group(1))
+
+    for line in normalized.splitlines():
+        compacted_line = compact_text(line)
+        if not 2 <= len(compacted_line) <= 40:
+            continue
+        if "元" not in compacted_line and "圆" not in compacted_line:
+            continue
+        match = STANDALONE_UPPER_AMOUNT_PATTERN.fullmatch(compacted_line)
+        if match:
+            return parse_chinese_upper_amount(match.group(1))
+    return None
+
+
+def split_qr_tokens(payload: str, keep_empty: bool = False) -> list[str]:
+    tokens = [token.strip() for token in re.split(r"[,，|;]", payload)]
+    if keep_empty:
+        return tokens
+    return [token for token in tokens if token]
+
+
+def parse_standard_qr_payload(payload: str) -> dict[str, Any] | None:
+    tokens = split_qr_tokens(payload, keep_empty=True)
+    if len(tokens) < 6:
+        return None
+    if tokens[0] != "01":
+        return None
+
+    amount = parse_decimal(tokens[4])
+    invoice_date = parse_date(tokens[5])
+    invoice_no = tokens[3].strip()
+    if amount <= Decimal("0.00") or invoice_date is None or not invoice_no:
+        return None
+    if invoice_date.year < 2000 or invoice_date.year > 2100:
+        return None
+    if not re.fullmatch(r"[A-Z0-9]{6,30}", invoice_no, flags=re.IGNORECASE):
+        return None
+
+    return {
+        "invoice_no": invoice_no,
+        "invoice_date": invoice_date,
+        "amount": amount,
+        "amount_source": "qr",
+        "amount_uppercase": None,
+        "amount_validation": None,
+        "invoice_code": tokens[2].strip() or None,
+        "qr_payload_format": "standard",
+    }
 
 
 def extract_fields_from_text(text: str) -> dict[str, Any]:
@@ -354,20 +518,32 @@ def extract_fields_from_text(text: str) -> dict[str, Any]:
 
 
 def parse_qr_payload(payload: str) -> dict[str, Any]:
+    standard = parse_standard_qr_payload(payload)
+    if standard is not None:
+        return standard
+
     labeled = extract_fields_from_text(payload)
     if labeled["invoice_no"] or labeled["invoice_date"] or labeled["amount"] > Decimal("0.00"):
         labeled["amount_source"] = "qr"
+        labeled["qr_payload_format"] = "labeled"
         return labeled
 
     tokens = [token.strip() for token in re.split(r"[,，|;\s]+", payload) if token.strip()]
-    result: dict[str, Any] = {"invoice_no": None, "invoice_date": None, "amount": Decimal("0.00"), "amount_source": None}
+    result: dict[str, Any] = {
+        "invoice_no": None,
+        "invoice_date": None,
+        "amount": Decimal("0.00"),
+        "amount_source": None,
+        "qr_payload_format": "fallback",
+    }
 
     def looks_like_invoice_no(token: str) -> bool:
         if not re.fullmatch(r"[A-Z0-9]{6,30}", token, flags=re.IGNORECASE):
             return False
         if "." in token:
             return False
-        if parse_date(token):
+        parsed = parse_date(token)
+        if parsed and 2000 <= parsed.year <= 2100:
             return False
         return True
 
@@ -410,6 +586,35 @@ def parse_qr_payload(payload: str) -> dict[str, Any]:
     return result
 
 
+def should_prefer_text_amount(qr_fields: dict[str, Any], text_fields: dict[str, Any]) -> bool:
+    qr_amount = parse_decimal(qr_fields.get("amount"))
+    text_amount = parse_decimal(text_fields.get("amount"))
+    if qr_amount <= Decimal("0.00") or text_amount <= Decimal("0.00") or qr_amount == text_amount:
+        return False
+    if text_amount < qr_amount:
+        return False
+    if qr_fields.get("qr_payload_format") != "standard":
+        return False
+    if text_fields.get("amount_source") in TAX_TOTAL_AMOUNT_SOURCES:
+        return True
+    if text_fields.get("amount_uppercase") == text_amount:
+        return True
+    return False
+
+
+def select_amount(qr_fields: dict[str, Any], text_fields: dict[str, Any]) -> tuple[Decimal, str | None, str]:
+    qr_amount = parse_decimal(qr_fields.get("amount"))
+    text_amount = parse_decimal(text_fields.get("amount"))
+
+    if should_prefer_text_amount(qr_fields, text_fields):
+        return text_amount, text_fields.get("amount_source"), "text_tax_total_over_standard_qr"
+    if qr_amount > Decimal("0.00"):
+        return qr_amount, qr_fields.get("amount_source"), "qr"
+    if text_amount > Decimal("0.00"):
+        return text_amount, text_fields.get("amount_source"), "text"
+    return Decimal("0.00"), None, "none"
+
+
 def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     artifacts = extract_pdf_page_artifacts(file_path)
     text_fields = extract_fields_from_text(artifacts.get("text") or "")
@@ -432,11 +637,10 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
             qr_fields = parsed_payload
             break
 
-    amount = qr_fields.get("amount") if qr_fields.get("amount", Decimal("0.00")) > Decimal("0.00") else text_fields["amount"]
-    amount_source = qr_fields.get("amount_source") or text_fields["amount_source"]
+    amount, amount_source, amount_selection_reason = select_amount(qr_fields, text_fields)
     amount_uppercase = text_fields["amount_uppercase"]
     amount_validation = text_fields["amount_validation"]
-    if qr_fields and amount_uppercase is not None and amount > Decimal("0.00"):
+    if amount_uppercase is not None and amount > Decimal("0.00"):
         amount_validation = "matched" if amount_uppercase == amount else "mismatched"
 
     invoice_no = qr_fields.get("invoice_no") or text_fields["invoice_no"]
@@ -459,7 +663,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
         "amount": str(text_fields["amount"]),
         "amount_source": text_fields["amount_source"],
         "amount_uppercase": str(amount_uppercase) if amount_uppercase is not None else None,
-        "amount_validation": amount_validation,
+        "amount_validation": text_fields["amount_validation"],
     }
     parse_attempts = [
         {
@@ -489,6 +693,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
         "parse_attempts": parse_attempts,
         "qr_payloads": qr_payloads,
         "amount_source": amount_source,
+        "amount_selection_reason": amount_selection_reason,
         "amount_uppercase": str(amount_uppercase) if amount_uppercase is not None else None,
         "amount_validation": amount_validation,
         "render_error": artifacts.get("render_error"),
