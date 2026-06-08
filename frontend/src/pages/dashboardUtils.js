@@ -4,6 +4,52 @@ export const formatStatsAmount = (value) =>
     maximumFractionDigits: 2,
   })}`;
 
+export const dashboardRangeToolbarSx = {
+  flexWrap: "wrap",
+  overflowX: "visible",
+  rowGap: 1.25,
+  pb: 0.25,
+};
+
+export const dashboardRangeFieldsSx = {
+  flex: "0 0 auto",
+  minWidth: 0,
+  maxWidth: "100%",
+  flexWrap: { xs: "wrap", sm: "nowrap" },
+  rowGap: 1,
+};
+
+export const dashboardRangeDateFieldSx = {
+  width: 158,
+  flex: "0 1 158px",
+  minWidth: 148,
+};
+
+export const dashboardQuickRangeGroupSx = {
+  display: "flex",
+  flex: "999 1 460px",
+  minWidth: 0,
+  flexWrap: "wrap",
+  gap: 0.75,
+  "& .MuiToggleButtonGroup-grouped": {
+    border: "1px solid",
+    borderColor: "divider",
+    borderRadius: "10px !important",
+    mx: 0,
+    px: 1.1,
+    py: 0.7,
+    color: "text.secondary",
+    bgcolor: "background.paper",
+    whiteSpace: "nowrap",
+    "&.Mui-selected": {
+      bgcolor: "primary.main",
+      borderColor: "primary.main",
+      color: "primary.contrastText",
+      "&:hover": { bgcolor: "primary.dark" },
+    },
+  },
+};
+
 export const buildSummaryCards = (summary = {}) => {
   const safeSummary = summary || {};
   const period = safeSummary.selected_period || safeSummary.current_year || {};

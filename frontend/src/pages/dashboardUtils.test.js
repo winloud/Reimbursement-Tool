@@ -6,6 +6,9 @@ import {
   buildCategoryChartData,
   buildCategoryLegendItems,
   buildDashboardCardReportTarget,
+  dashboardQuickRangeGroupSx,
+  dashboardRangeFieldsSx,
+  dashboardRangeToolbarSx,
   buildMonthCalendarWeeks,
   buildRangeCalendarMonths,
   buildSummaryCards,
@@ -88,6 +91,20 @@ describe("dashboard utilities", () => {
       buildDashboardCardReportTarget({ target: "total", startMonth: "2024-02", endMonth: "2024-02" }),
       "/reports?page=1&statuses=printed%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
     );
+  });
+
+  it("keeps dashboard month-range toolbar responsive instead of horizontally scrolling", () => {
+    assert.equal(dashboardRangeToolbarSx.flexWrap, "wrap");
+    assert.equal(dashboardRangeToolbarSx.overflowX, "visible");
+    assert.equal(dashboardQuickRangeGroupSx.flexWrap, "wrap");
+    assert.notEqual(dashboardRangeToolbarSx.overflowX, "auto");
+  });
+
+  it("keeps dashboard date fields on one row when desktop width is available", () => {
+    assert.deepEqual(dashboardRangeFieldsSx.flexWrap, { xs: "wrap", sm: "nowrap" });
+    assert.equal(dashboardRangeFieldsSx.flex, "0 0 auto");
+    assert.equal(dashboardRangeFieldsSx.maxWidth, "100%");
+    assert.notEqual(dashboardRangeFieldsSx.flex, "1 1 360px");
   });
 
   it("adapts trend data and computes a padded amount axis max", () => {

@@ -602,7 +602,7 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 | Phase 3 | 已验收通过 | 报销单录入界面已通过用户验收；行程、费用、发票上传、金额确认、实时汇总、重复发票拦截、PDF 图片预览和解析依据已完成 |
 | Phase 4 | 已完成 | PDF 模板填充、中文大写金额、报销单预览图、合并 PDF 下载和下载后标记已打印已完成 |
 | Phase 5 | 已验收通过 | 统计看板、增强筛选、完整 ZIP 导入导出、列表预览/下载与批量操作、回收站、看板月份范围联动和出差负荷热力图均已完成 |
-| Phase 6 | 待开始 | 前端静态集成、自动打开浏览器、PyInstaller 打包和端到端验证待开发 |
+| Phase 6 | 进行中 | pywebview 桌面窗口、前端静态集成、同源 API、运行时路径和 PyInstaller onedir 打包已完成；端到端业务验收待执行 |
 
 Phase 3 当前验证基线：
 - 后端：`python -m pytest`，31 passed
@@ -812,13 +812,23 @@ Phase 5.5 验证基线：
 ---
 
 ### Phase 6：收尾 + 打包
-**验收标准：EXE 可双击启动，自动打开浏览器，完整流程端到端测试通过**
+**验收标准：EXE 可双击启动独立桌面窗口，关闭窗口后后台服务退出，完整流程端到端测试通过**
 
-- [ ] 前端生产构建（`npm run build`）
-- [ ] FastAPI 集成前端静态文件（Vite build 输出目录）
-- [ ] FastAPI 启动时自动打开浏览器
-- [ ] PyInstaller `--onedir` 打包
+- [x] 前端生产构建（`npm run build`）
+- [x] FastAPI 集成前端静态文件（Vite build 输出目录），支持 BrowserRouter fallback
+- [x] 前端默认同源 API，请求由同一个 FastAPI 服务处理，保留 `VITE_API_BASE_URL` 开发覆盖能力
+- [x] pywebview 桌面启动器：启动本机 FastAPI，等待健康检查后打开独立窗口，窗口关闭后停止后台服务
+- [x] 运行时路径：开发环境继续使用项目目录；打包环境将 `data/`、`uploads/`、`logs/` 放到 EXE 同级目录，模板和二维码模型从 bundle 读取
+- [x] PyInstaller `--onedir` spec、packaging requirements 和 `scripts/build_release.ps1` 已补齐
+- [x] 安装 packaging 依赖并执行实际 PyInstaller `--onedir` 打包，输出 `dist/报销管理/报销管理.exe`
+- [x] 发布版短启动验证：EXE 可启动本机 FastAPI，健康检查就绪后保持运行，关闭测试进程后无残留进程
 - [ ] 端到端测试：新增 → 行程录入 → 发票上传 → 预览 PDF → 下载 PDF → 状态流转 → 列表筛选/导出 → 看板统计
+
+Phase 6 当前验证基线：
+- 后端：`python -m pytest`，124 passed
+- 前端工具函数：`node --test frontend/src/**/*.test.js`，32 passed
+- 前端构建：`npm run build`，通过；Vite chunk size 警告不影响当前功能
+- 发布打包：`scripts/build_release.ps1`，通过；输出 `dist/报销管理/报销管理.exe`
 
 ---
 

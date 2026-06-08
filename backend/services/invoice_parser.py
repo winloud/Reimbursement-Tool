@@ -12,7 +12,9 @@ MONEY_QUANT = Decimal("0.01")
 INVOICE_TYPE_UNKNOWN = "unknown"
 INVOICE_TYPE_NORMAL = "normal"
 INVOICE_TYPE_VAT_SPECIAL = "vat_special"
-WECHAT_MODEL_DIR = Path(__file__).resolve().parents[1] / "models" / "wechat_qrcode"
+from backend.runtime_paths import resource_path
+
+WECHAT_MODEL_DIR = resource_path("backend", "models", "wechat_qrcode")
 WECHAT_MODEL_FILES = {
     "detect_prototxt": "detect.prototxt",
     "detect_model": "detect.caffemodel",

@@ -19,18 +19,19 @@ from reportlab.pdfbase.cidfonts import UnicodeCIDFont
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
 
+from backend import runtime_paths
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.trip import Trip
+from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, resource_path, uploaded_path
 from backend.services.amount_converter import amount_to_chinese_upper, quantize_currency
 from backend.services.font_service import DEFAULT_PDF_FILL_FONT_KEY, resolve_font_file
 from backend.services.invoice_parser import INVOICE_TYPE_VAT_SPECIAL
 from backend.services.report_service import FIXED_CATEGORY_LABELS, custom_category_name, is_custom_category
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
 TEMPLATE_CANDIDATES = [
-    PROJECT_ROOT / "backend" / "templates" / "expense_template.pdf",
-    PROJECT_ROOT / "backend" / "templates" / "报销单.pdf",
+    resource_path("backend", "templates", "expense_template.pdf"),
+    resource_path("backend", "templates", "报销单.pdf"),
 ]
 PT_PER_MM = 72.0 / 25.4
 FONT_NAME = "SimSun"
@@ -38,6 +39,13 @@ ITEM_LABEL_FONT_NAME = "KaiTi"
 FALLBACK_FONT_NAME = "STSong-Light"
 MIN_FIELD_FONT_SIZE = 4.5
 ILLEGAL_FILENAME_CHARS = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
+
+
+def _invoice_file_path(relative_path: str | Path) -> Path:
+    upload_root = UPLOAD_ROOT
+    if UPLOAD_ROOT == runtime_paths.UPLOAD_ROOT and PROJECT_ROOT != runtime_paths.PROJECT_ROOT:
+        upload_root = PROJECT_ROOT / "backend" / "uploads"
+    return uploaded_path(relative_path, upload_root)
 
 
 def _register_ttf_font(font_name: str, candidates: list[Path]) -> str | None:
@@ -468,7 +476,7 @@ def _append_single_invoice_attachment(writer: PdfWriter, invoice: Invoice, path:
 
 def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport, double_print_vat_special_invoices: bool) -> None:
     for invoice in _active_invoices(report):
-        path = PROJECT_ROOT / "backend" / invoice.file_path
+        path = _invoice_file_path(invoice.file_path)
         if not path.exists():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"发票文件不存在：{invoice.file_path}")
         for _copy_index in range(_invoice_attachment_copies(invoice, double_print_vat_special_invoices)):

@@ -58,6 +58,13 @@ import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 import {
   formatBatchPdfFailureMessage,
   isTrashStatus,
+  reportFilterActionsSx,
+  reportFilterCategorySx,
+  reportFilterDateFieldSx,
+  reportFilterKeywordSx,
+  reportFilterMoreButtonSx,
+  reportFilterResetButtonSx,
+  reportFilterToolbarSx,
   toggleCurrentPageSelection,
   toggleReportSelection,
 } from "./reportListUtils";
@@ -636,14 +643,14 @@ export default function ReportList() {
         </Tabs>
 
         <Box sx={{ p: 2, borderBottom: 1, borderColor: "divider" }}>
-          <Stack direction={{ xs: "column", lg: "row" }} spacing={1.5} alignItems={{ xs: "stretch", lg: "center" }}>
+          <Stack direction="row" spacing={1.5} alignItems="center" useFlexGap sx={reportFilterToolbarSx}>
             <TextField
               size="small"
               label="关键词"
               value={filters.keyword}
               onChange={handleFilterChange("keyword")}
               placeholder="事由 / 人员 / 部门 / ID"
-              sx={{ minWidth: { lg: 260 }, flex: 1.4 }}
+              sx={reportFilterKeywordSx}
               InputProps={{
                 startAdornment: (
                   <InputAdornment position="start">
@@ -659,7 +666,7 @@ export default function ReportList() {
               value={filters.tripStart}
               onChange={handleFilterChange("tripStart")}
               InputLabelProps={{ shrink: true }}
-              sx={{ minWidth: { lg: 158 } }}
+              sx={reportFilterDateFieldSx}
             />
             <TextField
               size="small"
@@ -668,7 +675,7 @@ export default function ReportList() {
               value={filters.tripEnd}
               onChange={handleFilterChange("tripEnd")}
               InputLabelProps={{ shrink: true }}
-              sx={{ minWidth: { lg: 158 } }}
+              sx={reportFilterDateFieldSx}
             />
             <TextField
               select
@@ -676,7 +683,7 @@ export default function ReportList() {
               label="费用类别"
               value={filters.category}
               onChange={handleFilterChange("category")}
-              sx={{ minWidth: { lg: 170 } }}
+              sx={reportFilterCategorySx}
             >
               {categoryOptions.map((option) => (
                 <MenuItem key={option.value} value={option.value}>
@@ -684,25 +691,32 @@ export default function ReportList() {
                 </MenuItem>
               ))}
             </TextField>
-            <Button
-              variant={advancedOpen ? "contained" : "outlined"}
-              startIcon={<TuneIcon />}
-              endIcon={
-                <ExpandMoreIcon
-                  sx={{
-                    transform: advancedOpen ? "rotate(180deg)" : "rotate(0deg)",
-                    transition: "transform 160ms ease",
-                  }}
-                />
-              }
-              onClick={() => setAdvancedOpen((open) => !open)}
-              sx={{ minHeight: 40, whiteSpace: "nowrap" }}
-            >
-              更多筛选
-            </Button>
-            <Button variant="text" onClick={handleResetFilters} disabled={activeFilterChips.length === 0}>
-              重置
-            </Button>
+            <Stack direction="row" alignItems="center" useFlexGap sx={reportFilterActionsSx}>
+              <Button
+                variant={advancedOpen ? "contained" : "outlined"}
+                startIcon={<TuneIcon />}
+                endIcon={
+                  <ExpandMoreIcon
+                    sx={{
+                      transform: advancedOpen ? "rotate(180deg)" : "rotate(0deg)",
+                      transition: "transform 160ms ease",
+                    }}
+                  />
+                }
+                onClick={() => setAdvancedOpen((open) => !open)}
+                sx={reportFilterMoreButtonSx}
+              >
+                更多筛选
+              </Button>
+              <Button
+                variant="text"
+                onClick={handleResetFilters}
+                disabled={activeFilterChips.length === 0}
+                sx={reportFilterResetButtonSx}
+              >
+                重置
+              </Button>
+            </Stack>
           </Stack>
 
           <Collapse in={advancedOpen} timeout="auto" unmountOnExit>

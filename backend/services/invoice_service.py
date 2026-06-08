@@ -9,7 +9,7 @@ from uuid import uuid4
 from fastapi import HTTPException, UploadFile, status
 from sqlalchemy.orm import Session
 
-from backend.database.connection import PROJECT_ROOT
+from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
 from backend.models.invoice import Invoice
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.services.invoice_parser import parse_invoice_file
@@ -23,8 +23,11 @@ from backend.services.report_service import (
     validate_expense_category,
 )
 
-UPLOAD_ROOT = PROJECT_ROOT / "backend" / "uploads"
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+
+
+def _invoice_file_path(relative_path: str | Path) -> Path:
+    return uploaded_path(relative_path, UPLOAD_ROOT)
 
 
 def detect_file_type(filename: str) -> str:
@@ -78,7 +81,7 @@ def ensure_no_duplicate_invoice_file(report, upload_hash: str) -> None:
     for invoice in report.invoices:
         if invoice.deleted_at is not None:
             continue
-        existing_hash = calculate_file_hash(PROJECT_ROOT / "backend" / invoice.file_path)
+        existing_hash = calculate_file_hash(_invoice_file_path(invoice.file_path))
         if existing_hash == upload_hash:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
@@ -113,7 +116,7 @@ def save_upload_file(upload_file: UploadFile, report_id: int, expense_category: 
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename_prefix = safe_category_filename_prefix(expense_category)
     relative_path = Path("uploads") / str(report_id) / f"{filename_prefix}_invoice_{uuid4().hex}{ext}"
-    absolute_path = PROJECT_ROOT / "backend" / relative_path
+    absolute_path = _invoice_file_path(relative_path)
     with absolute_path.open("wb") as target:
         shutil.copyfileobj(upload_file.file, target)
     return relative_path.as_posix()
@@ -127,7 +130,7 @@ def build_invoice_storage_path(report_id: int, invoice_id: int, expense_category
 
 def relocate_invoice_file(invoice: Invoice, file_hash: str) -> None:
     current_relative = Path(invoice.file_path)
-    source = PROJECT_ROOT / "backend" / current_relative
+    source = _invoice_file_path(current_relative)
     if not source.exists():
         return
     final_relative = build_invoice_storage_path(
@@ -137,7 +140,7 @@ def relocate_invoice_file(invoice: Invoice, file_hash: str) -> None:
         file_hash=file_hash,
         ext=source.suffix or invoice.file_type,
     )
-    target = PROJECT_ROOT / "backend" / final_relative
+    target = _invoice_file_path(final_relative)
     target.parent.mkdir(parents=True, exist_ok=True)
     source.replace(target)
     invoice.file_path = final_relative.as_posix()
@@ -159,7 +162,7 @@ def upload_invoice(
     ensure_no_duplicate_invoice_file(report, upload_hash)
 
     relative_path = save_upload_file(upload_file, report_id, expense_category, file_type)
-    absolute_path = PROJECT_ROOT / "backend" / relative_path
+    absolute_path = _invoice_file_path(relative_path)
     try:
         parsed = parse_invoice_file(absolute_path, file_type)
     except Exception as exc:
@@ -214,7 +217,7 @@ def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invo
 
 def parse_existing_invoice(db: Session, invoice_id: int) -> InvoiceParsedData:
     invoice = get_invoice_or_404(db, invoice_id)
-    absolute_path = PROJECT_ROOT / "backend" / invoice.file_path
+    absolute_path = _invoice_file_path(invoice.file_path)
     try:
         return parse_invoice_file(absolute_path, invoice.file_type)
     except Exception as exc:

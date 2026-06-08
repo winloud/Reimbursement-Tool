@@ -41,6 +41,10 @@ import {
   buildCategoryChartData,
   buildCategoryLegendItems,
   buildDashboardCardReportTarget,
+  dashboardQuickRangeGroupSx,
+  dashboardRangeDateFieldSx,
+  dashboardRangeFieldsSx,
+  dashboardRangeToolbarSx,
   buildRangeCalendarMonths,
   buildSummaryCards,
   buildTripHeatLevels,
@@ -218,61 +222,38 @@ export default function Dashboard() {
         <Grid item xs={12}>
           <Card sx={{ borderRadius: 2 }}>
             <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
-              <Stack
-                direction="row"
-                spacing={1.25}
-                alignItems="center"
-                sx={{ overflowX: "auto", pb: 0.25, scrollbarWidth: "thin" }}
-              >
-                <Typography variant="body2" fontWeight={800} sx={{ whiteSpace: "nowrap", flex: "0 0 auto" }}>
-                  月份范围
-                </Typography>
-                <TextField
-                  size="small"
-                  type="date"
-                  value={monthStartDateValue(startMonth)}
-                  onChange={handleStartDateChange}
-                  inputProps={{ "aria-label": "开始日期" }}
-                  sx={{ width: 158, flex: "0 0 auto" }}
-                />
-                <Typography variant="caption" color="text.secondary" sx={{ flex: "0 0 auto" }}>
-                  至
-                </Typography>
-                <TextField
-                  size="small"
-                  type="date"
-                  value={monthEndDateValue(endMonth, today)}
-                  onChange={handleEndDateChange}
-                  inputProps={{ "aria-label": "结束日期" }}
-                  sx={{ width: 158, flex: "0 0 auto" }}
-                />
+              <Stack direction="row" spacing={1.25} alignItems="center" useFlexGap sx={dashboardRangeToolbarSx}>
+                <Stack direction="row" spacing={1.25} alignItems="center" useFlexGap sx={dashboardRangeFieldsSx}>
+                  <Typography variant="body2" fontWeight={800} sx={{ whiteSpace: "nowrap", flex: "0 0 auto" }}>
+                    月份范围
+                  </Typography>
+                  <TextField
+                    size="small"
+                    type="date"
+                    value={monthStartDateValue(startMonth)}
+                    onChange={handleStartDateChange}
+                    inputProps={{ "aria-label": "开始日期" }}
+                    sx={dashboardRangeDateFieldSx}
+                  />
+                  <Typography variant="caption" color="text.secondary" sx={{ flex: "0 0 auto" }}>
+                    至
+                  </Typography>
+                  <TextField
+                    size="small"
+                    type="date"
+                    value={monthEndDateValue(endMonth, today)}
+                    onChange={handleEndDateChange}
+                    inputProps={{ "aria-label": "结束日期" }}
+                    sx={dashboardRangeDateFieldSx}
+                  />
+                </Stack>
 
                 <ToggleButtonGroup
                   exclusive
                   size="small"
                   value={activeQuickRange}
                   onChange={handleQuickRangeChange}
-                  sx={{
-                    flex: "0 0 auto",
-                    gap: 0.75,
-                    "& .MuiToggleButtonGroup-grouped": {
-                      border: "1px solid",
-                      borderColor: "divider",
-                      borderRadius: "10px !important",
-                      mx: 0,
-                      px: 1.1,
-                      py: 0.7,
-                      color: "text.secondary",
-                      bgcolor: "background.paper",
-                      whiteSpace: "nowrap",
-                      "&.Mui-selected": {
-                        bgcolor: "primary.main",
-                        borderColor: "primary.main",
-                        color: "primary.contrastText",
-                        "&:hover": { bgcolor: "primary.dark" },
-                      },
-                    },
-                  }}
+                  sx={dashboardQuickRangeGroupSx}
                 >
                   {quickRanges.map((range) => (
                     <ToggleButton key={range.value} value={range.value} aria-label={range.label}>

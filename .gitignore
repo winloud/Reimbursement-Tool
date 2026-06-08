@@ -11,6 +11,13 @@ build/
 dist/
 *.egg-info/
 
+# PyInstaller release artifacts
+*.spec.bak
+dist/报销管理/
+dist/报销管理/data/
+dist/报销管理/uploads/
+dist/报销管理/logs/
+
 # Virtual environments
 .venv/
 venv/

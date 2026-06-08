@@ -15,7 +15,7 @@ from fastapi import HTTPException, UploadFile, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.database.connection import DATABASE_PATH, PROJECT_ROOT
+from backend.runtime_paths import DATA_DIR, DATABASE_PATH, PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
@@ -32,9 +32,12 @@ from backend.services.invoice_service import build_invoice_storage_path, calcula
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
 SCHEMA_VERSION = 1
-STAGING_ROOT = PROJECT_ROOT / "data" / "import_staging"
-BACKUP_ROOT = PROJECT_ROOT / "data" / "backups"
-UPLOAD_ROOT = PROJECT_ROOT / "backend" / "uploads"
+STAGING_ROOT = DATA_DIR / "import_staging"
+BACKUP_ROOT = DATA_DIR / "backups"
+
+
+def _invoice_file_path(relative_path: str | Path) -> Path:
+    return uploaded_path(relative_path, UPLOAD_ROOT)
 
 
 def _money(value: Decimal | None) -> str:
@@ -142,7 +145,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
     invoices = []
     attachments = []
     for invoice in report.active_invoices:
-        path = PROJECT_ROOT / "backend" / invoice.file_path
+        path = _invoice_file_path(invoice.file_path)
         if not path.exists():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"发票文件不存在：{invoice.file_path}")
         attachment_path = f"attachments/{report.report_uid}/{invoice.invoice_uid}{path.suffix.lower()}"
@@ -518,7 +521,7 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                     ext=Path(invoice_payload["attachment_path"]).suffix or invoice.file_type,
                 )
                 invoice.file_path = final_relative.as_posix()
-                pending_files.append((temp_file, PROJECT_ROOT / "backend" / final_relative))
+                pending_files.append((temp_file, _invoice_file_path(final_relative)))
                 result.invoices_created += 1
                 result.attachments_written += 1
             recalculate_report_totals(report)

@@ -5,6 +5,9 @@ import {
   deleteDialogActionLabels,
   formatBatchPdfFailureMessage,
   isTrashStatus,
+  reportFilterActionsSx,
+  reportFilterMoreButtonSx,
+  reportFilterToolbarSx,
   toggleCurrentPageSelection,
   toggleReportSelection,
 } from "./reportListUtils.js";
@@ -36,4 +39,11 @@ test("isTrashStatus detects the recycle bin tab", () => {
 
 test("delete dialog action labels keep destructive action first", () => {
   assert.deepEqual(deleteDialogActionLabels, ["彻底删除", "放入回收站"]);
+});
+
+test("report filter toolbar wraps controls without squeezing button content", () => {
+  assert.equal(reportFilterToolbarSx.flexWrap, "wrap");
+  assert.equal(reportFilterActionsSx.flexWrap, "wrap");
+  assert.equal(reportFilterMoreButtonSx.flexShrink, 0);
+  assert.equal(reportFilterMoreButtonSx.minWidth, "max-content");
 });

@@ -4,8 +4,9 @@ import hashlib
 import re
 from pathlib import Path
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-BUNDLED_FONTS_DIR = PROJECT_ROOT / "backend" / "assets" / "fonts"
+from backend.runtime_paths import PROJECT_ROOT, resource_path
+
+BUNDLED_FONTS_DIR = resource_path("backend", "assets", "fonts")
 SUPPORTED_FONT_EXTENSIONS = {".ttf", ".ttc", ".otf"}
 
 DEFAULT_PDF_FILL_FONT_KEY = "system:simsun"

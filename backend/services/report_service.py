@@ -65,8 +65,11 @@ FIXED_CATEGORY_LABEL_ALIASES = {
 CUSTOM_CATEGORY_PREFIX = "custom:"
 CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
 MAX_TRIP_TRAVEL_DAYS = 7
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-UPLOAD_ROOT = PROJECT_ROOT / "backend" / "uploads"
+from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
+
+
+def _invoice_file_path(relative_path: str | Path) -> Path:
+    return uploaded_path(relative_path, UPLOAD_ROOT)
 
 
 class TripDateError(ValueError):
@@ -652,7 +655,7 @@ def _safe_invoice_file_paths(report: ExpenseReport) -> list[Path]:
     paths: list[Path] = []
     seen: set[Path] = set()
     for invoice in report.invoices:
-        path = (PROJECT_ROOT / "backend" / invoice.file_path).resolve()
+        path = _invoice_file_path(invoice.file_path).resolve()
         if not path.is_relative_to(upload_root):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="发票附件路径不安全，无法彻底删除")
         if path not in seen:

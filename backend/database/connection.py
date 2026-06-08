@@ -1,12 +1,10 @@
-from pathlib import Path
 from uuid import uuid4
 
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-DATA_DIR = PROJECT_ROOT / "data"
-DATABASE_PATH = DATA_DIR / "expense.db"
+from backend.runtime_paths import DATA_DIR, DATABASE_PATH, PROJECT_ROOT
+
 DATABASE_URL = f"sqlite:///{DATABASE_PATH.as_posix()}"
 
 
