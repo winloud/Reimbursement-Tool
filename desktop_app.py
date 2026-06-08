@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import logging
+import shutil
 import socket
+import subprocess
 import threading
 import time
 import urllib.error
@@ -12,7 +14,7 @@ import uvicorn
 
 from backend.main import create_app
 from backend.runtime_paths import APP_ROOT, DATABASE_PATH, FRONTEND_DIST_DIR, LOG_DIR, UPLOAD_ROOT
-from desktop_dependencies import ensure_runtime_dependencies
+from desktop_dependencies import ensure_runtime_dependencies, find_chromium_browser, is_webview2_available, show_error_message
 
 
 HOST = "127.0.0.1"
@@ -62,6 +64,84 @@ def run_server(server: uvicorn.Server) -> None:
         raise
 
 
+def run_pywebview_window(base_url: str) -> None:
+    import webview
+
+    webview.create_window(APP_TITLE, base_url, width=1280, height=860, min_size=(1024, 700))
+    logging.info("starting pywebview gui=edgechromium")
+    webview.start(gui="edgechromium", debug=False)
+
+
+def chromium_profile_dir() -> Path:
+    return APP_ROOT / "browser-profile"
+
+
+def cleanup_legacy_chromium_profiles() -> None:
+    if not LOG_DIR.exists():
+        return
+
+    log_dir = LOG_DIR.resolve()
+    for profile_path in log_dir.glob("browser-profile-*"):
+        try:
+            resolved = profile_path.resolve()
+            if resolved.parent != log_dir:
+                continue
+            if profile_path.is_dir() and not profile_path.is_symlink():
+                shutil.rmtree(profile_path)
+            else:
+                profile_path.unlink()
+            logging.info("removed legacy chromium profile path=%s", profile_path)
+        except OSError:
+            logging.warning("failed to remove legacy chromium profile path=%s", profile_path, exc_info=True)
+
+
+def run_chromium_app_window(base_url: str) -> None:
+    browser = find_chromium_browser()
+    if browser is None:
+        raise RuntimeError("未找到 Google Chrome 或 Microsoft Edge 浏览器")
+
+    browser_name, browser_path = browser
+    cleanup_legacy_chromium_profiles()
+    profile_dir = chromium_profile_dir()
+    profile_dir.mkdir(parents=True, exist_ok=True)
+    args = [
+        str(browser_path),
+        f"--app={base_url}",
+        "--new-window",
+        "--no-first-run",
+        "--disable-translate",
+        "--disable-background-networking",
+        "--disable-sync",
+        "--disable-extensions",
+        f"--user-data-dir={profile_dir}",
+    ]
+    logging.info("starting chromium app-mode window name=%s path=%s profile=%s", browser_name, browser_path, profile_dir)
+    process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    process.wait()
+    logging.info("chromium app-mode window exited returncode=%s", process.returncode)
+
+
+def run_desktop_window(base_url: str) -> None:
+    browser = find_chromium_browser()
+    if browser is not None and browser[0] == "Google Chrome":
+        try:
+            run_chromium_app_window(base_url)
+            return
+        except Exception:
+            logging.exception("chrome app-mode window failed; trying edge chromium webview")
+
+    if is_webview2_available():
+        try:
+            run_pywebview_window(base_url)
+            return
+        except Exception:
+            logging.exception("edge chromium webview failed; trying chromium app-mode fallback")
+    else:
+        logging.info("webview2 runtime not available; using chromium app-mode fallback")
+
+    run_chromium_app_window(base_url)
+
+
 def run_desktop_app() -> None:
     configure_logging()
     ensure_runtime_dependencies()
@@ -82,12 +162,14 @@ def run_desktop_app() -> None:
     try:
         wait_until_ready(base_url)
         logging.info("fastapi server is ready url=%s", base_url)
-        import webview
-
-        webview.create_window(APP_TITLE, base_url, width=1280, height=860, min_size=(1024, 700))
-        webview.start(debug=False)
+        run_desktop_window(base_url)
     except Exception:
         logging.exception("桌面应用启动失败")
+        show_error_message(
+            "桌面窗口启动失败",
+            "应用后台服务已启动，但桌面窗口启动失败。\n\n"
+            "请确认已安装 Microsoft Edge WebView2 Runtime / Google Chrome / Microsoft Edge，并查看 logs\\app.log。",
+        )
         raise
     finally:
         server.should_exit = True

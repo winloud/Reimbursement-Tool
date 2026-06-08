@@ -170,7 +170,7 @@ dist\报销管理\报销管理.exe
 期望行为：
 
 - 打开独立桌面窗口
-- 不打开系统浏览器
+- 不打开普通系统浏览器标签页；如果检测到 Google Chrome，会使用 `--app=` 模式打开独立应用窗口；只有 Edge 的机器优先使用 WebView2 内嵌窗口
 - 自动启动本机 FastAPI 服务
 - 首次启动后生成 `dist\报销管理\data\expense.db`
 - 写入日志 `dist\报销管理\logs\app.log`
@@ -195,10 +195,10 @@ Get-Process | Where-Object { $_.ProcessName -like '*报销管理*' }
 最终用户运行 `报销管理.exe` 时，明确需要：
 
 - **Windows 10 / Windows 11 64 位**
-- **Microsoft Edge WebView2 Runtime**
-  - 用于显示 pywebview 桌面窗口
-  - 程序启动时会自动检测
-  - 如果缺失，程序会自动联网下载 Microsoft Evergreen Bootstrapper 并尝试静默安装
+- **Chromium 内核运行环境，满足其一即可**
+  - Google Chrome 浏览器。优先使用，以 `--app=` 独立窗口模式打开。
+  - Microsoft Edge WebView2 Runtime。Chrome 不可用时优先使用，作为内嵌桌面窗口。
+  - Microsoft Edge 浏览器。Chrome 和 WebView2 都不可用时，作为 `--app=` 独立窗口兜底。
 
 最终用户不需要安装：
 
@@ -238,13 +238,21 @@ dist\报销管理\
 
 ### 3. 自动依赖检测与安装
 
-EXE 启动后会先检测 WebView2 Runtime：
+EXE 启动后会按以下顺序选择 Chromium 内核：
 
-1. 如果检测到 WebView2 Runtime，继续启动应用。
-2. 如果未检测到 WebView2 Runtime，自动下载微软 Evergreen Bootstrapper。
-3. 下载完成后尝试静默安装。
-4. 安装成功后继续启动应用。
-5. 如果下载或安装失败，弹出错误提示，并写入日志。
+1. 如果检测到 Google Chrome，使用 Chrome `--app=` 独立窗口。
+2. 如果没有 Chrome，但检测到 WebView2 Runtime，使用 pywebview 的 Edge Chromium 内嵌窗口。
+3. 如果没有 Chrome/WebView2，但检测到 Microsoft Edge，使用 Edge `--app=` 独立窗口兜底。
+4. 如果三者都没有，自动下载微软 Evergreen Bootstrapper 并尝试静默安装 WebView2。
+5. 如果自动安装仍失败，弹出错误提示，并写入日志。
+
+如果进入 Chrome/Edge `--app=` 兜底路径，程序只会复用一个固定目录：
+
+```text
+报销管理\browser-profile\
+```
+
+旧版本曾在 `logs\browser-profile-*` 下为每次启动创建临时 profile；新版本启动时会自动清理这些旧临时目录。
 
 自动安装要求：
 
@@ -260,6 +268,7 @@ EXE 启动后会先检测 WebView2 Runtime：
 报销管理\data\expense.db
 报销管理\uploads\
 报销管理\logs\app.log
+报销管理\browser-profile\   # 仅 Chrome/Edge app-mode 兜底时生成
 ```
 
 说明：
@@ -267,6 +276,7 @@ EXE 启动后会先检测 WebView2 Runtime：
 - `data\expense.db`：SQLite 数据库
 - `uploads\`：上传的发票附件
 - `logs\app.log`：启动和错误日志
+- `browser-profile\`：Chrome/Edge app-mode 兜底窗口的固定浏览器 profile，避免每次启动新建 profile
 
 备份或迁移时，复制整个 `报销管理` 目录最稳。
 
@@ -297,14 +307,16 @@ Get-Content .\logs\app.log
 
 常见原因：
 
-- WebView2 Runtime 缺失，且自动安装失败
+- WebView2 Runtime、Google Chrome、Microsoft Edge 都不可用，且自动安装失败
 - 目标电脑不能访问微软 WebView2 下载地址
 - 安全软件拦截 EXE 或 WebView2 安装器
 - 本机端口被安全策略阻止
+- 新包正常应出现 `starting chromium app-mode window name=Google Chrome` 或 `starting pywebview gui=edgechromium`；只有 WebView2 不可用但 Edge 可用时，才会出现 `starting chromium app-mode window name=Microsoft Edge`
+- 日志出现 `MSHTML is deprecated`，说明运行的是旧包或未强制使用 Edge Chromium，请换用最新打包目录
 
 可处理方式：
 
-- 手动安装 Microsoft Edge WebView2 Evergreen Runtime
+- 手动安装 Microsoft Edge WebView2 Evergreen Runtime、Google Chrome 或 Microsoft Edge
 - 将整个 `报销管理` 目录加入安全软件信任
 - 重新启动 EXE
 

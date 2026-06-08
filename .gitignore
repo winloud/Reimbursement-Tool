@@ -40,6 +40,10 @@ data/*.db
 data/import_staging/
 data/backups/
 
+# Local desktop runtime artifacts
+logs/
+browser-profile/
+
 # Backend uploads
 backend/uploads/
 
