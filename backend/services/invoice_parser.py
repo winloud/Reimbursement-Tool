@@ -49,6 +49,9 @@ SMALL_AMOUNT_PATTERN = re.compile(
 )
 MONEY_VALUE_PATTERN = re.compile(r"[¥￥]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s*[¥￥]?")
 WORD_AMOUNT_PATTERN = re.compile(r"[¥￥]?\s*([0-9][0-9,]*(?:\.\d{1,2})?)")
+WORD_AMOUNT_FRAGMENT_PATTERN = re.compile(r"^[¥￥0-9,.]+$")
+MAX_AMOUNT_WORD_SPAN = 5
+AMOUNT_WORD_GAP_TOLERANCE = 12.0
 UPPER_AMOUNT_PATTERN = re.compile(
     r"(?:价税合计|税价合计)\s*[（(]\s*[大⼤]\s*写\s*[）)]\s*[:：]?\s*(?:人民币)?\s*([零〇壹贰叁肆伍陆柒捌玖一二三四五六七八九十拾百佰千仟万亿圆元角分整正]+)"
 )
@@ -708,6 +711,18 @@ def word_amount(word_text: str) -> Decimal:
     return parse_decimal(match.group(1)) if match else Decimal("0.00")
 
 
+def word_amount_fragment_text(word: dict[str, Any]) -> str:
+    return compact_text(str(word.get("text") or ""))
+
+
+def is_word_amount_fragment(text: str) -> bool:
+    return bool(text) and bool(WORD_AMOUNT_FRAGMENT_PATTERN.fullmatch(text))
+
+
+def horizontal_word_gap(left: dict[str, Any], right: dict[str, Any]) -> float:
+    return float(right["x0"]) - float(left["x1"])
+
+
 def word_center_y(word: dict[str, Any]) -> float:
     return (float(word["y0"]) + float(word["y1"])) / 2
 
@@ -731,17 +746,59 @@ def union_word_bbox(words: list[dict[str, Any]]) -> dict[str, float]:
     }
 
 
-def amount_highlight_words(words: list[dict[str, Any]], amount_word: dict[str, Any]) -> list[dict[str, Any]]:
-    line_words = words_on_same_line(words, amount_word)
-    highlight_words = [amount_word]
-    amount_x0 = float(amount_word["x0"])
+def amount_candidate_words(words: list[dict[str, Any]], normalized_amount: Decimal) -> list[list[dict[str, Any]]]:
+    candidates: list[list[dict[str, Any]]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add_candidate(candidate_words: list[dict[str, Any]]) -> None:
+        key = tuple(id(word) for word in candidate_words)
+        if key not in seen:
+            seen.add(key)
+            candidates.append(candidate_words)
+
+    for word in words:
+        if word_amount(str(word.get("text") or "")) == normalized_amount:
+            add_candidate([word])
+
+        line_words = sorted(words_on_same_line(words, word), key=lambda item: (float(item["x0"]), float(item["x1"])))
+        start_index = next((index for index, item in enumerate(line_words) if item is word), None)
+        if start_index is None:
+            continue
+
+        first_text = word_amount_fragment_text(word)
+        if not is_word_amount_fragment(first_text) or not re.search(r"[¥￥0-9]", first_text):
+            continue
+
+        combined_text = ""
+        candidate_group: list[dict[str, Any]] = []
+        for current_word in line_words[start_index : start_index + MAX_AMOUNT_WORD_SPAN]:
+            current_text = word_amount_fragment_text(current_word)
+            if not is_word_amount_fragment(current_text):
+                break
+            if candidate_group and horizontal_word_gap(candidate_group[-1], current_word) > AMOUNT_WORD_GAP_TOLERANCE:
+                break
+            candidate_group.append(current_word)
+            combined_text += current_text
+            if len(candidate_group) > 1 and word_amount(combined_text) == normalized_amount:
+                add_candidate(candidate_group.copy())
+                break
+
+    return candidates
+
+
+def amount_highlight_words(words: list[dict[str, Any]], amount_words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    line_words = words_on_same_line(words, amount_words[0])
+    highlight_words = list(amount_words)
+    amount_x0 = min(float(word["x0"]) for word in amount_words)
     for word in line_words:
         text = compact_text(str(word.get("text") or ""))
         if text not in {"¥", "￥"}:
             continue
+        if any(word is highlighted for highlighted in highlight_words):
+            continue
         if 0 <= amount_x0 - float(word["x1"]) <= 10:
             highlight_words.append(word)
-    return highlight_words
+    return sorted(highlight_words, key=lambda item: (float(item["x0"]), float(item["x1"])))
 
 
 def score_amount_word(words: list[dict[str, Any]], word: dict[str, Any], page_width: float, page_height: float) -> int:
@@ -758,6 +815,10 @@ def score_amount_word(words: list[dict[str, Any]], word: dict[str, Any], page_wi
     return score
 
 
+def score_amount_candidate(words: list[dict[str, Any]], amount_words: list[dict[str, Any]], page_width: float, page_height: float) -> int:
+    return score_amount_word(words, union_word_bbox(amount_words), page_width, page_height)
+
+
 def build_tax_total_amount_highlight(artifacts: dict[str, Any], amount: Decimal) -> dict[str, Any] | None:
     normalized_amount = parse_decimal(amount)
     if normalized_amount <= Decimal("0.00"):
@@ -769,10 +830,10 @@ def build_tax_total_amount_highlight(artifacts: dict[str, Any], amount: Decimal)
     if not words or page_width <= 0 or page_height <= 0:
         return None
 
-    candidates = [word for word in words if word_amount(str(word.get("text") or "")) == normalized_amount]
+    candidates = amount_candidate_words(words, normalized_amount)
     if not candidates:
         return None
-    best = max(candidates, key=lambda word: score_amount_word(words, word, page_width, page_height))
+    best = max(candidates, key=lambda amount_words: score_amount_candidate(words, amount_words, page_width, page_height))
     bbox = union_word_bbox(amount_highlight_words(words, best))
     padding = 4.0
     x0 = max(0.0, bbox["x0"] - padding)

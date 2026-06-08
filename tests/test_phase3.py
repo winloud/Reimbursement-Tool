@@ -123,6 +123,49 @@ def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
     assert parsed.raw["qr_payloads"]
 
 
+def test_parse_pdf_invoice_highlights_split_qr_amount_words(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "电子发票（普通发票）",
+                    "价税合计（大写）",
+                    "（小写）",
+                    "壹拾圆壹分",
+                    "¥10. 01",
+                ]
+            ),
+            "preview_image": "data:image/png;base64,abc",
+            "image_bgr": object(),
+            "page_size": {"width": 500, "height": 300},
+            "words": [
+                {"x0": 40, "y0": 210, "x1": 105, "y1": 222, "text": "价税合计（大写）"},
+                {"x0": 300, "y0": 210, "x1": 335, "y1": 222, "text": "（小写）"},
+                {"x0": 340, "y0": 210, "x1": 365, "y1": 222, "text": "¥10."},
+                {"x0": 365, "y0": 210, "x1": 376, "y1": 222, "text": "01"},
+            ],
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False: (
+            ["01,32,,26337906210400590013,10.01,20260422,,349F"],
+            [],
+        )
+        if include_details
+        else ["01,32,,26337906210400590013,10.01,20260422,,349F"],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.amount == Decimal("10.01")
+    assert parsed.raw["amount_source"] == "qr"
+    assert parsed.raw["preview_highlights"][0]["type"] == "tax_total_amount"
+    assert parsed.raw["preview_highlights"][0]["amount"] == "10.01"
+
+
 def test_parse_pdf_invoice_uses_text_tax_total_over_standard_qr_untaxed_amount(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "backend.services.invoice_parser.extract_pdf_page_artifacts",

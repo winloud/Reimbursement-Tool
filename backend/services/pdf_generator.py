@@ -370,12 +370,12 @@ def _build_overlay(
 
     if is_last_page:
         total_transport = sum((trip.amount for trip in report.trips), Decimal("0.00"))
+        total_transport_count = sum(trip.invoice_count for trip in report.trips)
         total_other_count = sum(row.count for row in all_expense_rows)
         total_other_amount = sum((row.amount for row in all_expense_rows), Decimal("0.00"))
-        total_invoice_count = sum(trip.invoice_count for trip in report.trips) + total_other_count
         has_advance = bool(report.advance_amount and report.advance_amount != Decimal("0.00"))
         total_fields = {
-            "total_invoice_count": total_invoice_count or "",
+            "total_invoice_count": total_transport_count or "",
             "total_transport_fare": _money(total_transport) if total_transport else "",
             "subsidy_days": f"{report.subsidy_days}天" if report.subsidy_days else "",
             "subsidy_amount": _money(report.subsidy_total) if report.subsidy_total else "",
