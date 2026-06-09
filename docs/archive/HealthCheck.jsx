@@ -3,6 +3,7 @@ import { Alert, Box, Button, CircularProgress, Stack, Typography } from "@mui/ma
 import { getHealth } from "../api/client";
 import { useAppStore } from "../store/appStore";
 
+// Historical component: current V1.0 routing does not import this health-check view.
 export default function HealthCheck() {
   const { health, healthError, setHealth, setHealthError } = useAppStore();
   const [loading, setLoading] = useState(false);

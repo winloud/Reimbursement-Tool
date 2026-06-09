@@ -32,6 +32,8 @@ Thumbs.db
 
 # Claude local permissions/session files
 .claude/settings.local.json
+.claude_write_test.tmp
+.tmp_invoice_pdf_parse/
 
 # Frontend dependencies
 node_modules/

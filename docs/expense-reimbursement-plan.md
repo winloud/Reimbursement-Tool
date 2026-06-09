@@ -18,7 +18,7 @@
 
 ### 使用场景
 - **用户**：单用户，个人本地使用
-- **分发方式**：整个工具文件夹复制给同事，单机运行
+- **分发方式**：V1.0 生成 `release/报销管理-v1.0.0.zip`；用户解压后复制整个 `报销管理` 文件夹，单机运行
 - **启动方式**：优先封装为 EXE（单目录模式）；或作为本地 Web 应用在浏览器中操作
 - **备份方式**：直接复制工具文件夹，无需内置备份功能
 
@@ -35,7 +35,7 @@
 - **HTTP 请求**：Axios
 
 ### 后端
-- **框架**：FastAPI (Python 3.11+)
+- **框架**：FastAPI (Python 3.10 / 3.11)
 - **数据库**：SQLite + SQLAlchemy 2.0
 - **数据校验**：Pydantic v2
 - **金额计算**：Python `decimal.Decimal`（禁止使用 float）
@@ -45,7 +45,8 @@
   - XML / OFD 发票不再支持，上传时直接提示不支持
 
 ### 打包
-- **EXE 封装**：PyInstaller 单目录模式（`--onedir`），启动快，不触发杀毒误报
+- **EXE 封装**：PyInstaller 单目录模式（`--onedir`）+ pywebview / Chrome / Edge app-mode 桌面窗口
+- **发布产物**：`scripts/build_release.ps1 -Version 1.0.0` 生成 `release/报销管理-v1.0.0.zip`
 
 ---
 
@@ -67,54 +68,101 @@ Frontend → Router → Service → Database
 ### 3.2 项目目录结构
 
 ```
-reimbursement-tool/
-├── frontend/                      # React + Vite 前端
-│   ├── src/
-│   │   ├── pages/
-│   │   │   ├── Dashboard.jsx          # 总览看板
-│   │   │   ├── ReportList.jsx         # 报销单列表
-│   │   │   ├── ReportEdit.jsx         # 新增/编辑报销单
-│   │   │   └── ReportPrint.jsx        # PDF 预览
-│   │   ├── components/
-│   │   ├── store/                     # Zustand 状态
-│   │   └── api/                       # Axios 封装
-│   └── package.json
+报销单开发/
+├── README.md                       # V1.0 发布说明，打包时复制到 ZIP 根目录
+├── desktop_app.py                  # 桌面启动器：启动 FastAPI、等待健康检查、打开窗口、关闭后退出服务
+├── desktop_dependencies.py         # Chrome / Edge / WebView2 检测与 WebView2 自动安装兜底
+├── reimbursement_tool.spec         # PyInstaller onedir 打包配置
+├── scripts/
+│   └── build_release.ps1           # 前端构建、PyInstaller 打包、清理运行态目录、生成 release ZIP
 │
-├── backend/                       # FastAPI 后端
-│   ├── main.py                        # 应用入口
+├── frontend/                       # React + Vite 前端
+│   ├── index.html
+│   ├── package.json
+│   ├── package-lock.json
+│   ├── vite.config.js
+│   └── src/
+│       ├── App.jsx                 # Sidebar 应用壳层与路由
+│       ├── main.jsx
+│       ├── navigationGuard.jsx     # 离开空草稿等导航守卫
+│       ├── api/                    # Axios 封装、筛选参数转换及测试
+│       ├── store/                  # Zustand 状态
+│       ├── components/
+│       │   └── InvoiceViewer.jsx   # 发票预览、金额确认、发票类型和解析依据
+│       └── pages/
+│           ├── Dashboard.jsx       # 总览看板
+│           ├── ReportList.jsx      # 报销单列表、筛选、批量操作、回收站、导入导出入口
+│           ├── ReportEdit.jsx      # 新增/编辑报销单单页工作台
+│           ├── ReportPrint.jsx     # 旧 PDF 预览路由保留
+│           ├── SettingsPage.jsx    # 个性化设置
+│           └── *Utils.js / *.test.js
+│
+├── backend/                        # FastAPI 后端
+│   ├── main.py                     # 应用入口和前端静态文件 fallback
+│   ├── runtime_paths.py            # 开发/打包运行时路径：data、uploads、logs、frontend/dist
 │   ├── database/
-│   │   ├── connection.py              # SQLite 连接配置
-│   │   └── session.py                 # Session 管理
-│   ├── models/                        # SQLAlchemy 数据模型
+│   │   ├── connection.py           # SQLite 连接、自动建表、轻量迁移、历史报销单重算
+│   │   └── session.py
+│   ├── models/
 │   │   ├── report.py
 │   │   ├── trip.py
 │   │   ├── expense_item.py
-│   │   └── invoice.py
-│   ├── schemas/                       # Pydantic 请求/响应 Schema
+│   │   ├── invoice.py
+│   │   ├── settings.py
+│   │   └── wechat_qrcode/          # OpenCV WeChatQRCode 四个模型文件
+│   ├── schemas/
 │   │   ├── report.py
 │   │   ├── invoice.py
-│   │   └── common.py                  # 统一响应格式
-│   ├── routers/                       # API 路由
+│   │   ├── settings.py
+│   │   ├── stats.py
+│   │   ├── data_transfer.py
+│   │   └── common.py
+│   ├── routers/
 │   │   ├── reports.py
 │   │   ├── invoices.py
 │   │   ├── settings.py
-│   │   └── stats.py
-│   ├── services/                      # 业务逻辑
+│   │   ├── stats.py
+│   │   ├── data_transfer.py
+│   │   └── health.py
+│   ├── services/
 │   │   ├── report_service.py
+│   │   ├── report_batch_service.py
 │   │   ├── invoice_service.py
-│   │   ├── pdf_generator.py           # PDF 填充逻辑
-│   │   ├── invoice_parser.py          # 电子发票解析
-│   │   └── amount_converter.py        # 金额转中文大写
+│   │   ├── invoice_parser.py
+│   │   ├── pdf_generator.py
+│   │   ├── data_transfer_service.py
+│   │   ├── stats_service.py
+│   │   ├── settings_service.py
+│   │   ├── font_service.py
+│   │   └── amount_converter.py
+│   ├── assets/fonts/               # 用户可自行放入项目内置字体；默认仅保留 .gitkeep
 │   ├── templates/
-│   │   └── expense_template.pdf       # PDF 模板文件（用户提供）
-│   └── uploads/                       # 发票文件存储根目录
-│       └── {report_id}/               # 按报销单 ID 分目录
+│   │   └── 报销单.pdf              # 当前 PDF 模板；兼容历史名 expense_template.pdf
+│   └── uploads/                    # 开发态发票附件根目录，运行生成并忽略
 │
 ├── data/
-│   └── expense.db                     # SQLite 数据库文件
+│   ├── .gitkeep
+│   ├── expense.db                  # 开发/发布运行态 SQLite 数据库，忽略
+│   ├── import_staging/             # 导入预览临时目录，忽略
+│   └── backups/                    # 导入执行前备份目录，忽略
 │
-└── build/                         # PyInstaller 打包输出
+├── docs/
+│   ├── expense-reimbursement-plan.md # 主计划，当前唯一维护的开发规划文档
+│   ├── vm-install-test-guide.md
+│   └── archive/                    # 不参与运行/打包的历史资料
+│       ├── README.md
+│       ├── create_form_fields_v1_0_1.py # 早期 PDF AcroForm 填表域维护脚本
+│       ├── HealthCheck.jsx         # 早期健康检查组件，当前未被前端路由/入口导入
+│       └── expense-tool-prototype.jsx # 早期 React 原型稿，当前未被前端源码引用
+│
+├── tests/                          # pytest 后端/桌面/发布测试
+├── logs/                           # 本地运行日志，忽略
+├── build/                          # PyInstaller 中间产物，忽略
+├── dist/                           # 前端构建和 PyInstaller 输出，忽略
+└── release/                        # 本地发布 ZIP，忽略；不同步上传
 ```
+
+> 发布版运行时路径与开发态不同：打包后 `data/`、`uploads/`、`logs/`、`browser-profile/` 均在 EXE 同级目录；bundle 内只放前端静态文件、PDF 模板、二维码模型和依赖库。
 
 ---
 
@@ -130,6 +178,7 @@ reimbursement-tool/
 | employee_name | TEXT | 出差人姓名（记忆上次填写） |
 | daily_subsidy | NUMERIC(18,2) | 途中补贴日标准金额（元/天） |
 | pdf_fill_font_key | TEXT | PDF 填充字体 key，默认 `system:simsun` |
+| double_print_vat_special_invoices | BOOLEAN | 增值税专用发票附件是否在合并 PDF 中追加两遍，默认 true |
 | updated_at | DATETIME | 最后更新时间 |
 
 ### 表：`expense_reports`（报销单）
@@ -159,7 +208,6 @@ reimbursement-tool/
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | INTEGER PK | 自增主键 |
-| invoice_uid | TEXT UNIQUE | 后台稳定唯一标识，用于导入导出发票和附件匹配 |
 | report_id | INTEGER FK | 关联报销单 |
 | sort_order | INTEGER | 行程顺序（从 1 开始） |
 | depart_month | INTEGER | 出发月 |
@@ -205,11 +253,13 @@ reimbursement-tool/
 | 字段 | 类型 | 说明 |
 |------|------|------|
 | id | INTEGER PK | 自增主键 |
+| invoice_uid | TEXT UNIQUE | 后台稳定唯一标识，用于导入导出发票和附件匹配 |
 | report_id | INTEGER FK | 关联报销单 |
 | trip_id | INTEGER FK | 关联行程（车船费专用，其他类别为 NULL） |
 | expense_category | TEXT | 费用类别（与 expense_items.category 枚举一致） |
 | file_path | TEXT | 文件存储相对路径（`uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`） |
 | file_type | TEXT | 文件类型：`pdf` / `image` |
+| invoice_type | TEXT | 发票类型：`unknown` / `normal` / `vat_special`，用于专票附件打印策略 |
 | invoice_no | TEXT | 发票号码（解析获取，可为空） |
 | invoice_date | DATE | 发票日期（解析获取，可为空） |
 | amount | NUMERIC(18,2) | 金额（解析自动填入，用户可修改） |
@@ -247,11 +297,16 @@ reimbursement-tool/
 
 在 `schemas/common.py` 中定义通用 Response 泛型类，所有 Router 使用此格式返回。
 
+### 5.1.1 健康检查
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| GET | `/api/health` | 桌面启动器和前端联通验证使用，返回本机 FastAPI 服务健康状态 |
+
 ### 5.2 系统配置
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/settings` | 获取系统配置 |
-| PUT | `/api/settings` | 更新系统配置 |
+| PUT | `/api/settings` | 更新系统配置：默认部门、出差人、补贴标准、PDF 字体、增值税专用发票附件打印两遍开关 |
 | GET | `/api/settings/fonts` | 获取可用 PDF 填充字体列表 |
 
 ### 5.3 报销单
@@ -280,7 +335,7 @@ reimbursement-tool/
 | POST | `/api/invoices/upload` | 上传发票文件，返回解析结果 |
 | GET | `/api/invoices/{id}/file` | 获取发票原文件（用于预览） |
 | GET | `/api/invoices/{id}/parse` | 只读重新解析发票文件，返回解析字段、预览图和解析诊断信息 |
-| PUT | `/api/invoices/{id}` | 更新发票金额（用户确认后） |
+| PUT | `/api/invoices/{id}` | 更新发票金额、确认状态和发票类型（用户确认后） |
 | DELETE | `/api/invoices/{id}` | 删除发票（软删除记录，物理文件暂保留） |
 
 ### 5.5 统计看板
@@ -383,6 +438,7 @@ draft ⇄ printed ──→ reimbursed
 **功能：**
 - 设置默认部门、出差人、途中补贴日标准，新建报销单时自动带入
 - 选择 PDF 填充字体，保存到 `settings.pdf_fill_font_key`
+- 开关 `settings.double_print_vat_special_invoices`：增值税专用发票附件在合并 PDF 中打印两遍，默认开启
 - 字体下拉按来源分组：系统字体、项目内置字体
 - 系统字体优先列出 Windows 常用中文字体：微软雅黑、宋体、仿宋、楷体、黑体（仅展示本机存在的字体）
 - 项目内置字体读取 `backend/assets/fonts/` 下的 `.ttf` / `.ttc` / `.otf` 文件，显示字体名称；无法读取字体元数据时回退显示文件名
@@ -450,6 +506,7 @@ PDF 预览和下载：
 
 ### 7.4 发票查看弹窗（InvoiceViewer）
 - 原型风格弹窗，左侧展示关键字段和金额确认，右侧展示 PDF/image 预览
+- 提供发票类型单选：未知 / 普票 / 专票；自动解析结果可带入，用户确认金额时可同步修正 `invoice_type`
 - 提供“解析依据”按钮，弹窗展示本次解析最终采用方式、是否识别成功、最终解析字段，以及二维码/文本正则等候选方式的尝试结果
 - PDF：优先使用后端 PyMuPDF 已渲染的图片预览或只读重解析接口生成图片预览，不再在弹窗内嵌 PDF iframe
 - 图片：图片查看器
@@ -464,7 +521,8 @@ PDF 预览和下载：
 ## 八、PDF 生成逻辑
 
 ### 8.1 模板说明
-- 模板文件：`backend/templates/expense_template.pdf`
+- 当前模板文件：`backend/templates/报销单.pdf`
+- PDF 生成器兼容历史模板名 `backend/templates/expense_template.pdf`，用于测试或旧包兜底；项目实际模板以 `报销单.pdf` 为准
 - 纸张尺寸：210mm × 105mm（A5 横向）
 - 模板已预设 AcroForm 填写域
 
@@ -516,6 +574,7 @@ PDF 预览和下载：
 ### 8.6 预览与下载输出
 - 预览接口生成仅报销单页 PDF，并将每个报销单页渲染为图片返回前端；不包含发票附件，不改变报销单状态
 - 下载接口生成报销单页 + 全部未删除发票附件页的合并 PDF；下载成功后将报销单状态标记为 `printed`
+- 合并 PDF 追加发票附件时，如 `settings.double_print_vat_special_invoices = true` 且发票 `invoice_type = vat_special`，该发票附件追加两遍；普通发票和未知类型追加一遍
 - 预览和下载前都必须校验不存在未确认发票；如存在 `amount_confirmed = false` 的发票，接口返回清晰业务错误
 - 下载文件名格式：`报销日期-出差事由-￥总金额.pdf`，金额使用两位小数，文件名中的非法字符需替换或移除
 - 本工具不调用打印功能，仅提供预览图片和 PDF 下载
@@ -534,6 +593,7 @@ PDF 预览和下载：
   - 发票号码：`发票号码` / `发票号` / `号码`
   - 开票日期：`开票日期`
   - 金额：优先提取 `价税合计（小写）` 或 `税价合计（小写）`
+- 发票类型：从 PDF 文本识别 `normal` / `vat_special` / `unknown`；确认弹窗允许用户手动修正
 - 同时提取 `价税合计（大写）`，将中文大写金额转为 Decimal，与小写金额交叉验证；不一致时保留校验状态，仍允许用户在确认弹窗中修正金额
 - FastAPI 上传成功后返回解析字段和后端刚渲染出的发票预览图 data URL；React 使用 MUI 标准组件展示该图片。历史发票或无预览图时继续使用原文件预览接口兜底
 - 上传响应必须同时返回解析诊断信息：最终采用方式、识别成功状态、最终字段结果、各解析方式尝试结果，用于前端“解析依据”弹窗核对；历史发票缺少诊断信息时，前端通过只读重解析接口即时获取
@@ -549,15 +609,21 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 
 ## 十、文件存储规范
 
-- 发票文件按报销单分目录存储：`backend/uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`，例如 `backend/uploads/1/12_transport_fare_a1b2c3d4_xxx.pdf`
+- 数据库存储的发票路径始终为相对路径：`uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`，例如 `uploads/1/12_transport_fare_a1b2c3d4_xxx.pdf`
+- `runtime_paths.UPLOAD_ROOT` 决定真实落盘位置：
+  - 开发态：`backend/uploads/{report_id}/...`
+  - 发布态：EXE 同级 `uploads/{report_id}/...`
+- 上传文件先落盘到当前运行态 `UPLOAD_ROOT`，创建发票记录并获得 `invoice_id` 后，再重命名为带 `invoice_id`、类别、文件 hash 和 uuid 的最终文件名
 - 运行过程中会持续增长的本地目录：
-  - `backend/uploads/`：用户发票附件
+  - `backend/uploads/`：开发态用户发票附件，已加入 `.gitignore`
+  - 发布目录 `uploads/`：发布态用户发票附件
   - `data/import_staging/`：ZIP 导入预览临时目录，已加入 `.gitignore`
   - `data/backups/`：导入执行前自动备份目录，已加入 `.gitignore`
-  - `logs/`：本地前后端服务日志
+  - `logs/`：本地服务日志
+  - `browser-profile/`：Chrome / Edge app-mode 窗口的固定 profile 目录
 - 删除策略采用**软删除优先**：删除发票或报销单时，先标记数据库记录为已删除（`deleted_at` 时间戳），物理文件保留；报销单可在回收站中恢复或彻底删除
 - 删除报销单时，**同步软删除该报销单下所有发票记录**
-- 彻底删除报销单时，硬删除报销单、行程、费用项、发票记录，并删除数据库中记录的 `backend/uploads/` 内发票附件文件；路径缺失忽略，路径越界拒绝
+- 彻底删除报销单时，硬删除报销单、行程、费用项、发票记录，并删除数据库中记录的当前 `UPLOAD_ROOT` 内发票附件文件；路径缺失忽略，路径越界拒绝
 - 当前不做自动扫描和自动清理空目录；后续如增加自动清理，需要单独进入 Phase 规划
 
 ---
@@ -573,8 +639,12 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 | 金额转中文大写 | 整数、小数、零元整、万元以上、亿元以上 |
 | 补贴天数计算 | 同月、跨月、单天、起止多区间、非法到达时间 |
 | 发票解析 | PDF 二维码优先、PDF 文本提取、价税合计大小写金额交叉验证 |
+| 发票类型与专票打印 | 发票类型识别/手动确认、专票附件按设置追加两遍 |
 | 状态机流转 | 合法转换全覆盖、非法转换应抛出异常 |
 | 金额计算 | Decimal 精度验证，禁止 float 误差 |
+| 数据导入导出 | manifest、附件 hash、恶意路径拒绝、UID 冲突、新增/覆盖/跳过策略 |
+| 批量操作与回收站 | 批量 PDF 状态副作用、批量删除/恢复/彻底删除、附件清理 |
+| 桌面与发布 | 前端静态 fallback、运行时路径、Chrome/WebView2/Edge 启动兜底、发布短启动 |
 
 ---
 
@@ -621,56 +691,56 @@ Phase 5 当前验证基线：
 ### Phase 1：项目初始化
 **验收标准：前后端均可启动，数据库自动创建，API 联通正常**
 
-- [ ] 初始化 React + Vite + MUI 前端项目
-- [ ] 初始化 FastAPI 后端，建立分层目录结构
-- [ ] 配置 SQLite + SQLAlchemy，自动创建全部数据表
-- [ ] 实现 `schemas/common.py` 统一响应格式
-- [ ] 配置 CORS
-- [ ] 前端配置 Axios，指向 `http://localhost:8000`
-- [ ] 编写健康检查接口 `GET /api/health`，前端调用验证联通
+- [x] 初始化 React + Vite + MUI 前端项目
+- [x] 初始化 FastAPI 后端，建立分层目录结构
+- [x] 配置 SQLite + SQLAlchemy，自动创建全部数据表
+- [x] 实现 `schemas/common.py` 统一响应格式
+- [x] 配置 CORS
+- [x] 前端配置 Axios，开发态支持 `VITE_API_BASE_URL`，发布态默认同源 API
+- [x] 编写健康检查接口 `GET /api/health`，前端和桌面启动器调用验证联通
 
 ---
 
 ### Phase 2：报销单 CRUD + 列表页
 **验收标准：可新增、编辑、删除报销单，列表页正常展示和分页**
 
-- [ ] `GET/PUT /api/settings` 接口 + Service
-- [ ] `GET /api/settings/fonts` 接口 + PDF 填充字体个性化设置
-- [ ] 报销单全部 CRUD 接口 + Service（含状态机校验）
-- [ ] 报销单列表页（ReportList），含状态 Tab 筛选
-- [ ] 新增/编辑报销单 Step 1（基本信息）
-- [ ] 单元测试：状态机合法/非法转换
+- [x] `GET/PUT /api/settings` 接口 + Service
+- [x] `GET /api/settings/fonts` 接口 + PDF 填充字体个性化设置
+- [x] 报销单全部 CRUD 接口 + Service（含状态机校验）
+- [x] 报销单列表页（ReportList），含状态 Tab 筛选
+- [x] 新增/编辑报销单基础信息入口（后续 Phase 3 已重写为单页工作台）
+- [x] 单元测试：状态机合法/非法转换
 
 ---
 
 ### Phase 3：行程录入 + 发票上传（前端重做）
 **验收标准：进入新增页即创建草稿，单页完成基础信息、行程、PDF 发票上传、金额确认和实时汇总；PDF 优先通过二维码和文本提取识别金额，图片发票可手动输入金额**
 
-> Phase 3 已有后端基础能力，但前端未还原原型。重做时优先完成前端工作台，再补后端文件名小改和 PDF 发票识别增强。
+> Phase 3 已完成：先落地前端单页工作台，再补齐后端文件名、PDF 识别和回归测试。
 
-**Phase 3A：前端工作台（当前优先）**
-- [ ] App 壳层从顶部 AppBar 改为 Sidebar + 主内容区，保留 `/`、`/reports`、`/reports/new`、`/reports/:id/edit` 路由
-- [ ] `/reports/new` 页面加载后自动创建 draft，并 `replace` 到 `/reports/{id}/edit`
-- [ ] `ReportEdit` 重写为单页录入工作台：基础信息、行程列表、其他费用、右侧 sticky 汇总同屏展示
-- [ ] `ReportEdit` 宽屏布局必须有明确最大宽度；基本信息保持整行卡片，行程卡片和其他费用卡片桌面 2 列排列，单张行程卡内部按字段长度紧凑排布
-- [ ] 编辑页卡片统一使用一致的边框、圆角、内边距和区块间距；中等宽度不得因为右侧汇总栏挤压导致行程/费用卡片内容拥挤或错位
-- [ ] 基础信息、预支信息、行程自动保存，并显示保存状态
-- [ ] 空草稿离开时弹窗确认删除、保留或取消；未确认删除的草稿一律保留
-- [ ] 行程卡支持新增、删除、拖拽排序、复制、折叠摘要、交换出发/到达、生成返程
-- [ ] 交通工具字段提供可选项：飞机、高铁/动车、网约车、自驾，同时允许用户自由输入特殊交通工具
-- [ ] 车船费和其他费用均支持卡片内上传、multiple 批量上传、拖放上传和上传状态显示
-- [ ] 同一报销单内重复上传相同发票文件，或解析出已存在的相同发票号时，必须拦截并提示用户删除重复发票后再上传
-- [ ] 发票上传后进入 InvoiceViewer 确认金额；批量上传按队列逐张确认
-- [ ] `reimbursed` 状态下所有编辑、上传、删除、金额确认操作均禁用
-- [ ] 前端工具函数测试覆盖空草稿判断、payload 生成、行程操作、实时汇总
+**Phase 3A：前端工作台**
+- [x] App 壳层从顶部 AppBar 改为 Sidebar + 主内容区，保留 `/`、`/reports`、`/reports/new`、`/reports/:id/edit` 路由
+- [x] `/reports/new` 页面加载后自动创建 draft，并 `replace` 到 `/reports/{id}/edit`
+- [x] `ReportEdit` 重写为单页录入工作台：基础信息、行程列表、其他费用、右侧 sticky 汇总同屏展示
+- [x] `ReportEdit` 宽屏布局必须有明确最大宽度；基本信息保持整行卡片，行程卡片和其他费用卡片桌面 2 列排列，单张行程卡内部按字段长度紧凑排布
+- [x] 编辑页卡片统一使用一致的边框、圆角、内边距和区块间距；中等宽度不得因为右侧汇总栏挤压导致行程/费用卡片内容拥挤或错位
+- [x] 基础信息、预支信息、行程自动保存，并显示保存状态
+- [x] 空草稿离开时弹窗确认删除、保留或取消；未确认删除的草稿一律保留
+- [x] 行程卡支持新增、删除、拖拽排序、复制、折叠摘要、交换出发/到达、生成返程
+- [x] 交通工具字段提供可选项：飞机、高铁/动车、网约车、自驾，同时允许用户自由输入特殊交通工具
+- [x] 车船费和其他费用均支持卡片内上传、multiple 批量上传、拖放上传和上传状态显示
+- [x] 同一报销单内重复上传相同发票文件，或解析出已存在的相同发票号时，必须拦截并提示用户删除重复发票后再上传
+- [x] 发票上传后进入 InvoiceViewer 确认金额；批量上传按队列逐张确认
+- [x] `reimbursed` 状态下所有编辑、上传、删除、金额确认操作均禁用
+- [x] 前端工具函数测试覆盖空草稿判断、payload 生成、行程操作、实时汇总
 
 **Phase 3B：后端和回归补齐**
-- [ ] 保留现有发票上传接口和报销单更新接口，不新增改类别 API
-- [ ] `backend/services/invoice_service.py` 保存文件名改为 `{expense_category}_invoice_{uuid}.{ext}`
-- [ ] 放弃 XML / OFD 发票上传和解析支持，上传时返回清晰提示
-- [ ] PDF 识别使用 PyMuPDF 内存渲染第一页图片，优先通过 OpenCV WeChatQRCode 识别二维码，并将同一张渲染图片随上传响应返回给前端预览
-- [ ] 二维码不可用时使用 PyMuPDF 文本提取 + 正则提取发票号、开票日期、价税合计小写金额
-- [ ] PDF 识别提取价税合计大写金额，与小写金额做交叉验证
+- [x] 保留现有发票上传接口和报销单更新接口，不新增改类别 API
+- [x] `backend/services/invoice_service.py` 保存文件名最终规则为 `uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`
+- [x] 放弃 XML / OFD 发票上传和解析支持，上传时返回清晰提示
+- [x] PDF 识别使用 PyMuPDF 内存渲染第一页图片，优先通过 OpenCV WeChatQRCode 识别二维码，并将同一张渲染图片随上传响应返回给前端预览
+- [x] 二维码不可用时使用 PyMuPDF 文本提取 + 正则提取发票号、开票日期、价税合计小写金额
+- [x] PDF 识别提取价税合计大写金额，与小写金额做交叉验证
 
 ---
 
@@ -854,9 +924,5 @@ Phase 6 当前验证基线：
 
 ## 改进想法
 
-1. 应该加自动清理策略
-   1. 页面列表、统计、导出、导入冲突判断：默认忽略软删除数据。
-   2. 数据库和附件：先保留，后续可以做“回收站 / 彻底删除 / 清理 30 天前附件”。
-2. 增值税发票打印2遍。
-   1. 能否自动识别。或加手动标识
-   2. 个性化设置中增加开关
+1. 自动清理策略仍可做第二代增强：当前已有回收站、恢复、彻底删除和导入前备份；尚未实现“自动清理 30 天前回收站/附件”的后台策略。
+2. 可继续优化发布体验：安装器、代码签名、自动更新、发布包校验值和发布渠道上传目前均未纳入 V1.0。

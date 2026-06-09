@@ -1,3 +1,4 @@
+// Historical prototype archived for reference; not imported by V1.0 runtime.
 import { useState, useMemo } from "react";
 
 // ============================================================
