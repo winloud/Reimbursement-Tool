@@ -593,7 +593,7 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 
 ---
 
-### 当前进度快照（2026-06-07）
+### 当前进度快照（2026-06-09）
 
 | 阶段 | 状态 | 说明 |
 |------|------|------|
@@ -602,7 +602,7 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 | Phase 3 | 已验收通过 | 报销单录入界面已通过用户验收；行程、费用、发票上传、金额确认、实时汇总、重复发票拦截、PDF 图片预览和解析依据已完成 |
 | Phase 4 | 已完成 | PDF 模板填充、中文大写金额、报销单预览图、合并 PDF 下载和下载后标记已打印已完成 |
 | Phase 5 | 已验收通过 | 统计看板、增强筛选、完整 ZIP 导入导出、列表预览/下载与批量操作、回收站、看板月份范围联动和出差负荷热力图均已完成 |
-| Phase 6 | 进行中 | pywebview 桌面窗口、前端静态集成、同源 API、运行时路径和 PyInstaller onedir 打包已完成；端到端业务验收待执行 |
+| Phase 6 | 已完成 | pywebview 桌面窗口、前端静态集成、同源 API、运行时路径、PyInstaller onedir 打包和 V1.0 本地发布 ZIP 均已完成；端到端业务验收已由用户实际使用测试通过 |
 
 Phase 3 当前验证基线：
 - 后端：`python -m pytest`，31 passed
@@ -822,13 +822,14 @@ Phase 5.5 验证基线：
 - [x] PyInstaller `--onedir` spec、packaging requirements 和 `scripts/build_release.ps1` 已补齐
 - [x] 安装 packaging 依赖并执行实际 PyInstaller `--onedir` 打包，输出 `dist/报销管理/报销管理.exe`
 - [x] 发布版短启动验证：EXE 可启动本机 FastAPI，健康检查就绪后保持运行，关闭测试进程后无残留进程
-- [ ] 端到端测试：新增 → 行程录入 → 发票上传 → 预览 PDF → 下载 PDF → 状态流转 → 列表筛选/导出 → 看板统计
+- [x] 端到端测试：新增 → 行程录入 → 发票上传 → 预览 PDF → 下载 PDF → 状态流转 → 列表筛选/导出 → 看板统计；用户实际使用测试通过
 
 Phase 6 当前验证基线：
-- 后端：`python -m pytest`，124 passed
-- 前端工具函数：`node --test frontend/src/**/*.test.js`，32 passed
+- 后端：`python -m pytest`，132 passed
+- 前端工具函数：`node --test frontend/src/**/*.test.js`，35 passed
 - 前端构建：`npm run build`，通过；Vite chunk size 警告不影响当前功能
-- 发布打包：`scripts/build_release.ps1`，通过；输出 `dist/报销管理/报销管理.exe`
+- 发布打包：`scripts/build_release.ps1 -Version 1.0.0`，通过；输出 `release/报销管理-v1.0.0.zip`
+- 发布范围：本地 release 目录保留 ZIP，不同步上传；ZIP 根目录包含 `README.md` 和干净的 `报销管理/` 程序目录
 
 ---
 
