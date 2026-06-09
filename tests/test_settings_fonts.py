@@ -79,6 +79,7 @@ def test_settings_default_pdf_fill_font_key(db):
 
     assert settings.pdf_fill_font_key == "system:simsun"
     assert settings.double_print_vat_special_invoices is True
+    assert settings.invoice_qr_engine == "zxing"
 
 
 def test_update_settings_can_disable_vat_special_double_print(monkeypatch, db):
@@ -96,6 +97,63 @@ def test_update_settings_can_disable_vat_special_double_print(monkeypatch, db):
     )
 
     assert settings.double_print_vat_special_invoices is False
+
+
+def test_update_settings_saves_zxing_invoice_qr_engine_without_runtime_install(monkeypatch, db):
+    monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: True)
+    monkeypatch.setattr(settings_service, "ensure_opencv_runtime_installed", lambda: (_ for _ in ()).throw(AssertionError("unexpected install")))
+
+    settings = settings_service.update_settings(
+        db,
+        SettingsUpdate(
+            department="财务部",
+            employee_name="李四",
+            daily_subsidy=Decimal("100.00"),
+            pdf_fill_font_key="system:simsun",
+            invoice_qr_engine="zxing",
+        ),
+    )
+
+    assert settings.invoice_qr_engine == "zxing"
+
+
+def test_update_settings_rejects_opencv_engine_when_runtime_package_missing(monkeypatch, db):
+    monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: True)
+    monkeypatch.setattr(settings_service, "ensure_opencv_runtime_installed", lambda: (_ for _ in ()).throw(RuntimeError("未找到 OpenCV runtime 包")))
+
+    with pytest.raises(HTTPException) as exc:
+        settings_service.update_settings(
+            db,
+            SettingsUpdate(
+                department="财务部",
+                employee_name="李四",
+                daily_subsidy=Decimal("100.00"),
+                pdf_fill_font_key="system:simsun",
+                invoice_qr_engine="opencv_wechat",
+            ),
+        )
+
+    assert exc.value.status_code == 400
+    assert "OpenCV" in exc.value.detail
+    assert settings_service.get_or_create_settings(db).invoice_qr_engine == "zxing"
+
+
+def test_update_settings_saves_opencv_engine_after_runtime_install(monkeypatch, db):
+    monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: True)
+    monkeypatch.setattr(settings_service, "ensure_opencv_runtime_installed", lambda: {"opencv_package_version": "4.10.0.84"})
+
+    settings = settings_service.update_settings(
+        db,
+        SettingsUpdate(
+            department="财务部",
+            employee_name="李四",
+            daily_subsidy=Decimal("100.00"),
+            pdf_fill_font_key="system:simsun",
+            invoice_qr_engine="opencv_wechat",
+        ),
+    )
+
+    assert settings.invoice_qr_engine == "opencv_wechat"
 
 
 def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
@@ -120,3 +178,4 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(settings)")).fetchall()}
     assert "pdf_fill_font_key" in columns
     assert "double_print_vat_special_invoices" in columns
+    assert "invoice_qr_engine" in columns

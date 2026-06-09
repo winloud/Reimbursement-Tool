@@ -2,27 +2,20 @@
 
 from pathlib import Path
 
-from PyInstaller.utils.hooks import collect_submodules
-
-
 project_root = Path(SPECPATH).resolve()
 
 datas = [
     (str(project_root / "frontend" / "dist"), "frontend/dist"),
     (str(project_root / "backend" / "templates"), "backend/templates"),
-    (str(project_root / "backend" / "models" / "wechat_qrcode"), "backend/models/wechat_qrcode"),
 ]
 
-hiddenimports = (
-    collect_submodules("uvicorn")
-    + collect_submodules("webview")
-    + [
-        "uvicorn.lifespan.on",
-        "uvicorn.loops.auto",
-        "uvicorn.protocols.http.auto",
-        "uvicorn.protocols.websockets.auto",
-    ]
-)
+hiddenimports = [
+    "uvicorn.lifespan.on",
+    "uvicorn.loops.asyncio",
+    "uvicorn.protocols.http.h11_impl",
+    "webview.platforms.edgechromium",
+    "webview.platforms.winforms",
+]
 
 a = Analysis(
     ["desktop_app.py"],
@@ -35,8 +28,16 @@ a = Analysis(
     runtime_hooks=[],
     excludes=[
         "IPython",
+        "PIL.AvifImagePlugin",
+        "PIL.ImageTk",
+        "PIL._avif",
+        "PIL._imagingtk",
+        "Pythonwin",
+        "cv2",
+        "httptools",
         "jinja2",
         "matplotlib",
+        "numpy",
         "openpyxl",
         "pandas",
         "pkg_resources.py2_warn",
@@ -44,6 +45,21 @@ a = Analysis(
         "pytest",
         "scipy",
         "tkinter",
+        "uvicorn.protocols.websockets",
+        "uvicorn.protocols.websockets.auto",
+        "uvicorn.protocols.websockets.websockets_impl",
+        "uvicorn.protocols.websockets.wsproto_impl",
+        "uvloop",
+        "watchfiles",
+        "websockets",
+        "webview.platforms.android",
+        "webview.platforms.cef",
+        "webview.platforms.cocoa",
+        "webview.platforms.gtk",
+        "webview.platforms.mshtml",
+        "webview.platforms.qt",
+        "win32ui",
+        "wsproto",
     ],
     noarchive=False,
     optimize=0,
@@ -51,8 +67,16 @@ a = Analysis(
 a.binaries = [
     item
     for item in a.binaries
-    if "opencv_videoio_ffmpeg" not in str(item[0]).lower()
-    and "opencv_videoio_ffmpeg" not in str(item[1]).lower()
+    if "_avif" not in str(item[0]).lower()
+    and "_avif" not in str(item[1]).lower()
+    and "_imagingtk" not in str(item[0]).lower()
+    and "_imagingtk" not in str(item[1]).lower()
+    and "_multiarray_tests" not in str(item[0]).lower()
+    and "_multiarray_tests" not in str(item[1]).lower()
+    and "pythonwin" not in str(item[0]).lower()
+    and "pythonwin" not in str(item[1]).lower()
+    and "win32ui" not in str(item[0]).lower()
+    and "win32ui" not in str(item[1]).lower()
 ]
 pyz = PYZ(a.pure)
 

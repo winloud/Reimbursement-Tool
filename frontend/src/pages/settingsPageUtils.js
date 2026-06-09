@@ -4,6 +4,15 @@ const SOURCE_LABELS = {
   bundled: "项目内置字体",
 };
 
+export const INVOICE_QR_ENGINE_OPTIONS = [
+  { value: "zxing", label: "zxing-cpp（默认，小体积）" },
+  { value: "opencv_wechat", label: "OpenCV WeChatQRCode（可选兼容模式）" },
+];
+
+const VALID_INVOICE_QR_ENGINES = new Set(INVOICE_QR_ENGINE_OPTIONS.map((option) => option.value));
+
+export const toMoney = (value) => Number(value || 0).toFixed(2);
+
 export const groupFontsBySource = (fonts = []) => {
   const buckets = new Map();
   fonts.forEach((font) => {
@@ -19,3 +28,24 @@ export const groupFontsBySource = (fonts = []) => {
   });
   return SOURCE_ORDER.filter((source) => buckets.has(source)).map((source) => buckets.get(source));
 };
+
+export const normalizeInvoiceQrEngine = (value) => (VALID_INVOICE_QR_ENGINES.has(value) ? value : "zxing");
+
+export const normalizeSettingsForm = (settings = {}, fallback = {}) => ({
+  department: settings.department || "",
+  employee_name: settings.employee_name || "",
+  daily_subsidy: toMoney(settings.daily_subsidy),
+  pdf_fill_font_key: settings.pdf_fill_font_key || fallback.pdf_fill_font_key || "system:simsun",
+  double_print_vat_special_invoices:
+    settings.double_print_vat_special_invoices ?? fallback.double_print_vat_special_invoices ?? true,
+  invoice_qr_engine: normalizeInvoiceQrEngine(settings.invoice_qr_engine ?? fallback.invoice_qr_engine),
+});
+
+export const buildSettingsPayload = (form) => ({
+  department: form.department.trim() || null,
+  employee_name: form.employee_name.trim() || null,
+  daily_subsidy: form.daily_subsidy || "0.00",
+  pdf_fill_font_key: form.pdf_fill_font_key,
+  double_print_vat_special_invoices: form.double_print_vat_special_invoices,
+  invoice_qr_engine: normalizeInvoiceQrEngine(form.invoice_qr_engine),
+});

@@ -10,7 +10,7 @@ from backend.runtime_paths import FRONTEND_DIST_DIR
 
 
 def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool = True) -> FastAPI:
-    app = FastAPI(title="出差旅费报销管理工具", version="1.0.0")
+    app = FastAPI(title="出差旅费报销管理工具", version="1.1.0")
 
     app.add_middleware(
         CORSMiddleware,

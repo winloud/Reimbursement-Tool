@@ -32,3 +32,13 @@ def test_frontend_static_files_and_spa_fallback(tmp_path: Path):
 def test_uploaded_path_uses_runtime_upload_root(tmp_path: Path):
     assert uploaded_path("uploads/8/invoice.pdf", tmp_path) == tmp_path / "8" / "invoice.pdf"
     assert uploaded_path("8/invoice.pdf", tmp_path) == tmp_path / "8" / "invoice.pdf"
+
+
+def test_release_script_can_build_optional_opencv_runtime_package():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
+
+    assert "[switch]$BuildOpenCvRuntime" in script
+    assert "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip" in script
+    assert "opencv_package_version" in script
+    assert "numpy_version" in script
+    assert "docs\\archive\\wechat_qrcode" in script

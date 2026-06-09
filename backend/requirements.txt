@@ -1,5 +1,5 @@
 fastapi==0.115.6
-uvicorn[standard]==0.34.0
+uvicorn==0.34.0
 sqlalchemy==2.0.36
 pydantic==2.10.4
 python-multipart==0.0.20
@@ -7,4 +7,4 @@ pypdf==5.1.0
 PyMuPDF==1.24.14
 reportlab==4.2.5
 fonttools==4.55.3
-opencv-contrib-python-headless==4.10.0.84
+zxing-cpp==3.0.0

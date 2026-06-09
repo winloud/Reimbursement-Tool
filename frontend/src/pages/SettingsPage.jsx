@@ -18,9 +18,15 @@ import {
   Typography,
 } from "@mui/material";
 import SaveIcon from "@mui/icons-material/Save";
+import QrCodeScannerIcon from "@mui/icons-material/QrCodeScanner";
 import TuneIcon from "@mui/icons-material/Tune";
 import { getSettingFonts, getSettings, updateSettings } from "../api/client";
-import { groupFontsBySource } from "./settingsPageUtils";
+import {
+  buildSettingsPayload,
+  groupFontsBySource,
+  INVOICE_QR_ENGINE_OPTIONS,
+  normalizeSettingsForm,
+} from "./settingsPageUtils";
 
 const CONTENT_MAX_WIDTH = 900;
 
@@ -30,9 +36,8 @@ const emptySettings = {
   daily_subsidy: "0.00",
   pdf_fill_font_key: "system:simsun",
   double_print_vat_special_invoices: true,
+  invoice_qr_engine: "zxing",
 };
-
-const toMoney = (value) => Number(value || 0).toFixed(2);
 
 const getApiErrorMessage = (err, fallback) =>
   err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
@@ -59,13 +64,7 @@ export default function SettingsPage() {
         const settings = settingsRes.success && settingsRes.data ? settingsRes.data : {};
         const nextFonts = fontsRes.success && Array.isArray(fontsRes.data) ? fontsRes.data : [];
         setFonts(nextFonts);
-        setForm({
-          department: settings.department || "",
-          employee_name: settings.employee_name || "",
-          daily_subsidy: toMoney(settings.daily_subsidy),
-          pdf_fill_font_key: settings.pdf_fill_font_key || "system:simsun",
-          double_print_vat_special_invoices: settings.double_print_vat_special_invoices ?? true,
-        });
+        setForm(normalizeSettingsForm(settings));
       } catch (err) {
         if (!cancelled) {
           setError(getApiErrorMessage(err, "加载个性化设置失败"));
@@ -94,26 +93,14 @@ export default function SettingsPage() {
     setSaving(true);
     setError("");
     try {
-      const payload = {
-        department: form.department.trim() || null,
-        employee_name: form.employee_name.trim() || null,
-        daily_subsidy: form.daily_subsidy || "0.00",
-        pdf_fill_font_key: form.pdf_fill_font_key,
-        double_print_vat_special_invoices: form.double_print_vat_special_invoices,
-      };
+      const payload = buildSettingsPayload(form);
       const res = await updateSettings(payload);
       if (!res.success) {
         setError(res.message || "保存个性化设置失败");
         return;
       }
       const settings = res.data || payload;
-      setForm({
-        department: settings.department || "",
-        employee_name: settings.employee_name || "",
-        daily_subsidy: toMoney(settings.daily_subsidy),
-        pdf_fill_font_key: settings.pdf_fill_font_key || form.pdf_fill_font_key,
-        double_print_vat_special_invoices: settings.double_print_vat_special_invoices ?? form.double_print_vat_special_invoices,
-      });
+      setForm(normalizeSettingsForm(settings, form));
       setToast("个性化设置已保存");
     } catch (err) {
       setError(getApiErrorMessage(err, "保存个性化设置失败"));
@@ -198,6 +185,28 @@ export default function SettingsPage() {
                   inputProps={{ min: 0, step: "0.01" }}
                 />
               </Box>
+
+              <Divider />
+
+              <Stack spacing={1}>
+                <Stack direction="row" spacing={1.5} alignItems="center">
+                  <QrCodeScannerIcon color="primary" />
+                  <Typography variant="h6" fontWeight={800}>
+                    发票二维码识别引擎
+                  </Typography>
+                </Stack>
+                <Select
+                  fullWidth
+                  value={form.invoice_qr_engine}
+                  onChange={handleChange("invoice_qr_engine")}
+                >
+                  {INVOICE_QR_ENGINE_OPTIONS.map((option) => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </Stack>
 
               <Divider />
 

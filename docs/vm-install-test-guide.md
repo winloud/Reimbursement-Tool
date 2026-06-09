@@ -51,19 +51,19 @@ cd F:\Documents\报销单开发
 python -m pip install --upgrade pip
 ```
 
-安装后端运行依赖：
+开发和测试时可安装后端运行依赖：
 
 ```powershell
 python -m pip install -r backend\requirements.txt
 ```
 
-安装打包依赖：
+开发和测试时可安装打包依赖：
 
 ```powershell
 python -m pip install -r backend\requirements-packaging.txt
 ```
 
-明确会安装/使用的主要 Python 依赖：
+发布脚本 `scripts/build_release.ps1` 默认会重建 `.release-venv` 并安装打包依赖，以避免开发环境里残留的可选包被 PyInstaller 打进发布包。明确会安装/使用的主要 Python 依赖：
 
 - `fastapi`
 - `uvicorn`
@@ -74,15 +74,17 @@ python -m pip install -r backend\requirements-packaging.txt
 - `PyMuPDF`
 - `reportlab`
 - `fonttools`
-- `opencv-contrib-python-headless`
+- `zxing-cpp`
 - `pyinstaller`
 - `pywebview`
+
+`opencv-contrib-python-headless` 和 `numpy` 不进入主发布包。只有需要生成 OpenCV WeChatQRCode 兼容运行时包时，才在发布脚本中额外安装并收集。
 
 验证关键依赖：
 
 ```powershell
 python -m PyInstaller --version
-python -c "import webview, uvicorn, fastapi, fitz, cv2; print('python deps ok')"
+python -c "import webview, uvicorn, fastapi, fitz, zxingcpp; print('python deps ok')"
 ```
 
 ### 3. 安装前端依赖
@@ -147,6 +149,20 @@ cd ..
 ```text
 dist\报销管理\报销管理.exe
 ```
+
+如需额外生成 OpenCV 兼容运行时包：
+
+```powershell
+.\scripts\build_release.ps1 -Version 1.1.0 -BuildOpenCvRuntime
+```
+
+该命令除主 ZIP 外，会生成：
+
+```text
+release\opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip
+```
+
+runtime ZIP 文件名中的版本号取 `opencv-contrib-python-headless` 包版本，不取报销工具版本。主发布 ZIP 默认仍不包含 `cv2`、`numpy`、`numpy.libs` 或 `wechat_qrcode`。
 
 发布目录结构：
 
@@ -220,7 +236,7 @@ Get-Process | Where-Object { $_.ProcessName -like '*报销管理*' }
 dist\报销管理\
 ```
 
-不要只复制单个 EXE。`_internal` 目录包含程序运行所需的 Python、前端静态文件、PDF 模板、二维码识别模型和其他库文件。
+不要只复制单个 EXE。`_internal` 目录包含程序运行所需的 Python、前端静态文件、PDF 模板和其他主程序库文件。
 
 推荐交付目录：
 
@@ -245,6 +261,8 @@ EXE 启动后会按以下顺序选择 Chromium 内核：
 3. 如果没有 Chrome/WebView2，但检测到 Microsoft Edge，使用 Edge `--app=` 独立窗口兜底。
 4. 如果三者都没有，自动下载微软 Evergreen Bootstrapper 并尝试静默安装 WebView2。
 5. 如果自动安装仍失败，弹出错误提示，并写入日志。
+
+发票二维码默认使用主包内的 `zxing-cpp`。如需切换到 OpenCV WeChatQRCode 兼容模式，请先把 `opencv-wechat-runtime-opencv-<opencv_package_version>-win_amd64.zip` 放到 `报销管理.exe` 同级目录，再在「个性化设置」保存 OpenCV 选项；程序会自动解压到 `vendor/opencv-wechat-runtime/`。如果 runtime 包缺失或损坏，设置保存失败并显示错误；历史设置为 OpenCV 但运行时不可用时，解析会记录诊断并回退 zxing。
 
 如果进入 Chrome/Edge `--app=` 兜底路径，程序只会复用一个固定目录：
 

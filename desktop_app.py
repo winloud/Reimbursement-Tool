@@ -52,7 +52,17 @@ def wait_until_ready(base_url: str, timeout_seconds: float = 20.0) -> None:
 
 def build_server(port: int) -> uvicorn.Server:
     app = create_app(frontend_dist_dir=Path(FRONTEND_DIST_DIR))
-    config = uvicorn.Config(app, host=HOST, port=port, log_level="info", access_log=False, log_config=None)
+    config = uvicorn.Config(
+        app,
+        host=HOST,
+        port=port,
+        log_level="info",
+        access_log=False,
+        log_config=None,
+        http="h11",
+        loop="asyncio",
+        ws="none",
+    )
     return uvicorn.Server(config)
 
 
