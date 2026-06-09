@@ -11,6 +11,14 @@ build/
 dist/
 *.egg-info/
 
+# PyInstaller release artifacts
+*.spec.bak
+dist/报销管理/
+dist/报销管理/data/
+dist/报销管理/uploads/
+dist/报销管理/logs/
+release/
+
 # Virtual environments
 .venv/
 venv/
@@ -24,12 +32,23 @@ Thumbs.db
 
 # Claude local permissions/session files
 .claude/settings.local.json
+.claude_write_test.tmp
+.tmp_invoice_pdf_parse/
 
 # Frontend dependencies
 node_modules/
 
 # Local SQLite data
 data/*.db
+data/import_staging/
+data/backups/
+
+# Local desktop runtime artifacts
+logs/
+browser-profile/
+
+# Backend uploads
+backend/uploads/
 
 # Generated PDF outputs
 outputs/

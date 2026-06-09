@@ -30,6 +30,12 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
             "text": "发票号码: 987654321\n开票日期: 2026年5月31日\n价税合计（小写） ￥266.50",
             "preview_image": "data:image/png;base64,abc",
             "image_bgr": object(),
+            "page_size": {"width": 300, "height": 200},
+            "words": [
+                {"x0": 40, "y0": 150, "x1": 95, "y1": 162, "text": "价税合计"},
+                {"x0": 100, "y0": 150, "x1": 135, "y1": 162, "text": "（小写）"},
+                {"x0": 140, "y0": 150, "x1": 190, "y1": 162, "text": "￥266.50"},
+            ],
             "render_error": None,
         },
     )
@@ -39,11 +45,32 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
 
     assert parsed.invoice_no == "987654321"
     assert parsed.invoice_date == date(2026, 5, 31)
+    assert parsed.invoice_type == "normal"
     assert parsed.amount == Decimal("266.50")
     assert parsed.preview_image == "data:image/png;base64,abc"
     assert parsed.raw["parse_method"] == "text_regex"
     assert parsed.raw["parse_success"] is True
     assert parsed.raw["amount_source"] == "tax_total_small"
+    assert parsed.raw["preview_highlights"][0]["type"] == "tax_total_amount"
+    assert parsed.raw["preview_highlights"][0]["amount"] == "266.50"
+
+
+def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "增值税专用发票\n发票号码: 12345678\n开票日期: 2026年6月8日\n价税合计（小写） ￥128.00",
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_type == "vat_special"
+    assert parsed.raw["parsed_result"]["invoice_type"] == "vat_special"
 
 
 def test_parse_pdf_invoice_cross_validates_uppercase_amount(monkeypatch, tmp_path: Path):
@@ -96,12 +123,148 @@ def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
     assert parsed.raw["qr_payloads"]
 
 
+def test_parse_pdf_invoice_highlights_split_qr_amount_words(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "电子发票（普通发票）",
+                    "价税合计（大写）",
+                    "（小写）",
+                    "壹拾圆壹分",
+                    "¥10. 01",
+                ]
+            ),
+            "preview_image": "data:image/png;base64,abc",
+            "image_bgr": object(),
+            "page_size": {"width": 500, "height": 300},
+            "words": [
+                {"x0": 40, "y0": 210, "x1": 105, "y1": 222, "text": "价税合计（大写）"},
+                {"x0": 300, "y0": 210, "x1": 335, "y1": 222, "text": "（小写）"},
+                {"x0": 340, "y0": 210, "x1": 365, "y1": 222, "text": "¥10."},
+                {"x0": 365, "y0": 210, "x1": 376, "y1": 222, "text": "01"},
+            ],
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False: (
+            ["01,32,,26337906210400590013,10.01,20260422,,349F"],
+            [],
+        )
+        if include_details
+        else ["01,32,,26337906210400590013,10.01,20260422,,349F"],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.amount == Decimal("10.01")
+    assert parsed.raw["amount_source"] == "qr"
+    assert parsed.raw["preview_highlights"][0]["type"] == "tax_total_amount"
+    assert parsed.raw["preview_highlights"][0]["amount"] == "10.01"
+
+
+def test_parse_pdf_invoice_uses_text_tax_total_over_standard_qr_untaxed_amount(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "价税合计（大写）",
+                    "（小写）",
+                    "￥34.43",
+                    "￥1.03",
+                    "叁拾伍圆肆角陆分",
+                    "发票代码：033002300511",
+                    "发票号码：03810961",
+                    "开票日期：2024年03月29日",
+                    "￥35.46",
+                ]
+            ),
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False: (
+            ["01,10,033002300511,03810961,34.43,20240329,11299145375686719118,3488,"],
+            [],
+        )
+        if include_details
+        else ["01,10,033002300511,03810961,34.43,20240329,11299145375686719118,3488,"],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_no == "03810961"
+    assert parsed.invoice_date == date(2024, 3, 29)
+    assert parsed.amount == Decimal("35.46")
+    assert parsed.raw["amount_source"] == "currency_sum"
+    assert parsed.raw["amount_selection_reason"] == "text_tax_total_over_standard_qr"
+
+
+def test_parse_pdf_invoice_reads_tax_total_when_currency_symbol_follows_number(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "\n".join(
+                [
+                    "电子发票（普通发票）",
+                    "发票号码: 24337000000084378505",
+                    "开票日期: 2024年06月24日",
+                    "金额",
+                    "税额",
+                    "66.22",
+                    "3%",
+                    "1.99",
+                    "合",
+                    "计",
+                    "66.22",
+                    "¥",
+                    "1.99",
+                    "¥",
+                    "价税合计（大写）",
+                    "（小写）",
+                    "68.21",
+                    "¥",
+                    "陆拾捌圆贰角壹分",
+                ]
+            ),
+            "preview_image": None,
+            "image_bgr": object(),
+            "render_error": None,
+        },
+    )
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", lambda _image: [])
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf")
+
+    assert parsed.invoice_no == "24337000000084378505"
+    assert parsed.invoice_date == date(2024, 6, 24)
+    assert parsed.amount == Decimal("68.21")
+    assert parsed.raw["amount_source"] == "tax_total_nearby"
+    assert parsed.raw["amount_validation"] == "matched"
+
+
 def test_parse_qr_payload_supports_comma_separated_invoice_tokens():
     parsed = parse_qr_payload("01,10,044001800111,28104068,181.52,20260603,checksum")
 
     assert parsed["invoice_no"] == "28104068"
     assert parsed["invoice_date"] == date(2026, 6, 3)
     assert parsed["amount"] == Decimal("181.52")
+
+
+def test_parse_qr_payload_uses_standard_field_positions_for_eight_digit_invoice_no():
+    parsed = parse_qr_payload("01,10,033002300511,03930130,65.33,20240410,03820321515066371103,044C,")
+
+    assert parsed["invoice_no"] == "03930130"
+    assert parsed["invoice_date"] == date(2024, 4, 10)
+    assert parsed["amount"] == Decimal("65.33")
+    assert parsed["invoice_code"] == "033002300511"
 
 
 def test_invoice_upload_rejects_xml_and_ofd():
@@ -147,6 +310,15 @@ def test_calculate_subsidy_days_allows_short_cross_year_trip():
     ]
 
     assert calculate_subsidy_days(2026, trips) == 4
+
+
+def test_calculate_subsidy_days_infers_previous_year_for_january_report_date():
+    trips = [
+        Trip(depart_month=12, depart_day=30, arrive_month=12, arrive_day=31, sort_order=1),
+        Trip(depart_month=1, depart_day=2, arrive_month=1, arrive_day=2, sort_order=2),
+    ]
+
+    assert calculate_subsidy_days(date(2026, 1, 5), trips) == 4
 
 
 def test_calculate_subsidy_days_rejects_arrival_month_day_before_departure_in_same_year():
@@ -239,7 +411,11 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     )
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_file",
-        lambda _path, _file_type: InvoiceParsedData(invoice_no="987654321", amount=parsed_amount),
+        lambda _path, _file_type: InvoiceParsedData(
+            invoice_no="987654321",
+            invoice_type="vat_special",
+            amount=parsed_amount,
+        ),
     )
 
     invoice, parsed = upload_invoice(
@@ -250,6 +426,8 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     )
 
     assert parsed.amount == parsed_amount
+    assert parsed.invoice_type == "vat_special"
+    assert invoice.invoice_type == "vat_special"
     assert invoice.amount == parsed_amount
     assert invoice.amount_confirmed is False
     db.refresh(report)
@@ -278,14 +456,35 @@ def test_confirming_invoice_updates_report_totals(monkeypatch, db):
     confirmed = update_invoice(
         db,
         invoice.id,
-        InvoiceUpdate(amount=Decimal("266.50"), amount_confirmed=True),
+        InvoiceUpdate(amount=Decimal("266.50"), amount_confirmed=True, invoice_type="vat_special"),
     )
     db.refresh(report)
 
     assert confirmed.amount_confirmed is True
     assert confirmed.amount == Decimal("266.50")
+    assert confirmed.invoice_type == "vat_special"
     assert report.total_amount == Decimal("266.50")
     assert report.shortfall == Decimal("266.50")
+
+
+def test_update_invoice_keeps_existing_invoice_type_when_omitted(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="luggage",
+        file_path="uploads/1/invoice.pdf",
+        file_type="pdf",
+        invoice_type="vat_special",
+        amount=Decimal("10.00"),
+        amount_confirmed=False,
+    )
+    db.add(invoice)
+    db.commit()
+
+    updated = update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("20.00"), amount_confirmed=True))
+
+    assert updated.invoice_type == "vat_special"
+    assert updated.amount == Decimal("20.00")
 
 
 def test_upload_invoice_rejects_duplicate_file_in_same_report(monkeypatch, tmp_path: Path, db):

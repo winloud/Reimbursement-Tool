@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import uuid4
 
 from sqlalchemy import Date, DateTime, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -11,6 +12,7 @@ class ExpenseReport(Base):
     __tablename__ = "expense_reports"
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    report_uid: Mapped[str] = mapped_column(String, default=lambda: uuid4().hex, nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String, default="draft", nullable=False)
     report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     department: Mapped[str | None] = mapped_column(String, nullable=True)

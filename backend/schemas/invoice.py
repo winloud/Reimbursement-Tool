@@ -5,11 +5,13 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 InvoiceFileType = Literal["pdf", "image"]
+InvoiceType = Literal["unknown", "normal", "vat_special"]
 
 
 class InvoiceParsedData(BaseModel):
     invoice_no: str | None = None
     invoice_date: date | None = None
+    invoice_type: InvoiceType = "unknown"
     amount: Decimal = Field(default=Decimal("0.00"), ge=0)
     seller_name: str | None = None
     buyer_name: str | None = None
@@ -31,6 +33,7 @@ class InvoiceUploadResult(BaseModel):
     expense_category: str
     file_path: str
     file_type: InvoiceFileType
+    invoice_type: InvoiceType = "unknown"
     invoice_no: str | None = None
     invoice_date: date | None = None
     amount: Decimal
@@ -44,6 +47,7 @@ class InvoiceUploadResult(BaseModel):
 class InvoiceUpdate(BaseModel):
     amount: Decimal = Field(ge=0)
     amount_confirmed: bool = True
+    invoice_type: InvoiceType | None = None
 
 
 class InvoiceRead(BaseModel):
@@ -53,6 +57,7 @@ class InvoiceRead(BaseModel):
     expense_category: str
     file_path: str
     file_type: InvoiceFileType
+    invoice_type: InvoiceType = "unknown"
     invoice_no: str | None = None
     invoice_date: date | None = None
     amount: Decimal

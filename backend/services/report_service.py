@@ -1,17 +1,25 @@
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 import re
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, select
 from sqlalchemy.orm import Session
 
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.trip import Trip
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportStatus, ReportUpdate, TripWrite
+from backend.schemas.report import (
+    ExpenseItemWrite,
+    ReportCreate,
+    ReportInvoiceState,
+    ReportStatus,
+    ReportUpdate,
+    TripWrite,
+)
 from backend.services.settings_service import get_or_create_settings
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
@@ -57,10 +65,22 @@ FIXED_CATEGORY_LABEL_ALIASES = {
 CUSTOM_CATEGORY_PREFIX = "custom:"
 CUSTOM_CATEGORY_FORBIDDEN_PATTERN = re.compile(r'[\/\\:\*\?"<>\|\x00-\x1f]')
 MAX_TRIP_TRAVEL_DAYS = 7
+from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
+
+
+def _invoice_file_path(relative_path: str | Path) -> Path:
+    return uploaded_path(relative_path, UPLOAD_ROOT)
 
 
 class TripDateError(ValueError):
     pass
+
+
+@dataclass(frozen=True)
+class TripDateRange:
+    trip: Trip
+    depart: date
+    arrive: date
 
 
 @dataclass(frozen=True)
@@ -70,6 +90,24 @@ class SubsidyTrip:
     arrive: date
     subsidy_start: bool
     subsidy_end: bool
+
+
+@dataclass(frozen=True)
+class ReportFilters:
+    report_status: ReportStatus | None = None
+    report_statuses: set[ReportStatus] | None = None
+    report_start: date | None = None
+    report_end: date | None = None
+    trip_start: date | None = None
+    trip_end: date | None = None
+    keyword: str | None = None
+    amount_min: Decimal | None = None
+    amount_max: Decimal | None = None
+    invoice_state: ReportInvoiceState = "all"
+    category: str | None = None
+    has_attachment: bool | None = None
+    subsidy_days_min: int | None = None
+    subsidy_days_max: int | None = None
 
 
 def validate_status_transition(current_status: str, target_status: str) -> None:
@@ -103,7 +141,44 @@ def build_trip_date(year: int, month: int, day: int) -> date:
         raise TripDateError(f"无效行程日期：{month}月{day}日") from exc
 
 
-def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
+def trip_date_anchor(report_reference: date | int) -> date:
+    if isinstance(report_reference, date):
+        return report_reference
+    return date(report_reference, 12, 31)
+
+
+def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> list[TripDateRange]:
+    if not trips:
+        return []
+
+    sorted_trips = sorted(trips, key=lambda trip: trip.sort_order)
+    anchor = trip_date_anchor(report_reference)
+    current_year = anchor.year
+    previous_depart_month_day: tuple[int, int] | None = None
+    ranges: list[TripDateRange] = []
+
+    for index, trip in enumerate(sorted_trips):
+        depart_month_day = (trip.depart_month, trip.depart_day)
+        if index == 0:
+            depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+            if (depart - anchor).days > 180:
+                current_year -= 1
+                depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+        else:
+            if previous_depart_month_day is not None and depart_month_day < previous_depart_month_day:
+                current_year += 1
+            depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
+
+        arrive_year = current_year + 1 if (trip.arrive_month, trip.arrive_day) < depart_month_day else current_year
+        arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
+        validate_trip_chronology(trip, depart, arrive)
+        ranges.append(TripDateRange(trip=trip, depart=depart, arrive=arrive))
+        previous_depart_month_day = depart_month_day
+
+    return ranges
+
+
+def calculate_subsidy_days(report_reference: date | int, trips: list[Trip]) -> int:
     if not trips:
         return 0
 
@@ -111,19 +186,15 @@ def calculate_subsidy_days(report_year: int, trips: list[Trip]) -> int:
     has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
     default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
     subsidy_trips: list[SubsidyTrip] = []
-    for trip in sorted_trips:
-        depart = build_trip_date(report_year, trip.depart_month, trip.depart_day)
-        arrive_year = report_year + 1 if (trip.arrive_month, trip.arrive_day) < (trip.depart_month, trip.depart_day) else report_year
-        arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        validate_trip_chronology(trip, depart, arrive)
-        default_start, default_end = default_markers.get(id(trip), (False, False))
+    for trip_range in infer_trip_date_ranges(report_reference, sorted_trips):
+        default_start, default_end = default_markers.get(id(trip_range.trip), (False, False))
         subsidy_trips.append(
             SubsidyTrip(
-                trip=trip,
-                depart=depart,
-                arrive=arrive,
-                subsidy_start=trip.subsidy_start if has_manual_markers else default_start,
-                subsidy_end=trip.subsidy_end if has_manual_markers else default_end,
+                trip=trip_range.trip,
+                depart=trip_range.depart,
+                arrive=trip_range.arrive,
+                subsidy_start=trip_range.trip.subsidy_start if has_manual_markers else default_start,
+                subsidy_end=trip_range.trip.subsidy_end if has_manual_markers else default_end,
             )
         )
 
@@ -204,9 +275,9 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
     report.daily_subsidy = quantize_amount(report.daily_subsidy or Decimal("0.00"))
     report.advance_amount = quantize_amount(report.advance_amount or Decimal("0.00"))
 
-    report_year = report.report_date.year if report.report_date else date.today().year
+    report_reference = report.report_date or date.today()
     try:
-        report.subsidy_days = calculate_subsidy_days(report_year, list(report.trips))
+        report.subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
     except TripDateError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
@@ -332,29 +403,188 @@ def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     return report
 
 
+def get_report_any_state_or_404(db: Session, report_id: int) -> ExpenseReport:
+    report = db.scalar(select(ExpenseReport).where(ExpenseReport.id == report_id))
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="报销单不存在")
+    return report
+
+
+def get_deleted_report_or_404(db: Session, report_id: int) -> ExpenseReport:
+    report = db.scalar(
+        select(ExpenseReport).where(
+            ExpenseReport.id == report_id,
+            ExpenseReport.deleted_at.is_not(None),
+        )
+    )
+    if report is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="回收站中不存在该报销单")
+    return report
+
+
+def trip_date_range(report: ExpenseReport, trip: Trip) -> tuple[date, date]:
+    report_reference = report.report_date or date.today()
+    for trip_range in infer_trip_date_ranges(report_reference, list(report.trips)):
+        same_persisted_trip = trip.id is not None and trip_range.trip.id == trip.id
+        if same_persisted_trip or trip_range.trip is trip:
+            return trip_range.depart, trip_range.arrive
+    trip_range = infer_trip_date_ranges(report_reference, [trip])[0]
+    return trip_range.depart, trip_range.arrive
+
+
+def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
+    if trip_start is None and trip_end is None:
+        return True
+    if not report.trips:
+        return False
+
+    start = trip_start or date.min
+    end = trip_end or date.max
+    report_reference = report.report_date or date.today()
+    return any(
+        trip_range.depart <= end and trip_range.arrive >= start
+        for trip_range in infer_trip_date_ranges(report_reference, list(report.trips))
+    )
+
+
+def report_matches_keyword(report: ExpenseReport, keyword: str | None) -> bool:
+    normalized = (keyword or "").strip().lower()
+    if not normalized:
+        return True
+    values = [
+        str(report.id),
+        report.purpose or "",
+        report.employee_name or "",
+        report.department or "",
+    ]
+    return any(normalized in value.lower() for value in values)
+
+
+def active_invoices(report: ExpenseReport, include_deleted: bool = False) -> list[Invoice]:
+    if include_deleted:
+        return list(report.invoices)
+    return [invoice for invoice in report.invoices if invoice.deleted_at is None]
+
+
+def report_matches_invoice_state(
+    report: ExpenseReport,
+    invoice_state: ReportInvoiceState,
+    include_deleted_invoices: bool = False,
+) -> bool:
+    invoices = active_invoices(report, include_deleted=include_deleted_invoices)
+    if invoice_state == "all":
+        return True
+    if invoice_state == "no_invoice":
+        return not invoices
+    if invoice_state == "has_unconfirmed":
+        return any(not invoice.amount_confirmed for invoice in invoices)
+    if invoice_state == "all_confirmed":
+        return bool(invoices) and all(invoice.amount_confirmed for invoice in invoices)
+    return True
+
+
+def report_matches_category(report: ExpenseReport, category: str | None, include_deleted_invoices: bool = False) -> bool:
+    normalized = (category or "").strip()
+    if not normalized:
+        return True
+    category_key = validate_expense_category(normalized)
+    return any(invoice.expense_category == category_key for invoice in active_invoices(report, include_deleted=include_deleted_invoices))
+
+
+def report_matches_filters(report: ExpenseReport, filters: ReportFilters, include_deleted_invoices: bool = False) -> bool:
+    if filters.report_start is not None and (report.report_date is None or report.report_date < filters.report_start):
+        return False
+    if filters.report_end is not None and (report.report_date is None or report.report_date > filters.report_end):
+        return False
+    if not report_has_trip_overlap(report, filters.trip_start, filters.trip_end):
+        return False
+    if not report_matches_keyword(report, filters.keyword):
+        return False
+    if filters.amount_min is not None and report.total_amount < filters.amount_min:
+        return False
+    if filters.amount_max is not None and report.total_amount > filters.amount_max:
+        return False
+    if not report_matches_invoice_state(report, filters.invoice_state, include_deleted_invoices=include_deleted_invoices):
+        return False
+    if not report_matches_category(report, filters.category, include_deleted_invoices=include_deleted_invoices):
+        return False
+    if filters.has_attachment is not None and bool(active_invoices(report, include_deleted=include_deleted_invoices)) != filters.has_attachment:
+        return False
+    if filters.subsidy_days_min is not None and report.subsidy_days < filters.subsidy_days_min:
+        return False
+    if filters.subsidy_days_max is not None and report.subsidy_days > filters.subsidy_days_max:
+        return False
+    return True
+
+
+def list_report_category_options(db: Session) -> list[dict[str, str]]:
+    options = [{"value": category, "label": FIXED_CATEGORY_LABELS[category]} for category in EXPENSE_CATEGORIES]
+    seen = set(EXPENSE_CATEGORIES)
+    custom_items = db.scalars(
+        select(ExpenseItem.category)
+        .join(ExpenseReport, ExpenseItem.report_id == ExpenseReport.id)
+        .where(
+            ExpenseReport.deleted_at.is_(None),
+            ExpenseItem.category.like(f"{CUSTOM_CATEGORY_PREFIX}%"),
+        )
+        .order_by(ExpenseItem.category.asc())
+    ).all()
+
+    for category in custom_items:
+        if category in seen:
+            continue
+        options.append({"value": category, "label": custom_category_name(category)})
+        seen.add(category)
+    return options
+
+
 def list_reports(
     db: Session,
     page: int = 1,
     page_size: int = 20,
     report_status: ReportStatus | None = None,
+    filters: ReportFilters | None = None,
+    deleted_only: bool = False,
 ) -> tuple[list[ExpenseReport], int]:
-    statement: Select[tuple[ExpenseReport]] = select(ExpenseReport).where(ExpenseReport.deleted_at.is_(None))
-    count_statement = select(func.count()).select_from(ExpenseReport).where(ExpenseReport.deleted_at.is_(None))
+    filters = filters or ReportFilters(report_status=report_status)
+    report_status = filters.report_status if filters.report_status is not None else report_status
+    statement: Select[tuple[ExpenseReport]] = select(ExpenseReport)
+    if deleted_only:
+        statement = statement.where(ExpenseReport.deleted_at.is_not(None))
+    else:
+        statement = statement.where(ExpenseReport.deleted_at.is_(None))
 
     if report_status is not None:
         statement = statement.where(ExpenseReport.status == report_status)
-        count_statement = count_statement.where(ExpenseReport.status == report_status)
+    elif filters.report_statuses:
+        statement = statement.where(ExpenseReport.status.in_(filters.report_statuses))
 
-    statement = statement.order_by(
-        ExpenseReport.report_date.is_(None),
-        ExpenseReport.report_date.desc(),
-        ExpenseReport.created_at.desc(),
-    )
-    statement = statement.offset((page - 1) * page_size).limit(page_size)
+    if deleted_only:
+        statement = statement.order_by(ExpenseReport.deleted_at.desc(), ExpenseReport.created_at.desc())
+    else:
+        statement = statement.order_by(
+            ExpenseReport.report_date.is_(None),
+            ExpenseReport.report_date.desc(),
+            ExpenseReport.created_at.desc(),
+        )
 
-    items = list(db.scalars(statement).all())
-    total = int(db.scalar(count_statement) or 0)
-    return items, total
+    all_items = [
+        report
+        for report in db.scalars(statement).all()
+        if report_matches_filters(report, filters, include_deleted_invoices=deleted_only)
+    ]
+    total = len(all_items)
+    start = (page - 1) * page_size
+    return all_items[start : start + page_size], total
+
+
+def list_deleted_reports(
+    db: Session,
+    page: int = 1,
+    page_size: int = 20,
+    filters: ReportFilters | None = None,
+) -> tuple[list[ExpenseReport], int]:
+    return list_reports(db, page=page, page_size=page_size, filters=filters, deleted_only=True)
 
 
 def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:
@@ -407,6 +637,47 @@ def soft_delete_report(db: Session, report_id: int) -> None:
     for invoice in report.invoices:
         invoice.deleted_at = report.deleted_at
     db.commit()
+
+
+def restore_deleted_report(db: Session, report_id: int) -> ExpenseReport:
+    report = get_deleted_report_or_404(db, report_id)
+    ensure_report_deletable(report)
+    report.deleted_at = None
+    for invoice in report.invoices:
+        invoice.deleted_at = None
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+def _safe_invoice_file_paths(report: ExpenseReport) -> list[Path]:
+    upload_root = UPLOAD_ROOT.resolve()
+    paths: list[Path] = []
+    seen: set[Path] = set()
+    for invoice in report.invoices:
+        path = _invoice_file_path(invoice.file_path).resolve()
+        if not path.is_relative_to(upload_root):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="发票附件路径不安全，无法彻底删除")
+        if path not in seen:
+            paths.append(path)
+            seen.add(path)
+    return paths
+
+
+def purge_report(db: Session, report_id: int) -> int:
+    report = get_report_any_state_or_404(db, report_id)
+    ensure_report_deletable(report)
+    file_paths = _safe_invoice_file_paths(report)
+    db.delete(report)
+    db.commit()
+
+    deleted_files = 0
+    for path in file_paths:
+        if not path.exists():
+            continue
+        path.unlink()
+        deleted_files += 1
+    return deleted_files
 
 
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:

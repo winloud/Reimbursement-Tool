@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, Numeric, String
+from sqlalchemy import Boolean, DateTime, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.connection import Base
@@ -14,4 +14,6 @@ class Settings(Base):
     department: Mapped[str | None] = mapped_column(String, nullable=True)
     employee_name: Mapped[str | None] = mapped_column(String, nullable=True)
     daily_subsidy: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
+    pdf_fill_font_key: Mapped[str] = mapped_column(String, default="system:simsun", nullable=False)
+    double_print_vat_special_invoices: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

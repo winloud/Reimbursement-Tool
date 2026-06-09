@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   applyDefaultSubsidyMarkers,
+  buildTripDateRanges,
   buildDraftPayload,
   buildCustomExpenseCategory,
   buildReportPayload,
@@ -11,6 +12,7 @@ import {
   cloneTripAfter,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
+  getTripYearRangeLabel,
   isEmptyDraft,
   validateCustomExpenseName,
   makeBlankTrip,
@@ -205,6 +207,26 @@ describe("report edit utilities", () => {
         normalizeTrip({ depart_month: 12, depart_day: 20, arrive_month: 1, arrive_day: 5 }, 0),
       ]),
       0,
+    );
+  });
+
+  it("infers previous-year December trips from a January report date", () => {
+    const trips = [
+      normalizeTrip({ depart_month: 12, depart_day: 30, arrive_month: 12, arrive_day: 31 }, 0),
+      normalizeTrip({ depart_month: 1, depart_day: 2, arrive_month: 1, arrive_day: 2 }, 1),
+    ];
+
+    const ranges = buildTripDateRanges("2026-01-05", trips);
+
+    assert.equal(calculateSubsidyDays("2026-01-05", trips), 4);
+    assert.equal(ranges[0].depart.getFullYear(), 2025);
+    assert.equal(ranges[1].depart.getFullYear(), 2026);
+    assert.equal(getTripYearRangeLabel("2026-01-05", trips), "行程按 2025/12 - 2026/1 计算");
+    assert.equal(
+      getTripYearRangeLabel("2026-06-01", [
+        normalizeTrip({ depart_month: 6, depart_day: 1, arrive_month: 6, arrive_day: 3 }, 0),
+      ]),
+      "",
     );
   });
 
