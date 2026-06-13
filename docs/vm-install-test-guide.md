@@ -148,6 +148,7 @@ cd ..
 
 ```text
 dist\报销管理\报销管理.exe
+release\报销管理-v1.1.0-yyyymmdd.zip
 ```
 
 如需额外生成 OpenCV 兼容运行时包：

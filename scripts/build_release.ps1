@@ -16,8 +16,9 @@ $Python = $BasePython
 $AppName = "报销管理"
 $DistApp = Join-Path $Root "dist\$AppName"
 $ReleaseDir = Join-Path $Root "release"
-$StageRoot = Join-Path $ReleaseDir ".staging-$Version"
-$ZipPath = Join-Path $ReleaseDir "$AppName-v$Version.zip"
+$ReleaseDate = Get-Date -Format "yyyyMMdd"
+$StageRoot = Join-Path $ReleaseDir ".staging-$Version-$ReleaseDate"
+$ZipPath = Join-Path $ReleaseDir "$AppName-v$Version-$ReleaseDate.zip"
 
 function Remove-PathInside {
     param(
@@ -124,6 +125,10 @@ function New-OpenCvRuntimePackage {
     $RuntimeStage = Join-Path $ReleaseDir ".opencv-runtime-$OpenCvPackageVersion"
     $ModelSource = Join-Path $Root "docs\archive\wechat_qrcode"
 
+    if (Test-Path -LiteralPath $RuntimeZipPath) {
+        throw "OpenCV runtime ZIP already exists: $RuntimeZipPath. Delete it manually before rebuilding."
+    }
+
     Remove-PathInside -Path $RuntimeStage -AllowedRoot $ReleaseDir
     New-Item -ItemType Directory -Path $RuntimeStage -Force | Out-Null
 
@@ -152,6 +157,11 @@ function New-OpenCvRuntimePackage {
     Remove-PathInside -Path $RuntimeStage -AllowedRoot $ReleaseDir
     Write-Host "OpenCV runtime output: $RuntimeZipPath"
     Write-Host "OpenCV runtime zip size: $(Format-SizeMb -Bytes (Get-TreeSizeBytes -Path $RuntimeZipPath))"
+}
+
+New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+if (Test-Path -LiteralPath $ZipPath) {
+    throw "Release ZIP already exists: $ZipPath. Delete it manually before rebuilding."
 }
 
 if (-not $UseSystemPython) {
@@ -207,11 +217,7 @@ foreach ($name in @("data", "uploads", "logs", "browser-profile")) {
 Remove-OptionalDistFiles -AppRoot $DistApp
 $DistSize = Get-TreeSizeBytes -Path $DistApp
 
-New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
-foreach ($item in Get-ChildItem -LiteralPath $ReleaseDir -Force) {
-    Remove-PathInside -Path $item.FullName -AllowedRoot $ReleaseDir
-}
-
+Remove-PathInside -Path $StageRoot -AllowedRoot $ReleaseDir
 New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
 Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination (Join-Path $StageRoot "README.md")
 Copy-Item -LiteralPath $DistApp -Destination $StageRoot -Recurse
