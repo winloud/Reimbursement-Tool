@@ -42,6 +42,8 @@ def migrate_sqlite_schema() -> None:
             connection.execute(text("ALTER TABLE settings ADD COLUMN pdf_fill_font_key VARCHAR DEFAULT 'system:simsun'"))
         if "double_print_vat_special_invoices" not in settings_columns:
             connection.execute(text("ALTER TABLE settings ADD COLUMN double_print_vat_special_invoices BOOLEAN NOT NULL DEFAULT 1"))
+        if "invoice_qr_engine" not in settings_columns:
+            connection.execute(text("ALTER TABLE settings ADD COLUMN invoice_qr_engine VARCHAR NOT NULL DEFAULT 'zxing'"))
         if "expense_reports" in tables:
             report_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_reports)")).fetchall()}
             if "report_uid" not in report_columns:

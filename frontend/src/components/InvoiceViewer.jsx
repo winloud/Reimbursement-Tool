@@ -40,10 +40,11 @@ const METHOD_LABELS = {
   text_regex: "PDF 文本正则",
   manual_required: "未自动识别",
   pymupdf_render: "PyMuPDF 渲染",
-  opencv_wechat_qrcode: "OpenCV WeChatQRCode",
-  opencv_qrcode_detector_multi: "OpenCV 标准二维码（多码）",
-  opencv_qrcode_detector: "OpenCV 标准二维码",
-  opencv_qrcode: "OpenCV 二维码",
+  zxing_qrcode: "ZXing 二维码",
+  opencv_wechat_qrcode: "历史 OpenCV WeChatQRCode",
+  opencv_qrcode_detector_multi: "历史 OpenCV 标准二维码（多码）",
+  opencv_qrcode_detector: "历史 OpenCV 标准二维码",
+  opencv_qrcode: "历史 OpenCV 二维码",
   pymupdf_text_regex: "PyMuPDF 文本正则",
 };
 

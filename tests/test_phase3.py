@@ -11,6 +11,7 @@ from backend.models.invoice import Invoice
 from backend.models.trip import Trip
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.schemas.report import ReportCreate, ReportUpdate, TripWrite
+from backend.services import invoice_parser
 from backend.services.invoice_parser import parse_pdf_invoice, parse_qr_payload
 from backend.services.invoice_service import (
     detect_file_type,
@@ -29,7 +30,7 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
         lambda _path: {
             "text": "发票号码: 987654321\n开票日期: 2026年5月31日\n价税合计（小写） ￥266.50",
             "preview_image": "data:image/png;base64,abc",
-            "image_bgr": object(),
+            "qr_image": object(),
             "page_size": {"width": 300, "height": 200},
             "words": [
                 {"x0": 40, "y0": 150, "x1": 95, "y1": 162, "text": "价税合计"},
@@ -61,7 +62,7 @@ def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Pa
         lambda _path: {
             "text": "增值税专用发票\n发票号码: 12345678\n开票日期: 2026年6月8日\n价税合计（小写） ￥128.00",
             "preview_image": None,
-            "image_bgr": object(),
+            "qr_image": object(),
             "render_error": None,
         },
     )
@@ -86,7 +87,7 @@ def test_parse_pdf_invoice_cross_validates_uppercase_amount(monkeypatch, tmp_pat
                 ]
             ),
             "preview_image": None,
-            "image_bgr": object(),
+            "qr_image": object(),
             "render_error": None,
         },
     )
@@ -105,7 +106,7 @@ def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
         lambda _path: {
             "text": "发票号码：11111111\n开票日期：2026年5月31日\n价税合计（小写）¥1.00",
             "preview_image": None,
-            "image_bgr": object(),
+            "qr_image": object(),
             "render_error": None,
         },
     )
@@ -123,6 +124,60 @@ def test_parse_pdf_invoice_prefers_qr_payload(monkeypatch, tmp_path: Path):
     assert parsed.raw["qr_payloads"]
 
 
+def test_parse_pdf_invoice_uses_selected_opencv_engine(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.extract_pdf_page_artifacts",
+        lambda _path: {
+            "text": "",
+            "preview_image": None,
+            "qr_image": object(),
+            "render_error": None,
+        },
+    )
+
+    calls = []
+
+    def fake_decode(_image, include_details=False, engine="zxing"):
+        calls.append(engine)
+        payloads = ["01,10,044001800111,28104068,181.52,20260603,checksum"]
+        details = [{"method": f"{engine}_qrcode", "success": True, "result": {"payloads": payloads}}]
+        return (payloads, details) if include_details else payloads
+
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", fake_decode)
+
+    parsed = parse_pdf_invoice(tmp_path / "invoice.pdf", invoice_qr_engine="opencv_wechat")
+
+    assert calls == ["opencv_wechat"]
+    assert parsed.raw["parser"] == "pymupdf_opencv_wechat"
+    assert parsed.invoice_no == "28104068"
+
+
+def test_opencv_engine_falls_back_to_zxing_when_runtime_unavailable(monkeypatch):
+    image = object()
+    calls = []
+
+    def fake_opencv(_image):
+        calls.append("opencv")
+        raise RuntimeError("OpenCV runtime 未安装")
+
+    def fake_zxing(_image):
+        calls.append("zxing")
+        return ["01,10,044001800111,28104068,181.52,20260603,checksum"], [
+            {"method": "zxing_qrcode", "success": True, "result": {"payloads": ["ok"]}}
+        ]
+
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_with_opencv", fake_opencv)
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_with_zxing", fake_zxing)
+
+    payloads, details = invoice_parser.decode_qr_payloads_from_image(image, include_details=True, engine="opencv_wechat")
+
+    assert calls == ["opencv", "zxing"]
+    assert payloads
+    assert details[0]["method"] == "opencv_wechat_runtime"
+    assert details[0]["success"] is False
+    assert details[1]["method"] == "zxing_qrcode"
+
+
 def test_parse_pdf_invoice_highlights_split_qr_amount_words(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(
         "backend.services.invoice_parser.extract_pdf_page_artifacts",
@@ -137,7 +192,7 @@ def test_parse_pdf_invoice_highlights_split_qr_amount_words(monkeypatch, tmp_pat
                 ]
             ),
             "preview_image": "data:image/png;base64,abc",
-            "image_bgr": object(),
+            "qr_image": object(),
             "page_size": {"width": 500, "height": 300},
             "words": [
                 {"x0": 40, "y0": 210, "x1": 105, "y1": 222, "text": "价税合计（大写）"},
@@ -184,7 +239,7 @@ def test_parse_pdf_invoice_uses_text_tax_total_over_standard_qr_untaxed_amount(m
                 ]
             ),
             "preview_image": None,
-            "image_bgr": object(),
+            "qr_image": object(),
             "render_error": None,
         },
     )
@@ -235,7 +290,7 @@ def test_parse_pdf_invoice_reads_tax_total_when_currency_symbol_follows_number(m
                 ]
             ),
             "preview_image": None,
-            "image_bgr": object(),
+            "qr_image": object(),
             "render_error": None,
         },
     )
@@ -687,7 +742,6 @@ def test_custom_category_with_active_invoice_cannot_be_deleted(monkeypatch, db):
     soft_delete_invoice(db, invoice.id)
     updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
     assert "custom:宴请" not in {item.category for item in updated.expense_items}
-
 
 def test_custom_category_without_invoice_can_be_deleted(db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))

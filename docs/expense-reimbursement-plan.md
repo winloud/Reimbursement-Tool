@@ -18,7 +18,7 @@
 
 ### 使用场景
 - **用户**：单用户，个人本地使用
-- **分发方式**：V1.0 生成 `release/报销管理-v1.0.0.zip`；用户解压后复制整个 `报销管理` 文件夹，单机运行
+- **分发方式**：V1.1.0 生成 `release/报销管理-v1.1.0.zip`；用户解压后复制整个 `报销管理` 文件夹，单机运行
 - **启动方式**：优先封装为 EXE（单目录模式）；或作为本地 Web 应用在浏览器中操作
 - **备份方式**：直接复制工具文件夹，无需内置备份功能
 
@@ -41,12 +41,13 @@
 - **金额计算**：Python `decimal.Decimal`（禁止使用 float）
 - **PDF 处理**：pypdf（读取模板域）+ reportlab（填充内容）+ PyMuPDF（发票 PDF 文本提取、第一页内存渲染预览图）
 - **电子发票解析**：
-  - PDF 发票：PyMuPDF 读取并内存渲染第一页图片，优先使用 OpenCV WeChatQRCode 识别二维码，失败后用 PyMuPDF 文本提取 + 正则兜底
+  - PDF 发票：PyMuPDF 读取并内存渲染第一页图片，默认使用 `zxing-cpp` 识别二维码，失败后用 PyMuPDF 文本提取 + 正则兜底
+  - OpenCV WeChatQRCode 保留为个性化设置中的可选兼容模式，通过 EXE 同目录本地 runtime ZIP 自动安装，不进入主发布 ZIP
   - XML / OFD 发票不再支持，上传时直接提示不支持
 
 ### 打包
 - **EXE 封装**：PyInstaller 单目录模式（`--onedir`）+ pywebview / Chrome / Edge app-mode 桌面窗口
-- **发布产物**：`scripts/build_release.ps1 -Version 1.0.0` 生成 `release/报销管理-v1.0.0.zip`
+- **发布产物**：`scripts/build_release.ps1 -Version 1.1.0` 生成 `release/报销管理-v1.1.0.zip`
 
 ---
 
@@ -69,7 +70,7 @@ Frontend → Router → Service → Database
 
 ```
 报销单开发/
-├── README.md                       # V1.0 发布说明，打包时复制到 ZIP 根目录
+├── README.md                       # V1.1.0 发布说明，打包时复制到 ZIP 根目录
 ├── desktop_app.py                  # 桌面启动器：启动 FastAPI、等待健康检查、打开窗口、关闭后退出服务
 ├── desktop_dependencies.py         # Chrome / Edge / WebView2 检测与 WebView2 自动安装兜底
 ├── reimbursement_tool.spec         # PyInstaller onedir 打包配置
@@ -109,7 +110,6 @@ Frontend → Router → Service → Database
 │   │   ├── expense_item.py
 │   │   ├── invoice.py
 │   │   ├── settings.py
-│   │   └── wechat_qrcode/          # OpenCV WeChatQRCode 四个模型文件
 │   ├── schemas/
 │   │   ├── report.py
 │   │   ├── invoice.py
@@ -134,6 +134,7 @@ Frontend → Router → Service → Database
 │   │   ├── stats_service.py
 │   │   ├── settings_service.py
 │   │   ├── font_service.py
+│   │   ├── invoice_qr_runtime.py
 │   │   └── amount_converter.py
 │   ├── assets/fonts/               # 用户可自行放入项目内置字体；默认仅保留 .gitkeep
 │   ├── templates/
@@ -153,7 +154,8 @@ Frontend → Router → Service → Database
 │       ├── README.md
 │       ├── create_form_fields_v1_0_1.py # 早期 PDF AcroForm 填表域维护脚本
 │       ├── HealthCheck.jsx         # 早期健康检查组件，当前未被前端路由/入口导入
-│       └── expense-tool-prototype.jsx # 早期 React 原型稿，当前未被前端源码引用
+│       ├── expense-tool-prototype.jsx # 早期 React 原型稿，当前未被前端源码引用
+│       └── wechat_qrcode/          # 早期 OpenCV WeChatQRCode 模型，仅用于构建可选兼容 runtime
 │
 ├── tests/                          # pytest 后端/桌面/发布测试
 ├── logs/                           # 本地运行日志，忽略
@@ -162,7 +164,7 @@ Frontend → Router → Service → Database
 └── release/                        # 本地发布 ZIP，忽略；不同步上传
 ```
 
-> 发布版运行时路径与开发态不同：打包后 `data/`、`uploads/`、`logs/`、`browser-profile/` 均在 EXE 同级目录；bundle 内只放前端静态文件、PDF 模板、二维码模型和依赖库。
+> 发布版运行时路径与开发态不同：打包后 `data/`、`uploads/`、`logs/`、`browser-profile/` 均在 EXE 同级目录；主 bundle 内只放前端静态文件、PDF 模板和默认 zxing 依赖库。
 
 ---
 
@@ -179,6 +181,7 @@ Frontend → Router → Service → Database
 | daily_subsidy | NUMERIC(18,2) | 途中补贴日标准金额（元/天） |
 | pdf_fill_font_key | TEXT | PDF 填充字体 key，默认 `system:simsun` |
 | double_print_vat_special_invoices | BOOLEAN | 增值税专用发票附件是否在合并 PDF 中追加两遍，默认 true |
+| invoice_qr_engine | TEXT | 发票二维码识别引擎：`zxing` / `opencv_wechat`，默认 `zxing` |
 | updated_at | DATETIME | 最后更新时间 |
 
 ### 表：`expense_reports`（报销单）
@@ -306,7 +309,7 @@ Frontend → Router → Service → Database
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | GET | `/api/settings` | 获取系统配置 |
-| PUT | `/api/settings` | 更新系统配置：默认部门、出差人、补贴标准、PDF 字体、增值税专用发票附件打印两遍开关 |
+| PUT | `/api/settings` | 更新系统配置：默认部门、出差人、补贴标准、PDF 字体、增值税专用发票附件打印两遍开关、发票二维码识别引擎 |
 | GET | `/api/settings/fonts` | 获取可用 PDF 填充字体列表 |
 
 ### 5.3 报销单
@@ -439,6 +442,8 @@ draft ⇄ printed ──→ reimbursed
 - 设置默认部门、出差人、途中补贴日标准，新建报销单时自动带入
 - 选择 PDF 填充字体，保存到 `settings.pdf_fill_font_key`
 - 开关 `settings.double_print_vat_special_invoices`：增值税专用发票附件在合并 PDF 中打印两遍，默认开启
+- 选择 `settings.invoice_qr_engine`：默认 `zxing-cpp（默认，小体积）`；可切换 `OpenCV WeChatQRCode（可选兼容模式）`
+- 保存为 OpenCV 兼容模式时，后端检查并安装 EXE 同目录 runtime ZIP；缺失或无效时返回明确错误，设置不切换
 - 字体下拉按来源分组：系统字体、项目内置字体
 - 系统字体优先列出 Windows 常用中文字体：微软雅黑、宋体、仿宋、楷体、黑体（仅展示本机存在的字体）
 - 项目内置字体读取 `backend/assets/fonts/` 下的 `.ttf` / `.ttc` / `.otf` 文件，显示字体名称；无法读取字体元数据时回退显示文件名
@@ -585,9 +590,12 @@ PDF 预览和下载：
 
 ### 9.1 PDF 数电发票
 - 使用 PyMuPDF 打开 PDF，只处理第一页：同时提取文本，并将页面在内存中渲染为图片；渲染图片用于二维码识别和前端预览，不写入硬盘
-- 优先使用 `opencv-contrib-python-headless` 提供的 `cv2.wechat_qrcode_WeChatQRCode` 识别二维码；模型文件放在 `backend/models/wechat_qrcode/`，包括 `detect.prototxt`、`detect.caffemodel`、`sr.prototxt`、`sr.caffemodel`
-- Windows 路径包含中文时，OpenCV WeChatQRCode 对绝对模型路径不稳定；后端应优先传入相对模型路径，确保模型可初始化
-- 如果 WeChatQRCode 不可用、模型文件缺失或识别失败，再尝试 OpenCV 标准 `QRCodeDetector`，仍失败则进入文本兜底
+- 默认使用 `zxing-cpp` 识别二维码；该依赖不需要 OpenCV、NumPy 或额外模型文件，有助于缩小发布包体积
+- 个性化设置可切换到 `OpenCV + NumPy + WeChatQRCode` 兼容模式。该模式通过 EXE 同目录 `opencv-wechat-runtime-opencv-<opencv_package_version>-win_amd64.zip` 自动安装到 `APP_ROOT/vendor/opencv-wechat-runtime/`，runtime ZIP 文件名版本号取 `opencv-contrib-python-headless` 包版本，例如 `opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
+- OpenCV runtime 包内包含 `cv2`、`numpy`、`numpy.libs`、WeChatQRCode 模型文件和 `runtime.json`；`runtime.json` 记录 `opencv_package_version`、`numpy_version`、平台和模型文件清单
+- 如果历史设置为 OpenCV 但 runtime 不可用，解析时记录诊断并回退 `zxing-cpp`，避免发票解析中断
+- `test example/` 240 个 PDF 对照测试结果：两条路线二维码 payload 完全一致 `240/240`，最终解析结果一致 `240/240`；报告见 `docs/archive/invoice_qr_route_comparison_2026-06-09.md`
+- 如果二维码无法识别，则进入 PyMuPDF 文本提取 + 正则兜底
 - 二维码内容可解析发票号码、开票日期、价税合计金额时，优先采用二维码结果
 - 无二维码或二维码无法识别时，使用 PyMuPDF 提取文本并通过正则解析：
   - 发票号码：`发票号码` / `发票号` / `号码`
@@ -638,7 +646,7 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 |------|--------|
 | 金额转中文大写 | 整数、小数、零元整、万元以上、亿元以上 |
 | 补贴天数计算 | 同月、跨月、单天、起止多区间、非法到达时间 |
-| 发票解析 | PDF 二维码优先、PDF 文本提取、价税合计大小写金额交叉验证 |
+| 发票解析 | PDF 二维码优先、zxing/OpenCV 路线选择与回退、PDF 文本提取、价税合计大小写金额交叉验证 |
 | 发票类型与专票打印 | 发票类型识别/手动确认、专票附件按设置追加两遍 |
 | 状态机流转 | 合法转换全覆盖、非法转换应抛出异常 |
 | 金额计算 | Decimal 精度验证，禁止 float 误差 |
@@ -672,13 +680,13 @@ XML / OFD 发票上传时直接返回不支持提示，不再维护解析逻辑�
 | Phase 3 | 已验收通过 | 报销单录入界面已通过用户验收；行程、费用、发票上传、金额确认、实时汇总、重复发票拦截、PDF 图片预览和解析依据已完成 |
 | Phase 4 | 已完成 | PDF 模板填充、中文大写金额、报销单预览图、合并 PDF 下载和下载后标记已打印已完成 |
 | Phase 5 | 已验收通过 | 统计看板、增强筛选、完整 ZIP 导入导出、列表预览/下载与批量操作、回收站、看板月份范围联动和出差负荷热力图均已完成 |
-| Phase 6 | 已完成 | pywebview 桌面窗口、前端静态集成、同源 API、运行时路径、PyInstaller onedir 打包和 V1.0 本地发布 ZIP 均已完成；端到端业务验收已由用户实际使用测试通过 |
+| Phase 6 | 已完成 | pywebview 桌面窗口、前端静态集成、同源 API、运行时路径、PyInstaller onedir 打包和 V1.1.0 本地发布 ZIP 均已完成；端到端业务验收已由用户实际使用测试通过 |
 
 Phase 3 当前验证基线：
 - 后端：`python -m pytest`，31 passed
 - 前端构建：`npm run build`，通过；Vite chunk size 警告不影响功能
 - 前端工具函数：`node --test frontend/src/pages/reportEditUtils.test.js`，4 passed
-- WeChatQRCode：四个模型文件放在 `backend/models/wechat_qrcode/` 后可初始化；PDF 发票优先二维码识别，失败后文本正则兜底
+- zxing-cpp：PDF 发票默认二维码识别，失败后文本正则兜底；V1.1.0 包体积优化后主 ZIP 不再打包 OpenCV、NumPy 或 WeChatQRCode 模型
 - 发票预览：金额确认弹窗和查看发票弹窗都默认展示图片预览；上传过程本身不做 PDF iframe 预览
 
 Phase 5 当前验证基线：
@@ -706,6 +714,7 @@ Phase 5 当前验证基线：
 
 - [x] `GET/PUT /api/settings` 接口 + Service
 - [x] `GET /api/settings/fonts` 接口 + PDF 填充字体个性化设置
+- [x] `settings.invoice_qr_engine` 发票二维码识别引擎设置；OpenCV 兼容模式保存时检查本地 runtime 包
 - [x] 报销单全部 CRUD 接口 + Service（含状态机校验）
 - [x] 报销单列表页（ReportList），含状态 Tab 筛选
 - [x] 新增/编辑报销单基础信息入口（后续 Phase 3 已重写为单页工作台）
@@ -738,7 +747,7 @@ Phase 5 当前验证基线：
 - [x] 保留现有发票上传接口和报销单更新接口，不新增改类别 API
 - [x] `backend/services/invoice_service.py` 保存文件名最终规则为 `uploads/{report_id}/{invoice_id}_{category}_{hash8}_{uuid}.{ext}`
 - [x] 放弃 XML / OFD 发票上传和解析支持，上传时返回清晰提示
-- [x] PDF 识别使用 PyMuPDF 内存渲染第一页图片，优先通过 OpenCV WeChatQRCode 识别二维码，并将同一张渲染图片随上传响应返回给前端预览
+- [x] PDF 识别使用 PyMuPDF 内存渲染第一页图片，优先通过 zxing-cpp 识别二维码，并将同一张渲染图片随上传响应返回给前端预览
 - [x] 二维码不可用时使用 PyMuPDF 文本提取 + 正则提取发票号、开票日期、价税合计小写金额
 - [x] PDF 识别提取价税合计大写金额，与小写金额做交叉验证
 
@@ -888,7 +897,7 @@ Phase 5.5 验证基线：
 - [x] FastAPI 集成前端静态文件（Vite build 输出目录），支持 BrowserRouter fallback
 - [x] 前端默认同源 API，请求由同一个 FastAPI 服务处理，保留 `VITE_API_BASE_URL` 开发覆盖能力
 - [x] pywebview 桌面启动器：启动本机 FastAPI，等待健康检查后打开独立窗口，窗口关闭后停止后台服务
-- [x] 运行时路径：开发环境继续使用项目目录；打包环境将 `data/`、`uploads/`、`logs/` 放到 EXE 同级目录，模板和二维码模型从 bundle 读取
+- [x] 运行时路径：开发环境继续使用项目目录；打包环境将 `data/`、`uploads/`、`logs/` 放到 EXE 同级目录，模板从 bundle 读取，可选 OpenCV runtime 安装到 EXE 同级 `vendor/`
 - [x] PyInstaller `--onedir` spec、packaging requirements 和 `scripts/build_release.ps1` 已补齐
 - [x] 安装 packaging 依赖并执行实际 PyInstaller `--onedir` 打包，输出 `dist/报销管理/报销管理.exe`
 - [x] 发布版短启动验证：EXE 可启动本机 FastAPI，健康检查就绪后保持运行，关闭测试进程后无残留进程
@@ -898,8 +907,9 @@ Phase 6 当前验证基线：
 - 后端：`python -m pytest`，132 passed
 - 前端工具函数：`node --test frontend/src/**/*.test.js`，35 passed
 - 前端构建：`npm run build`，通过；Vite chunk size 警告不影响当前功能
-- 发布打包：`scripts/build_release.ps1 -Version 1.0.0`，通过；输出 `release/报销管理-v1.0.0.zip`
+- 发布打包：`scripts/build_release.ps1 -Version 1.1.0`，通过；输出 `release/报销管理-v1.1.0.zip`
 - 发布范围：本地 release 目录保留 ZIP，不同步上传；ZIP 根目录包含 `README.md` 和干净的 `报销管理/` 程序目录
+- 可选 OpenCV runtime：`scripts/build_release.ps1 -Version 1.1.0 -BuildOpenCvRuntime` 可额外生成 `release/opencv-wechat-runtime-opencv-<opencv_package_version>-win_amd64.zip`；主 ZIP 默认不包含该 runtime
 
 ---
 
@@ -918,11 +928,12 @@ Phase 6 当前验证基线：
 11. **PDF 输出限制**：存在未确认发票时不允许预览或下载 PDF；预览不改变状态，下载成功后标记为 `printed`
 12. **文件删除联动**：删除发票或报销单时默认软删除记录（设置 `deleted_at`），物理文件保留；草稿报销单可在回收站恢复，选择彻底删除时才硬删除数据库记录并删除安全路径下的附件文件
 13. **字体个性化**：PDF 填充字体通过 `settings.pdf_fill_font_key` 保存；仅允许选择系统检测到或项目内置目录中存在的字体；字体文件由用户自行提供和承担授权责任
-14. **导入导出安全**：完整数据导入导出只支持 ZIP；导入执行前必须自动备份 SQLite 数据库和受影响附件目录，导入来源本地 ID 仅用于预览排查，不用于写库匹配
+14. **发票二维码识别路线**：默认 `zxing-cpp`；OpenCV WeChatQRCode 仅作为可选兼容模式，切换时必须能从 EXE 同目录本地 runtime ZIP 安装。若解析时 OpenCV runtime 缺失或损坏，记录诊断并回退 zxing。
+15. **导入导出安全**：完整数据导入导出只支持 ZIP；导入执行前必须自动备份 SQLite 数据库和受影响附件目录，导入来源本地 ID 仅用于预览排查，不用于写库匹配
 
 ---
 
 ## 改进想法
 
 1. 自动清理策略仍可做第二代增强：当前已有回收站、恢复、彻底删除和导入前备份；尚未实现“自动清理 30 天前回收站/附件”的后台策略。
-2. 可继续优化发布体验：安装器、代码签名、自动更新、发布包校验值和发布渠道上传目前均未纳入 V1.0。
+2. 可继续优化发布体验：安装器、代码签名、自动更新、发布包校验值和发布渠道上传目前均未纳入 V1.1.0。

@@ -6,21 +6,19 @@ from pathlib import Path
 from typing import Any
 
 from backend.schemas.invoice import InvoiceParsedData
+from backend.services.invoice_qr_runtime import (
+    INVOICE_QR_ENGINE_OPENCV_WECHAT,
+    INVOICE_QR_ENGINE_ZXING,
+    activate_opencv_runtime,
+    cv2_safe_wechat_model_paths,
+    normalize_invoice_qr_engine,
+)
 
 
 MONEY_QUANT = Decimal("0.01")
 INVOICE_TYPE_UNKNOWN = "unknown"
 INVOICE_TYPE_NORMAL = "normal"
 INVOICE_TYPE_VAT_SPECIAL = "vat_special"
-from backend.runtime_paths import resource_path
-
-WECHAT_MODEL_DIR = resource_path("backend", "models", "wechat_qrcode")
-WECHAT_MODEL_FILES = {
-    "detect_prototxt": "detect.prototxt",
-    "detect_model": "detect.caffemodel",
-    "sr_prototxt": "sr.prototxt",
-    "sr_model": "sr.caffemodel",
-}
 
 AMOUNT_PATTERNS = [
     (
@@ -196,19 +194,19 @@ def extract_pdf_text(file_path: Path) -> str:
 def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]:
     try:
         import fitz
-        import numpy as np
+        from PIL import Image
     except Exception as exc:
         return {
             "text": extract_pdf_text_with_pypdf(file_path),
             "preview_image": None,
-            "image_bgr": None,
+            "qr_image": None,
             "render_error": f"pymupdf_unavailable: {exc}",
         }
 
     try:
         with fitz.open(str(file_path)) as doc:
             if doc.page_count == 0:
-                return {"text": "", "preview_image": None, "image_bgr": None, "render_error": "empty_pdf"}
+                return {"text": "", "preview_image": None, "qr_image": None, "render_error": "empty_pdf"}
 
             page = doc[0]
             text = page.get_text("text") or ""
@@ -220,23 +218,12 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
             page_rect = page.rect
             pix = page.get_pixmap(matrix=fitz.Matrix(zoom, zoom), colorspace=fitz.csRGB, alpha=False)
             preview_image = "data:image/png;base64," + base64.b64encode(pix.tobytes("png")).decode("ascii")
-
-            image_bgr = None
-            try:
-                import cv2
-
-                image_rgb = np.frombuffer(pix.samples, dtype=np.uint8).reshape(pix.h, pix.w, pix.n)
-                if pix.n == 1:
-                    image_bgr = cv2.cvtColor(image_rgb, cv2.COLOR_GRAY2BGR)
-                else:
-                    image_bgr = cv2.cvtColor(image_rgb[:, :, :3], cv2.COLOR_RGB2BGR)
-            except Exception:
-                image_bgr = None
+            qr_image = Image.frombytes("RGB", (pix.w, pix.h), pix.samples)
 
             return {
                 "text": text,
                 "preview_image": preview_image,
-                "image_bgr": image_bgr,
+                "qr_image": qr_image,
                 "page_size": {"width": float(page_rect.width), "height": float(page_rect.height)},
                 "words": words,
                 "render_error": None,
@@ -245,40 +232,9 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
         return {
             "text": extract_pdf_text_with_pypdf(file_path),
             "preview_image": None,
-            "image_bgr": None,
+            "qr_image": None,
             "render_error": f"pymupdf_render_failed: {exc}",
         }
-
-
-def get_wechat_detector(cv2_module: Any) -> Any | None:
-    global _WECHAT_DETECTOR, _WECHAT_DETECTOR_READY
-    if _WECHAT_DETECTOR_READY:
-        return _WECHAT_DETECTOR
-
-    _WECHAT_DETECTOR_READY = True
-    if not hasattr(cv2_module, "wechat_qrcode_WeChatQRCode"):
-        return None
-
-    model_paths = {key: WECHAT_MODEL_DIR / filename for key, filename in WECHAT_MODEL_FILES.items()}
-    if not all(path.exists() for path in model_paths.values()):
-        return None
-
-    def opencv_model_path(path: Path) -> str:
-        try:
-            return str(path.relative_to(Path.cwd()))
-        except ValueError:
-            return str(path)
-
-    try:
-        _WECHAT_DETECTOR = cv2_module.wechat_qrcode_WeChatQRCode(
-            opencv_model_path(model_paths["detect_prototxt"]),
-            opencv_model_path(model_paths["detect_model"]),
-            opencv_model_path(model_paths["sr_prototxt"]),
-            opencv_model_path(model_paths["sr_model"]),
-        )
-    except Exception:
-        _WECHAT_DETECTOR = None
-    return _WECHAT_DETECTOR
 
 
 def _append_unique(target: list[str], values: Any) -> None:
@@ -292,72 +248,120 @@ def _append_unique(target: list[str], values: Any) -> None:
             target.append(text)
 
 
-def decode_qr_payloads_from_image(image_bgr: Any | None, include_details: bool = False) -> list[str] | tuple[list[str], list[dict[str, Any]]]:
+def decode_qr_payloads_with_zxing(qr_image: Any | None) -> tuple[list[str], list[dict[str, Any]]]:
     details: list[dict[str, Any]] = []
 
-    def finish(payloads: list[str]) -> list[str] | tuple[list[str], list[dict[str, Any]]]:
-        return (payloads, details) if include_details else payloads
-
-    if image_bgr is None:
-        details.append({"method": "opencv_qrcode", "success": False, "message": "no_rendered_image"})
-        return finish([])
+    if qr_image is None:
+        details.append({"method": "zxing_qrcode", "success": False, "message": "no_rendered_image"})
+        return [], details
     try:
-        import cv2
+        import zxingcpp
     except Exception as exc:
-        details.append({"method": "opencv_qrcode", "success": False, "message": f"opencv_unavailable: {exc}"})
-        return finish([])
+        details.append({"method": "zxing_qrcode", "success": False, "message": f"zxing_unavailable: {exc}"})
+        return [], details
 
+    try:
+        barcodes = zxingcpp.read_barcodes(qr_image, formats=zxingcpp.BarcodeFormat.QRCode)
+        payloads = [barcode.text for barcode in barcodes if getattr(barcode, "text", "")]
+        details.append(
+            {
+                "method": "zxing_qrcode",
+                "success": bool(payloads),
+                "result": {"payloads": payloads},
+            }
+        )
+    except Exception as exc:
+        details.append({"method": "zxing_qrcode", "success": False, "message": str(exc)})
+        payloads = []
+
+    return payloads, details
+
+
+def _pil_image_to_bgr(qr_image: Any) -> Any:
+    import cv2
+    import numpy as np
+
+    array = np.array(qr_image)
+    if array.ndim == 2:
+        return cv2.cvtColor(array, cv2.COLOR_GRAY2BGR)
+    if array.shape[2] == 4:
+        return cv2.cvtColor(array, cv2.COLOR_RGBA2BGR)
+    return cv2.cvtColor(array, cv2.COLOR_RGB2BGR)
+
+
+def _opencv_detector() -> Any:
+    global _WECHAT_DETECTOR
+    global _WECHAT_DETECTOR_READY
+    if _WECHAT_DETECTOR_READY:
+        return _WECHAT_DETECTOR
+
+    activate_opencv_runtime()
+    import cv2
+
+    model_paths = cv2_safe_wechat_model_paths()
+    _WECHAT_DETECTOR = cv2.wechat_qrcode.WeChatQRCode(
+        str(model_paths["detect_prototxt"]),
+        str(model_paths["detect_model"]),
+        str(model_paths["sr_prototxt"]),
+        str(model_paths["sr_model"]),
+    )
+    _WECHAT_DETECTOR_READY = True
+    return _WECHAT_DETECTOR
+
+
+def decode_qr_payloads_with_opencv(qr_image: Any | None) -> list[str]:
+    if qr_image is None:
+        return []
+
+    activate_opencv_runtime()
+    import cv2
+
+    image_bgr = _pil_image_to_bgr(qr_image)
     payloads: list[str] = []
-
-    detector = get_wechat_detector(cv2)
+    detector = _opencv_detector()
     if detector is not None:
-        before_count = len(payloads)
+        decoded, _points = detector.detectAndDecode(image_bgr)
+        _append_unique(payloads, decoded)
+
+    standard_detector = cv2.QRCodeDetector()
+    try:
+        success, decoded_info, _points, _straight = standard_detector.detectAndDecodeMulti(image_bgr)
+        if success:
+            _append_unique(payloads, decoded_info)
+    except Exception:
+        pass
+    if not payloads:
+        decoded, _points, _straight = standard_detector.detectAndDecode(image_bgr)
+        _append_unique(payloads, decoded)
+    return payloads
+
+
+def decode_qr_payloads_from_image(
+    qr_image: Any | None,
+    include_details: bool = False,
+    engine: str = INVOICE_QR_ENGINE_ZXING,
+) -> list[str] | tuple[list[str], list[dict[str, Any]]]:
+    selected_engine = normalize_invoice_qr_engine(engine)
+    if selected_engine == INVOICE_QR_ENGINE_OPENCV_WECHAT:
+        details: list[dict[str, Any]] = []
         try:
-            decoded, _points = detector.detectAndDecode(image_bgr)
-            _append_unique(payloads, decoded)
+            payloads = decode_qr_payloads_with_opencv(qr_image)
             details.append(
                 {
                     "method": "opencv_wechat_qrcode",
-                    "success": len(payloads) > before_count,
-                    "result": {"payloads": payloads[before_count:]},
+                    "success": bool(payloads),
+                    "result": {"payloads": payloads},
                 }
             )
+            return (payloads, details) if include_details else payloads
         except Exception as exc:
-            details.append({"method": "opencv_wechat_qrcode", "success": False, "message": str(exc)})
-    else:
-        details.append({"method": "opencv_wechat_qrcode", "success": False, "message": "not_available_or_missing_models"})
+            details.append({"method": "opencv_wechat_runtime", "success": False, "message": str(exc)})
+            zxing_payloads, zxing_details = decode_qr_payloads_with_zxing(qr_image)
+            details.extend(zxing_details)
+            return (zxing_payloads, details) if include_details else zxing_payloads
 
-    try:
-        before_count = len(payloads)
-        basic_detector = cv2.QRCodeDetector()
-        ok, decoded_info, _points, _straight = basic_detector.detectAndDecodeMulti(image_bgr)
-        if ok:
-            _append_unique(payloads, decoded_info)
-        details.append(
-            {
-                "method": "opencv_qrcode_detector_multi",
-                "success": len(payloads) > before_count,
-                "result": {"payloads": payloads[before_count:]},
-            }
-        )
-    except Exception as exc:
-        details.append({"method": "opencv_qrcode_detector_multi", "success": False, "message": str(exc)})
-
-    try:
-        before_count = len(payloads)
-        data, _points, _straight = cv2.QRCodeDetector().detectAndDecode(image_bgr)
-        _append_unique(payloads, data)
-        details.append(
-            {
-                "method": "opencv_qrcode_detector",
-                "success": len(payloads) > before_count,
-                "result": {"payloads": payloads[before_count:]},
-            }
-        )
-    except Exception as exc:
-        details.append({"method": "opencv_qrcode_detector", "success": False, "message": str(exc)})
-
-    return finish(payloads)
+    payloads, details = decode_qr_payloads_with_zxing(qr_image)
+    return (payloads, details) if include_details else payloads
 
 
 def extract_invoice_no(text: str) -> str | None:
@@ -852,17 +856,19 @@ def build_tax_total_amount_highlight(artifacts: dict[str, Any], amount: Decimal)
     }
 
 
-def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
+def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
     artifacts = extract_pdf_page_artifacts(file_path)
     text_fields = extract_fields_from_text(artifacts.get("text") or "")
+    qr_image = artifacts.get("qr_image") or artifacts.get("image_bgr")
+    selected_qr_engine = normalize_invoice_qr_engine(invoice_qr_engine)
 
     try:
-        qr_payloads, qr_decode_details = decode_qr_payloads_from_image(artifacts.get("image_bgr"), include_details=True)
+        qr_payloads, qr_decode_details = decode_qr_payloads_from_image(qr_image, include_details=True, engine=selected_qr_engine)
     except TypeError:
-        qr_payloads = decode_qr_payloads_from_image(artifacts.get("image_bgr"))
+        qr_payloads = decode_qr_payloads_from_image(qr_image)
         qr_decode_details = [
             {
-                "method": "opencv_qrcode",
+                "method": f"{selected_qr_engine}_qrcode",
                 "success": bool(qr_payloads),
                 "result": {"payloads": qr_payloads},
             }
@@ -915,7 +921,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
             "success": artifacts.get("preview_image") is not None and artifacts.get("render_error") is None,
             "result": {
                 "preview_image": artifacts.get("preview_image") is not None,
-                "opencv_image": artifacts.get("image_bgr") is not None,
+                "qr_image": qr_image is not None,
                 "text_chars": len(artifacts.get("text") or ""),
             },
             "message": artifacts.get("render_error"),
@@ -930,7 +936,8 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
 
     raw = {
         "source": "pdf",
-        "parser": "pymupdf_opencv_wechat",
+        "parser": f"pymupdf_{selected_qr_engine}",
+        "invoice_qr_engine": selected_qr_engine,
         "parse_method": parse_method,
         "parse_success": parse_success,
         "parsed_result": parsed_result,
@@ -955,7 +962,7 @@ def parse_pdf_invoice(file_path: Path) -> InvoiceParsedData:
     )
 
 
-def parse_invoice_file(file_path: Path, file_type: str) -> InvoiceParsedData:
+def parse_invoice_file(file_path: Path, file_type: str, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
     if file_type == "pdf":
-        return parse_pdf_invoice(file_path)
+        return parse_pdf_invoice(file_path, invoice_qr_engine=invoice_qr_engine)
     return InvoiceParsedData(raw={"source": file_type})

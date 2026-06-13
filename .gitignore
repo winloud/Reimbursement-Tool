@@ -23,6 +23,7 @@ release/
 .venv/
 venv/
 env/
+.release-venv/
 
 # Local editor / OS files
 .vscode/
@@ -60,4 +61,4 @@ _test_*.pdf
 templates/*.dwg
 
 # 发票测试样本
-Test cases for invoices/
+test example/

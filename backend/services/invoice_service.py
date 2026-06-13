@@ -13,6 +13,7 @@ from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
 from backend.models.invoice import Invoice
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.services.invoice_parser import parse_invoice_file
+from backend.services.settings_service import get_or_create_settings
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     CUSTOM_CATEGORY_PREFIX,
@@ -37,6 +38,13 @@ def detect_file_type(filename: str) -> str:
     if ext in IMAGE_EXTENSIONS:
         return "image"
     raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不支持的发票文件类型，请上传 PDF 发票或图片")
+
+
+def parse_invoice_file_with_engine(absolute_path: Path, file_type: str, invoice_qr_engine: str) -> InvoiceParsedData:
+    try:
+        return parse_invoice_file(absolute_path, file_type, invoice_qr_engine=invoice_qr_engine)
+    except TypeError:
+        return parse_invoice_file(absolute_path, file_type)
 
 
 def validate_invoice_target(report, expense_category: str, trip_id: int | None) -> str:
@@ -164,7 +172,8 @@ def upload_invoice(
     relative_path = save_upload_file(upload_file, report_id, expense_category, file_type)
     absolute_path = _invoice_file_path(relative_path)
     try:
-        parsed = parse_invoice_file(absolute_path, file_type)
+        settings = get_or_create_settings(db)
+        parsed = parse_invoice_file_with_engine(absolute_path, file_type, settings.invoice_qr_engine)
     except Exception as exc:
         parsed = InvoiceParsedData(raw={"source": file_type, "parse_error": str(exc)})
     try:
@@ -219,7 +228,8 @@ def parse_existing_invoice(db: Session, invoice_id: int) -> InvoiceParsedData:
     invoice = get_invoice_or_404(db, invoice_id)
     absolute_path = _invoice_file_path(invoice.file_path)
     try:
-        return parse_invoice_file(absolute_path, invoice.file_type)
+        settings = get_or_create_settings(db)
+        return parse_invoice_file_with_engine(absolute_path, invoice.file_type, settings.invoice_qr_engine)
     except Exception as exc:
         return InvoiceParsedData(raw={"source": invoice.file_type, "parse_error": str(exc)})
 

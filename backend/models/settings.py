@@ -5,6 +5,7 @@ from sqlalchemy import Boolean, DateTime, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.connection import Base
+from backend.services.invoice_qr_runtime import INVOICE_QR_ENGINE_ZXING
 
 
 class Settings(Base):
@@ -16,4 +17,5 @@ class Settings(Base):
     daily_subsidy: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     pdf_fill_font_key: Mapped[str] = mapped_column(String, default="system:simsun", nullable=False)
     double_print_vat_special_invoices: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    invoice_qr_engine: Mapped[str] = mapped_column(String, default=INVOICE_QR_ENGINE_ZXING, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
