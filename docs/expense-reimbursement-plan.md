@@ -84,7 +84,7 @@
 
 | 测试 | 结论 | 文档 |
 | --- | --- | --- |
-| V1.1.1 发布验证 | 后端、前端工具测试、前端构建、CHANGELOG 提取、主 ZIP 和 ZIP 内容检查均已验证 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
+| V1.1.1 发布验证 | 后端、前端工具测试、前端构建、CHANGELOG 提取、主 ZIP、ZIP 内容检查和 GitHub Release 均已验证 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | 发票 QR 两路线对照测试 | `test example/` 240 个 PDF 中，zxing 与 OpenCV payload 和最终解析结果均 `240/240` 一致 | [testing/invoice_qr_route_comparison_2026-06-09.md](testing/invoice_qr_route_comparison_2026-06-09.md) |
 | V1.1.0 发布验证 | 后端、前端工具测试、前端构建、主 ZIP、可选 OpenCV runtime、冻结 EXE 短启动均已验证 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
 
