@@ -38,6 +38,8 @@ def test_release_script_can_build_optional_opencv_runtime_package():
     script = (Path(__file__).resolve().parents[1] / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$BuildOpenCvRuntime" in script
+    assert "[string]$ReleaseDate" in script
+    assert "ReleaseDate must use yyyymmdd format" in script
     assert "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip" in script
     assert "opencv_package_version" in script
     assert "numpy_version" in script

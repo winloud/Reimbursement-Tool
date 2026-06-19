@@ -14,12 +14,14 @@
 - 燃油补助新增可手动填写的报销金额；为空时仍按已确认发票合计计算。
 - 个性化设置新增自动保存延时，可在 3-60 秒之间调整报销单编辑页的自动保存等待时间。
 - 新增 GitHub tag 发布工作流：推送 `v*` 标签后自动构建主 ZIP 和可选 OpenCV runtime ZIP，并从本文件对应版本段落生成 GitHub Release notes。
+- GitHub Release 资产使用 ASCII 文件名 `reimbursement-tool-vX.Y.Z-yyyymmdd.zip` 上传，避免 GitHub 规范化非 ASCII 资产名时剥掉中文；本地发布 ZIP 仍保持 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 
 ### Changed
 
 - 发布 ZIP 命名规则改为 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 - 发布脚本不再清空 `release/` 目录，也不覆盖已有主 ZIP 或 OpenCV runtime ZIP；如同名文件已存在，脚本会报错并要求手动删除。
 - 发布脚本默认版本更新为 `1.1.1`。
+- 发布脚本支持显式传入 `-ReleaseDate yyyymmdd`，供 GitHub Actions 按中国时区固定发布日期。
 - 根目录 `README.md` 保持最终用户发布说明定位，移除源码开发服务重启说明。
 - 报销单编辑页自动保存改为延时保存，并新增手动保存；PDF 预览、下载、状态流转和页面导航前会先尝试保存未提交修改。
 - 总览看板出差负荷热力图色阶改为从绿色过渡到赭黄色，便于区分连续出差负荷。

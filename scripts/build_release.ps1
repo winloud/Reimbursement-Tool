@@ -4,7 +4,8 @@ param(
     [switch]$SkipDependencyInstall,
     [switch]$ReuseReleaseVenv,
     [switch]$BuildOpenCvRuntime,
-    [string]$OpenCvPackageVersion = "4.10.0.84"
+    [string]$OpenCvPackageVersion = "4.10.0.84",
+    [string]$ReleaseDate = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -16,7 +17,12 @@ $Python = $BasePython
 $AppName = "报销管理"
 $DistApp = Join-Path $Root "dist\$AppName"
 $ReleaseDir = Join-Path $Root "release"
-$ReleaseDate = Get-Date -Format "yyyyMMdd"
+if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
+    $ReleaseDate = Get-Date -Format "yyyyMMdd"
+}
+if ($ReleaseDate -notmatch "^\d{8}$") {
+    throw "ReleaseDate must use yyyymmdd format."
+}
 $StageRoot = Join-Path $ReleaseDir ".staging-$Version-$ReleaseDate"
 $ZipPath = Join-Path $ReleaseDir "$AppName-v$Version-$ReleaseDate.zip"
 
