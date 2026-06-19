@@ -148,12 +148,13 @@ cd ..
 
 ```text
 dist\报销管理\报销管理.exe
+release\报销管理-vX.Y.Z-yyyymmdd.zip
 ```
 
 如需额外生成 OpenCV 兼容运行时包：
 
 ```powershell
-.\scripts\build_release.ps1 -Version 1.1.0 -BuildOpenCvRuntime
+.\scripts\build_release.ps1 -Version X.Y.Z -BuildOpenCvRuntime
 ```
 
 该命令除主 ZIP 外，会生成：

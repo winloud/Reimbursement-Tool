@@ -37,6 +37,7 @@ import ExpandLessIcon from "@mui/icons-material/ExpandLess";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
 import DownloadIcon from "@mui/icons-material/Download";
+import SaveIcon from "@mui/icons-material/Save";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate, useParams } from "react-router-dom";
@@ -65,6 +66,7 @@ import {
   cloneTripAfter,
   emptyForm,
   formatAmount,
+  getExpenseItemAmount,
   getExpenseCategoryOptions,
   getTripYearRangeLabel,
   isEmptyDraft,
@@ -77,13 +79,20 @@ import {
   swapTripEndpoints,
   toMoney,
   todayStr,
+  validateExpenseItems,
+  validateFuelSubsidyAmount,
   validateCustomExpenseName,
 } from "./reportEditUtils";
+import {
+  DEFAULT_AUTOSAVE_DELAY_SECONDS,
+  normalizeAutosaveDelaySeconds,
+} from "./settingsPageUtils";
 
 const SAVE_LABELS = {
   idle: { text: "等待修改", icon: null, color: "default" },
+  dirty: { text: "有未保存修改", icon: null, color: "warning" },
   saving: { text: "保存中...", icon: <CircularProgress size={14} />, color: "info" },
-  saved: { text: "已自动保存", icon: <CheckCircleIcon fontSize="small" />, color: "success" },
+  saved: { text: "已保存", icon: <CheckCircleIcon fontSize="small" />, color: "success" },
   error: { text: "保存失败，请重试", icon: <ErrorOutlineIcon fontSize="small" />, color: "error" },
 };
 
@@ -213,6 +222,7 @@ export default function ReportEdit() {
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [pdfPreviewPages, setPdfPreviewPages] = useState([]);
   const [pdfBlockedOpen, setPdfBlockedOpen] = useState(false);
+  const [autosaveDelaySeconds, setAutosaveDelaySeconds] = useState(DEFAULT_AUTOSAVE_DELAY_SECONDS);
 
   const creatingRef = useRef(false);
   const loadedRef = useRef(false);
@@ -224,16 +234,27 @@ export default function ReportEdit() {
   const statusMeta = STATUS_META[status] || { label: status, color: "default" };
   const actions = STATUS_ACTIONS[status] || [];
   const saveMeta = SAVE_LABELS[saveState] || SAVE_LABELS.idle;
+  const currentPayload = useMemo(
+    () => buildReportPayload({ form, trips, expenseItems }),
+    [expenseItems, form, trips],
+  );
+  const currentPayloadKey = useMemo(() => JSON.stringify(currentPayload), [currentPayload]);
+  const hasUnsavedChanges = isEdit && loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
+  const expenseItemsError = useMemo(() => validateExpenseItems(expenseItems), [expenseItems]);
 
   const loadForEdit = useCallback(
     async ({ quiet = false } = {}) => {
       if (!quiet) setLoading(true);
       setError("");
       try {
-        const res = await getReport(id);
+        const settingsPromise = getSettings().catch(() => null);
+        const [res, settingsRes] = await Promise.all([getReport(id), settingsPromise]);
         if (!res.success) {
           setError(res.message || "加载报销单失败");
           return;
+        }
+        if (settingsRes?.success && settingsRes.data) {
+          setAutosaveDelaySeconds(normalizeAutosaveDelaySeconds(settingsRes.data.autosave_delay_seconds));
         }
         const report = res.data;
         const nextForm = {
@@ -288,6 +309,7 @@ export default function ReportEdit() {
     try {
       const settingsRes = await getSettings();
       const settings = settingsRes.success && settingsRes.data ? settingsRes.data : {};
+      setAutosaveDelaySeconds(normalizeAutosaveDelaySeconds(settings.autosave_delay_seconds));
       const draftForm = {
         ...emptyForm,
         report_date: todayStr(),
@@ -325,8 +347,9 @@ export default function ReportEdit() {
         advanceAmount: form.advance_amount,
         trips,
         invoices,
+        expenseItems,
       }),
-    [form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
+    [expenseItems, form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
   );
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
@@ -346,62 +369,121 @@ export default function ReportEdit() {
     setPendingLeave(null);
   }, []);
 
+  const saveReport = useCallback(
+    async ({ quiet = false, force = false } = {}) => {
+      if (!isEdit || readonly || loading || !loadedRef.current) return true;
+      const payloadKey = currentPayloadKey;
+      if (!force && payloadKey === lastSavedPayloadRef.current) {
+        setSaveState("saved");
+        return true;
+      }
+      const validationError = validateExpenseItems(expenseItems);
+      if (validationError) {
+        setSaveState("error");
+        if (!quiet) setError(validationError);
+        setToast(validationError);
+        return false;
+      }
+      autosaveRequestRef.current += 1;
+      const requestId = autosaveRequestRef.current;
+      setSaveState("saving");
+      if (!quiet) setError("");
+      try {
+        const res = await updateReport(id, currentPayload);
+        if (autosaveRequestRef.current !== requestId) return false;
+        if (!res.success) {
+          const message = res.message || "保存失败";
+          setSaveState("error");
+          if (!quiet) setError(message);
+          setToast(message);
+          return false;
+        }
+        lastSavedPayloadRef.current = payloadKey;
+        setError("");
+        setSaveState("saved");
+        if (currentPayload.trips.some((trip) => !trip.id)) {
+          await loadForEdit({ quiet: true });
+        } else if (!quiet) {
+          setToast("已保存");
+        }
+        return true;
+      } catch (err) {
+        if (autosaveRequestRef.current !== requestId) return false;
+        const message = getApiErrorMessage(err, "保存失败");
+        setSaveState("error");
+        if (!quiet) setError(message);
+        setToast(message);
+        return false;
+      }
+    },
+    [currentPayload, currentPayloadKey, expenseItems, id, isEdit, loadForEdit, loading, readonly],
+  );
+
+  const ensureSavedBeforeAction = useCallback(
+    async () => saveReport({ quiet: true }),
+    [saveReport],
+  );
+
   useEffect(() => {
     if (!isEdit) return undefined;
     return registerGuard(async (to) => {
-      if (!emptyDraft) return true;
+      if (!emptyDraft) {
+        return ensureSavedBeforeAction();
+      }
       setPendingLeave({ to });
       return new Promise((resolve) => {
         leaveResolverRef.current = resolve;
       });
     });
-  }, [emptyDraft, isEdit, registerGuard]);
+  }, [emptyDraft, ensureSavedBeforeAction, isEdit, registerGuard]);
 
   useEffect(() => {
     if (!isEdit || readonly || loading || !loadedRef.current) return undefined;
-    const payload = buildReportPayload({ form, trips, expenseItems });
-    const payloadKey = JSON.stringify(payload);
-    if (payloadKey === lastSavedPayloadRef.current) {
+    if (currentPayloadKey === lastSavedPayloadRef.current) {
       autosaveRequestRef.current += 1;
-      setError("");
       setSaveState("saved");
       return undefined;
     }
-
+    if (expenseItemsError) {
+      autosaveRequestRef.current += 1;
+      setSaveState("error");
+      return undefined;
+    }
     const requestId = autosaveRequestRef.current + 1;
     autosaveRequestRef.current = requestId;
     let cancelled = false;
     const isCurrentAutosave = () => !cancelled && autosaveRequestRef.current === requestId;
 
-    setSaveState("saving");
-    setError("");
+    setSaveState("dirty");
     const timer = window.setTimeout(async () => {
+      if (!isCurrentAutosave()) return;
       try {
-        const res = await updateReport(id, payload);
+        setSaveState("saving");
+        const res = await updateReport(id, currentPayload);
         if (!isCurrentAutosave()) return;
         if (!res.success) {
-          setError(res.message || "自动保存失败");
+          setToast(res.message || "自动保存失败");
           setSaveState("error");
           return;
         }
-        lastSavedPayloadRef.current = payloadKey;
+        lastSavedPayloadRef.current = currentPayloadKey;
         setError("");
         setSaveState("saved");
-        if (payload.trips.some((trip) => !trip.id)) {
+        if (currentPayload.trips.some((trip) => !trip.id)) {
           await loadForEdit({ quiet: true });
         }
       } catch (err) {
         if (!isCurrentAutosave()) return;
-        setError(getApiErrorMessage(err, "自动保存失败"));
+        setToast(getApiErrorMessage(err, "自动保存失败"));
         setSaveState("error");
       }
-    }, 700);
+    }, autosaveDelaySeconds * 1000);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [expenseItems, form, id, isEdit, loadForEdit, loading, readonly, trips]);
+  }, [autosaveDelaySeconds, currentPayload, currentPayloadKey, expenseItemsError, isEdit, loadForEdit, loading, readonly]);
 
   const handleChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -443,7 +525,14 @@ export default function ReportEdit() {
   const invoicesForCategory = (category) =>
     invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id);
 
+  const updateExpenseItem = (category, patch) => {
+    setExpenseItems((prev) =>
+      prev.map((item) => (item.category === category ? { ...item, ...patch } : item)),
+    );
+  };
+
   const handleStatusAction = async (target) => {
+    if (!(await ensureSavedBeforeAction())) return;
     setSaveState("saving");
     setError("");
     try {
@@ -467,6 +556,7 @@ export default function ReportEdit() {
       setPdfBlockedOpen(true);
       return;
     }
+    if (!(await ensureSavedBeforeAction())) return;
     setPdfBusy("preview");
     setError("");
     try {
@@ -489,6 +579,7 @@ export default function ReportEdit() {
       setPdfBlockedOpen(true);
       return;
     }
+    if (!(await ensureSavedBeforeAction())) return;
     setPdfBusy("download");
     setError("");
     try {
@@ -577,6 +668,8 @@ export default function ReportEdit() {
         id: null,
         category,
         remark: "",
+        reimbursable_amount: "",
+        invoice_total: "0.00",
         amount: "0.00",
         invoice_count: 0,
       },
@@ -710,6 +803,14 @@ export default function ReportEdit() {
         <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
           <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={() => requestNavigation("/reports")}>
             返回列表
+          </Button>
+          <Button
+            startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveIcon />}
+            variant="contained"
+            onClick={() => saveReport({ quiet: false, force: true })}
+            disabled={readonly || saveState === "saving" || (!hasUnsavedChanges && saveState === "saved")}
+          >
+            手动保存
           </Button>
           {actions.map((action) => (
             <Button
@@ -1151,11 +1252,16 @@ export default function ReportEdit() {
                   const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
                     category: category.value,
                     remark: "",
+                    reimbursable_amount: "",
+                    invoice_total: "0.00",
                     amount: "0.00",
                     invoice_count: 0,
                   };
                   const uploadKey = `expense-${category.value}`;
                   const uploading = uploadState?.key === uploadKey;
+                  const isFuelSubsidy = category.value === "fuel_subsidy";
+                  const invoiceTotal = Number(item.invoice_total ?? item.amount ?? 0);
+                  const fuelAmountError = validateFuelSubsidyAmount(item);
                   return (
                     <Box key={category.value} sx={{ minWidth: 0 }}>
                       <Card sx={workCardSx}>
@@ -1165,7 +1271,7 @@ export default function ReportEdit() {
                               <Box sx={{ minWidth: 0 }}>
                                 <Typography fontWeight={800}>{category.label}</Typography>
                                 <Typography variant="body2" color="text.secondary">
-                                  {formatAmount(item.amount)} / {item.invoice_count || 0} 张
+                                  报销 {formatAmount(getExpenseItemAmount(item))} / 发票 {formatAmount(invoiceTotal)} / {item.invoice_count || 0} 张
                                 </Typography>
                               </Box>
                               {isCustomExpenseCategory(category.value) && (
@@ -1183,6 +1289,25 @@ export default function ReportEdit() {
                                 </Tooltip>
                               )}
                             </Stack>
+                            {isFuelSubsidy && (
+                              <TextField
+                                fullWidth
+                                size="small"
+                                label="燃油补助报销金额"
+                                type="number"
+                                value={item.reimbursable_amount ?? ""}
+                                disabled={readonly}
+                                error={Boolean(fuelAmountError)}
+                                helperText={fuelAmountError || "留空则按已确认发票合计报销"}
+                                onChange={(event) =>
+                                  updateExpenseItem(category.value, { reimbursable_amount: event.target.value })
+                                }
+                                InputProps={{
+                                  startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+                                  inputProps: { min: 0, max: invoiceTotal, step: "0.01" },
+                                }}
+                              />
+                            )}
                             <InvoiceDropzone
                               disabled={readonly || saveState === "saving"}
                               uploading={uploading}
@@ -1231,7 +1356,7 @@ export default function ReportEdit() {
                     <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
                   </Stack>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">已确认发票</Typography>
+                    <Typography color="text.secondary">报销费用</Typography>
                     <Typography fontWeight={800}>{formatAmount(summary.invoiceTotal)}</Typography>
                   </Stack>
                 </Stack>
@@ -1247,7 +1372,7 @@ export default function ReportEdit() {
                           {category.label}
                         </Typography>
                         <Typography variant="body2" fontWeight={700}>
-                          {formatAmount(item?.amount || 0)}
+                          {formatAmount(getExpenseItemAmount(item || {}))}
                         </Typography>
                       </Stack>
                     );

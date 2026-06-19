@@ -44,6 +44,8 @@ def migrate_sqlite_schema() -> None:
             connection.execute(text("ALTER TABLE settings ADD COLUMN double_print_vat_special_invoices BOOLEAN NOT NULL DEFAULT 1"))
         if "invoice_qr_engine" not in settings_columns:
             connection.execute(text("ALTER TABLE settings ADD COLUMN invoice_qr_engine VARCHAR NOT NULL DEFAULT 'zxing'"))
+        if "autosave_delay_seconds" not in settings_columns:
+            connection.execute(text("ALTER TABLE settings ADD COLUMN autosave_delay_seconds INTEGER NOT NULL DEFAULT 3"))
         if "expense_reports" in tables:
             report_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_reports)")).fetchall()}
             if "report_uid" not in report_columns:
@@ -58,6 +60,10 @@ def migrate_sqlite_schema() -> None:
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR NOT NULL DEFAULT 'unknown'"))
             backfill_unique_uid(connection, "invoices", "invoice_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_invoices_invoice_uid ON invoices(invoice_uid)"))
+        if "expense_items" in tables:
+            expense_item_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
+            if "reimbursable_amount" not in expense_item_columns:
+                connection.execute(text("ALTER TABLE expense_items ADD COLUMN reimbursable_amount NUMERIC(18, 2)"))
 
 
 def backfill_unique_uid(connection, table_name: str, column_name: str) -> None:

@@ -154,9 +154,43 @@ export const normalizeExpenseItem = (item = {}) => ({
   id: item.id ?? null,
   category: item.category,
   remark: item.remark ?? "",
+  reimbursable_amount: item.reimbursable_amount ?? "",
+  invoice_total: item.invoice_total ?? item.amount ?? "0.00",
   amount: item.amount ?? "0.00",
   invoice_count: item.invoice_count ?? 0,
 });
+
+const toFiniteAmount = (value) => {
+  const amount = Number(value ?? 0);
+  return Number.isFinite(amount) ? amount : 0;
+};
+
+export const getExpenseItemInvoiceTotal = (item = {}) => toFiniteAmount(item.invoice_total ?? item.amount);
+
+export const getExpenseItemAmount = (item = {}) => {
+  if (item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined) {
+    return toFiniteAmount(item.reimbursable_amount);
+  }
+  return toFiniteAmount(item.amount ?? item.invoice_total);
+};
+
+export const validateFuelSubsidyAmount = (item = {}) => {
+  if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
+    return "";
+  }
+  const reimbursableAmount = Number(item.reimbursable_amount);
+  if (!Number.isFinite(reimbursableAmount) || reimbursableAmount < 0) return "报销金额不能为负数";
+  if (reimbursableAmount > getExpenseItemInvoiceTotal(item)) return "报销金额不能大于发票合计";
+  return "";
+};
+
+export const validateExpenseItems = (expenseItems = []) => {
+  for (const item of expenseItems) {
+    const error = validateFuelSubsidyAmount(item);
+    if (error) return error;
+  }
+  return "";
+};
 
 const makeDate = (year, month, day) => {
   const parsed = new Date(year, month - 1, day);
@@ -219,13 +253,14 @@ export const buildTripDateRanges = (reportDate, trips = []) => {
         depart = makeDate(currentYear, departMonth, departDay);
       }
 
-      const arriveYear = compareMonthDay([arriveMonth, arriveDay], departMonthDay) < 0 ? currentYear + 1 : currentYear;
+      const isCrossYearArrival = compareMonthDay([arriveMonth, arriveDay], departMonthDay) < 0;
+      const arriveYear = isCrossYearArrival ? currentYear + 1 : currentYear;
       const arrive = makeDate(arriveYear, arriveMonth, arriveDay);
       previousDepartMonthDay = departMonthDay;
       if (!depart || !arrive) return null;
 
       const travelDays = daysBetween(depart, arrive);
-      if (travelDays < 0 || travelDays > 7) return null;
+      if (travelDays < 0 || (isCrossYearArrival && travelDays > 7)) return null;
       if (
         travelDays === 0 &&
         trip.depart_hour !== "" &&
@@ -296,12 +331,20 @@ export const calculateSubsidyDays = (reportDate, trips) => {
   return merged.reduce((sum, interval) => sum + daysBetween(interval.start, interval.end) + 1, 0);
 };
 
-export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices }) => {
+export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices, expenseItems = [] }) => {
   const subsidyDays = calculateSubsidyDays(reportDate, trips);
   const subsidyTotal = subsidyDays * Number(dailySubsidy || 0);
-  const invoiceTotal = invoices
-    .filter((invoice) => invoice.amount_confirmed)
-    .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+  const invoiceTotal =
+    expenseItems.length > 0
+      ? invoices
+          .filter((invoice) => invoice.amount_confirmed && invoice.trip_id)
+          .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0) +
+        expenseItems
+          .filter((item) => item.category !== "transport_fare")
+          .reduce((sum, item) => sum + getExpenseItemAmount(item), 0)
+      : invoices
+          .filter((invoice) => invoice.amount_confirmed)
+          .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
   const total = subsidyTotal + invoiceTotal;
   const advance = Number(advanceAmount || 0);
   return {
@@ -361,6 +404,10 @@ export const buildReportPayload = ({ form, trips, expenseItems }) => ({
     id: item.id || null,
     category: item.category,
     remark: nullableText(item.remark),
+    reimbursable_amount:
+      item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined
+        ? item.reimbursable_amount
+        : null,
   })),
 });
 

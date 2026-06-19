@@ -28,6 +28,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "reimbursed": set(),
 }
 
+FUEL_SUBSIDY_CATEGORY = "fuel_subsidy"
 EXPENSE_CATEGORIES = [
     "transport_fare",
     "luggage",
@@ -36,7 +37,7 @@ EXPENSE_CATEGORIES = [
     "postal",
     "no_sleeper_subsidy",
     "toll",
-    "fuel_subsidy",
+    FUEL_SUBSIDY_CATEGORY,
 ]
 FIXED_OTHER_EXPENSE_CATEGORIES = [
     "luggage",
@@ -45,7 +46,7 @@ FIXED_OTHER_EXPENSE_CATEGORIES = [
     "postal",
     "no_sleeper_subsidy",
     "toll",
-    "fuel_subsidy",
+    FUEL_SUBSIDY_CATEGORY,
 ]
 FIXED_CATEGORY_LABELS = {
     "transport_fare": "车船费",
@@ -55,7 +56,7 @@ FIXED_CATEGORY_LABELS = {
     "postal": "邮电费",
     "no_sleeper_subsidy": "未乘卧铺补助",
     "toll": "过路费",
-    "fuel_subsidy": "燃油补助",
+    FUEL_SUBSIDY_CATEGORY: "燃油补助",
 }
 FIXED_CATEGORY_LABEL_ALIASES = {
     "市内车费",
@@ -134,6 +135,56 @@ def quantize_amount(value: Decimal) -> Decimal:
     return value.quantize(Decimal("0.01"))
 
 
+def confirmed_transport_invoice_total(report: ExpenseReport) -> Decimal:
+    return quantize_amount(
+        sum(
+            (
+                invoice.amount
+                for invoice in report.invoices
+                if invoice.deleted_at is None
+                and invoice.amount_confirmed
+                and invoice.trip_id is not None
+                and invoice.expense_category == "transport_fare"
+            ),
+            Decimal("0.00"),
+        )
+    )
+
+
+def confirmed_invoice_total_for_category(report: ExpenseReport, category: str) -> Decimal:
+    return quantize_amount(
+        sum(
+            (
+                invoice.amount
+                for invoice in report.invoices
+                if invoice.deleted_at is None
+                and invoice.amount_confirmed
+                and invoice.trip_id is None
+                and invoice.expense_category == category
+            ),
+            Decimal("0.00"),
+        )
+    )
+
+
+def clamp_fuel_subsidy_reimbursable_amount(report: ExpenseReport) -> None:
+    for item in report.expense_items:
+        if item.category != FUEL_SUBSIDY_CATEGORY or item.reimbursable_amount is None:
+            continue
+        invoice_total = confirmed_invoice_total_for_category(report, FUEL_SUBSIDY_CATEGORY)
+        if item.reimbursable_amount > invoice_total:
+            item.reimbursable_amount = invoice_total
+
+
+def validate_fuel_subsidy_reimbursable_amount(report: ExpenseReport) -> None:
+    for item in report.expense_items:
+        if item.category != FUEL_SUBSIDY_CATEGORY or item.reimbursable_amount is None:
+            continue
+        invoice_total = confirmed_invoice_total_for_category(report, FUEL_SUBSIDY_CATEGORY)
+        if item.reimbursable_amount > invoice_total:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="燃油补助报销金额不能大于已确认发票合计")
+
+
 def build_trip_date(year: int, month: int, day: int) -> date:
     try:
         return date(year, month, day)
@@ -171,7 +222,7 @@ def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> l
 
         arrive_year = current_year + 1 if (trip.arrive_month, trip.arrive_day) < depart_month_day else current_year
         arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        validate_trip_chronology(trip, depart, arrive)
+        validate_trip_chronology(trip, depart, arrive, arrive_year > current_year)
         ranges.append(TripDateRange(trip=trip, depart=depart, arrive=arrive))
         previous_depart_month_day = depart_month_day
 
@@ -263,10 +314,12 @@ def count_merged_interval_days(intervals: list[tuple[date, date]]) -> int:
     return sum((end - start).days + 1 for start, end in merged)
 
 
-def validate_trip_chronology(trip: Trip, depart: date, arrive: date) -> None:
+def validate_trip_chronology(trip: Trip, depart: date, arrive: date, is_cross_year_arrival: bool) -> None:
     travel_days = (arrive - depart).days
-    if travel_days < 0 or travel_days > MAX_TRIP_TRAVEL_DAYS:
-        raise TripDateError("行程到达日期不能早于出发日期；仅允许不超过 7 天的跨年到达")
+    if travel_days < 0:
+        raise TripDateError("行程到达日期不能早于出发日期")
+    if is_cross_year_arrival and travel_days > MAX_TRIP_TRAVEL_DAYS:
+        raise TripDateError("跨年到达的单段行程不能超过 7 天")
     if arrive == depart and trip.depart_hour is not None and trip.arrive_hour is not None and trip.arrive_hour < trip.depart_hour:
         raise TripDateError("同日行程到达时间不能早于出发时间")
 
@@ -282,15 +335,10 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
-    invoices_total = sum(
-        (
-            invoice.amount
-            for invoice in report.invoices
-            if invoice.deleted_at is None and invoice.amount_confirmed
-        ),
-        Decimal("0.00"),
-    )
-    report.total_amount = quantize_amount(invoices_total + report.subsidy_total)
+    clamp_fuel_subsidy_reimbursable_amount(report)
+    transport_total = confirmed_transport_invoice_total(report)
+    other_expense_total = sum((item.amount for item in report.expense_items if item.category != "transport_fare"), Decimal("0.00"))
+    report.total_amount = quantize_amount(transport_total + other_expense_total + report.subsidy_total)
     report.shortfall = quantize_amount(max(Decimal("0.00"), report.total_amount - report.advance_amount))
     report.surplus = quantize_amount(max(Decimal("0.00"), report.advance_amount - report.total_amount))
 
@@ -382,6 +430,11 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
             by_category[category] = item
         else:
             item.remark = payload.remark
+        item.reimbursable_amount = (
+            quantize_amount(payload.reimbursable_amount)
+            if category == FUEL_SUBSIDY_CATEGORY and payload.reimbursable_amount is not None
+            else None
+        )
 
     for item in list(report.expense_items):
         if not is_custom_category(item.category) or item.category in requested_custom_categories:
@@ -389,6 +442,7 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
         if active_invoices_for_category(report, item.category):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先删除发票后再删除类别")
         report.expense_items.remove(item)
+    validate_fuel_subsidy_reimbursable_amount(report)
 
 
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
