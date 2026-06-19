@@ -101,7 +101,7 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to update GitHub Release $tag."
             }
-            $existing = gh release view $tag --json assets | ConvertFrom-Json
+            $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
             foreach ($asset in $existing.assets) {
               if ($asset.name -like "*.zip" -and $desiredAssetNames -notcontains $asset.name) {
                 gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
