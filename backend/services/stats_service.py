@@ -6,7 +6,6 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.schemas.stats import (
     MonthlyTrendItem,
@@ -74,19 +73,14 @@ def get_stats_category(
         and report.report_date is not None
         and period_start <= report.report_date < period_end
     ]
-    report_ids = {report.id for report in reimbursed_reports}
-    if report_ids:
-        invoices = db.scalars(
-            select(Invoice).where(
-                Invoice.report_id.in_(report_ids),
-                Invoice.deleted_at.is_(None),
-                Invoice.amount_confirmed.is_(True),
-            )
-        ).all()
-        for invoice in invoices:
-            amounts[invoice.expense_category] = quantize_amount(
-                amounts.get(invoice.expense_category, Decimal("0.00")) + invoice.amount
-            )
+    for report in reimbursed_reports:
+        for trip in report.trips:
+            if trip.amount:
+                amounts["transport_fare"] = quantize_amount(amounts.get("transport_fare", Decimal("0.00")) + trip.amount)
+        for item in report.expense_items:
+            if item.category == "transport_fare" or not item.amount:
+                continue
+            amounts[item.category] = quantize_amount(amounts.get(item.category, Decimal("0.00")) + item.amount)
 
     subsidy_total = sum((report.subsidy_total for report in reimbursed_reports), Decimal("0.00"))
     if subsidy_total:

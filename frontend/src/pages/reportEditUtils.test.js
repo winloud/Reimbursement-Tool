@@ -20,6 +20,7 @@ import {
   moveTrip,
   normalizeTrip,
   swapTripEndpoints,
+  validateFuelSubsidyAmount,
 } from "./reportEditUtils.js";
 
 describe("report edit utilities", () => {
@@ -109,8 +110,19 @@ describe("report edit utilities", () => {
           subsidy_end: false,
         },
       ],
-      expense_items: [{ id: 2, category: "luggage", remark: "箱子" }],
+      expense_items: [{ id: 2, category: "luggage", remark: "箱子", reimbursable_amount: null }],
     });
+
+    assert.deepEqual(
+      buildReportPayload({
+        form,
+        trips: [],
+        expenseItems: [
+          { id: 3, category: "fuel_subsidy", remark: "", reimbursable_amount: "180.00" },
+        ],
+      }).expense_items,
+      [{ id: 3, category: "fuel_subsidy", remark: null, reimbursable_amount: "180.00" }],
+    );
   });
 
   it("supports trip reorder, copy, swap, and return trip generation", () => {
@@ -159,6 +171,34 @@ describe("report edit utilities", () => {
     });
   });
 
+  it("summarizes fuel subsidy by reimbursable amount and validates invoice ceiling", () => {
+    const summary = calculateSummary({
+      reportDate: "2026-06-01",
+      dailySubsidy: "0",
+      advanceAmount: "0",
+      trips: [],
+      invoices: [
+        { trip_id: 8, amount: "50.00", amount_confirmed: true },
+        { expense_category: "fuel_subsidy", amount: "300.00", amount_confirmed: true },
+      ],
+      expenseItems: [
+        {
+          category: "fuel_subsidy",
+          reimbursable_amount: "180.00",
+          invoice_total: "300.00",
+          amount: "180.00",
+        },
+      ],
+    });
+
+    assert.equal(summary.invoiceTotal, 230);
+    assert.equal(summary.total, 230);
+    assert.equal(
+      validateFuelSubsidyAmount({ category: "fuel_subsidy", reimbursable_amount: "301.00", invoice_total: "300.00" }),
+      "报销金额不能大于发票合计",
+    );
+  });
+
   it("calculates subsidy days from default start and end markers", () => {
     const trips = [
       normalizeTrip({ depart_month: 3, depart_day: 4, depart_place: "杭州", arrive_month: 3, arrive_day: 4, arrive_place: "芜湖" }, 0),
@@ -190,6 +230,12 @@ describe("report edit utilities", () => {
   });
 
   it("allows a short cross-year trip and rejects invalid trip spans", () => {
+    assert.equal(
+      calculateSubsidyDays("2026-06-19", [
+        normalizeTrip({ depart_month: 5, depart_day: 10, arrive_month: 6, arrive_day: 8 }, 0),
+      ]),
+      30,
+    );
     assert.equal(
       calculateSubsidyDays("2026-12-01", [
         normalizeTrip({ depart_month: 12, depart_day: 30, arrive_month: 1, arrive_day: 2 }, 0),

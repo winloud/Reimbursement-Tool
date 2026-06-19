@@ -2,6 +2,7 @@ from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 from sqlalchemy import create_engine, text
 
 from backend.database import connection
@@ -53,6 +54,70 @@ def test_font_list_includes_bundled_font_with_filename_fallback(monkeypatch, tmp
     assert fonts[0]["source_label"] == "项目内置字体"
 
 
+def test_font_list_maps_known_bundled_font_to_stable_system_key(monkeypatch, tmp_path):
+    from backend.services import font_service
+
+    bundled_dir = tmp_path / "assets" / "fonts"
+    app_fonts_dir = tmp_path / "app-fonts"
+    bundled_dir.mkdir(parents=True)
+    app_fonts_dir.mkdir()
+    simsun = bundled_dir / "simsun.ttc"
+    simsun.write_bytes(b"not a real font")
+    monkeypatch.setattr(font_service, "BUNDLED_FONTS_DIR", bundled_dir)
+    monkeypatch.setattr(font_service, "APP_FONTS_DIR", app_fonts_dir)
+    monkeypatch.setattr(
+        font_service,
+        "SYSTEM_FONT_DEFINITIONS",
+        [
+            {
+                "key": "system:simsun",
+                "name": "宋体",
+                "filenames": ["simsun.ttc"],
+                "paths": [tmp_path / "missing" / "simsun.ttc"],
+            }
+        ],
+    )
+
+    fonts = font_service.list_available_fonts()
+
+    assert fonts == [
+        {
+            "key": "system:simsun",
+            "name": "宋体",
+            "source": "bundled",
+            "source_label": "部署字体",
+        }
+    ]
+    assert font_service.resolve_font_file("system:simsun") == simsun
+
+
+def test_resolve_font_file_checks_app_fonts_dir(monkeypatch, tmp_path):
+    from backend.services import font_service
+
+    bundled_dir = tmp_path / "bundled"
+    app_fonts_dir = tmp_path / "fonts"
+    bundled_dir.mkdir()
+    app_fonts_dir.mkdir()
+    simhei = app_fonts_dir / "simhei.ttf"
+    simhei.write_bytes(b"not a real font")
+    monkeypatch.setattr(font_service, "BUNDLED_FONTS_DIR", bundled_dir)
+    monkeypatch.setattr(font_service, "APP_FONTS_DIR", app_fonts_dir)
+    monkeypatch.setattr(
+        font_service,
+        "SYSTEM_FONT_DEFINITIONS",
+        [
+            {
+                "key": "system:simhei",
+                "name": "黑体",
+                "filenames": ["simhei.ttf"],
+                "paths": [tmp_path / "missing" / "simhei.ttf"],
+            }
+        ],
+    )
+
+    assert font_service.resolve_font_file("system:simhei") == simhei
+
+
 def test_update_settings_rejects_unknown_font_key(monkeypatch, db):
     monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: False)
 
@@ -80,6 +145,7 @@ def test_settings_default_pdf_fill_font_key(db):
     assert settings.pdf_fill_font_key == "system:simsun"
     assert settings.double_print_vat_special_invoices is True
     assert settings.invoice_qr_engine == "zxing"
+    assert settings.autosave_delay_seconds == 3
 
 
 def test_update_settings_can_disable_vat_special_double_print(monkeypatch, db):
@@ -97,6 +163,31 @@ def test_update_settings_can_disable_vat_special_double_print(monkeypatch, db):
     )
 
     assert settings.double_print_vat_special_invoices is False
+
+
+def test_update_settings_saves_autosave_delay_seconds(monkeypatch, db):
+    monkeypatch.setattr(settings_service, "font_key_exists", lambda _key: True)
+
+    settings = settings_service.update_settings(
+        db,
+        SettingsUpdate(
+            department="财务部",
+            employee_name="李四",
+            daily_subsidy=Decimal("100.00"),
+            pdf_fill_font_key="system:simsun",
+            autosave_delay_seconds=12,
+        ),
+    )
+
+    assert settings.autosave_delay_seconds == 12
+
+
+def test_settings_update_rejects_autosave_delay_outside_limits():
+    with pytest.raises(ValidationError):
+        SettingsUpdate(autosave_delay_seconds=2)
+
+    with pytest.raises(ValidationError):
+        SettingsUpdate(autosave_delay_seconds=61)
 
 
 def test_update_settings_saves_zxing_invoice_qr_engine_without_runtime_install(monkeypatch, db):
@@ -160,6 +251,7 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
     engine = create_engine("sqlite://")
     with engine.begin() as db:
         db.execute(text("CREATE TABLE trips (id INTEGER PRIMARY KEY)"))
+        db.execute(text("CREATE TABLE expense_items (id INTEGER PRIMARY KEY)"))
         db.execute(
             text(
                 "CREATE TABLE settings ("
@@ -176,6 +268,9 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
 
     with engine.begin() as db:
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(settings)")).fetchall()}
+        expense_item_columns = {row[1] for row in db.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
     assert "pdf_fill_font_key" in columns
     assert "double_print_vat_special_invoices" in columns
     assert "invoice_qr_engine" in columns
+    assert "autosave_delay_seconds" in columns
+    assert "reimbursable_amount" in expense_item_columns

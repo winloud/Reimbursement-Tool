@@ -14,7 +14,7 @@
 ...
 
 本次不做：
-...
+- 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
 
 ## 版本号判断
 - 如果只是修复问题：v1.1.1
@@ -29,6 +29,16 @@
 ### 重要改动
 - [x] 新增源码开发服务重启入口：`restart-dev.cmd` + `scripts/restart-dev.ps1`
 - [x] 新增 `AGENTS.md` / `CLAUDE.md` AI 协作入口
+- [x] 新增 Linux 服务器部署文档入口，并整理 `docs/deployment/linux-server.md`
+- [x] Linux 部署支持服务器本地中文字体目录，修复服务器上个性化设置因字体缺失无法保存的问题
+- [x] Linux 部署下报销单 PDF 其他费用项目名改为从服务器部署字体目录加载楷体
+- [x] 燃油补助支持手动填写报销金额，报销金额与报销单总额/PDF/统计保持一致
+- [x] 燃油补助报销金额不允许大于已确认发票合计；发票删除或金额调小时自动压回发票合计
+- [x] 报销单编辑页自动保存改为延时保存，并新增手动保存；保存失败改用底部提示，减少输入时页面布局跳动
+- [x] 个性化设置新增自动保存延时，支持 3-60 秒范围内调整报销单编辑页自动保存等待时间
+- [x] 总览看板出差负荷热力图色阶改为从 `rgb(108, 166, 119)` 过渡到 `rgb(205, 165, 93)`
+- [x] 个性化设置页改为更紧凑的设置面板布局，提升默认信息、编辑体验、二维码识别和 PDF 设置的视觉分组
+- [x] 修正行程日期校验：同年长跨月行程允许保存，仅限制跨年到达的单段行程不超过 7 天
 - [x] 新增 `CHANGELOG.md`，并明确 active-plan 记录过程、CHANGELOG 记录结果
 - [x] 补齐历史更新日志：将首次发布能力归入 `v1.0.0`，将二维码识别与发布包优化归入 `v1.1.0`
 - [x] 新增 `docs/README.md`、`docs/releases/active-plan.md`、`docs/backlog.md`
@@ -42,6 +52,21 @@
 - [ ] PowerShell 脚本语法检查：
 - [ ] 发布打包：
 - [ ] ZIP 内容检查：
+- [x] Linux 服务器部署验证：Ubuntu Server 26.04 LTS 虚拟机，Python 3.13.14 venv，后端 systemd + Nginx 反代，前端构建和 `/api/health` 均验证通过
+- [x] Linux 字体验证：服务器 `/api/settings/fonts` 返回微软雅黑、宋体、仿宋、楷体、黑体；`PUT /api/settings` 保存默认报销信息成功；服务重启后仍可读取
+- [x] Linux PDF 字体验证：报销单 1 预览接口返回成功，生成 PDF 字体资源包含 `/AAAAAA+KaiTi`
+- [x] 后端全量测试：`python -m pytest -q`，150 passed
+- [x] 前端工具测试：`node --test src/pages/reportEditUtils.test.js`，11 passed
+- [x] 前端生产构建：`npm run build` 成功
+- [x] 行程日期修正验证：`python -m pytest tests/test_phase3.py -q`，44 passed；`node --test src/pages/reportEditUtils.test.js`，11 passed；`npm run build` 成功
+- [x] 自动保存延时设置验证：`python -m pytest tests/test_settings_fonts.py -q`，13 passed；`node --test src/pages/settingsPageUtils.test.js`，6 passed；`npm run build` 成功
+- [x] 个性化设置页视觉分组验证：`node --test src/pages/settingsPageUtils.test.js`，6 passed；`npm run build` 成功；本地浏览器确认桌面两列、移动单列布局正常
+- [x] 字体提示归属验证：`node --test src/pages/settingsPageUtils.test.js`，6 passed；`npm run build` 成功；本地浏览器确认字体授权风险和内置字体目录提示已移入 PDF 填充字体卡片
+- [x] 个性化设置页面板布局验证：`node --test src/pages/settingsPageUtils.test.js`，6 passed；`npm run build` 成功；本地浏览器 DOM 检查确认默认信息和字体设置为整行面板，编辑体验、二维码识别和 PDF 导出为三列短面板
+- [x] 出差热力图色阶验证：`node --test src/pages/dashboardUtils.test.js`，12 passed；`npm run build` 成功；本地浏览器确认图例从 `rgba(108, 166, 119, 0.82)` 过渡到 `rgba(205, 165, 93, 0.82)`
+- [x] Linux 服务器行程日期验证：临时报销单 `5/10 -> 6/8` 保存成功，补贴天数 `30`；临时报销单已彻底清理
+- [x] Linux 服务器同步验证：使用用户当次确认的 VM 地址完成前端重新构建、`reimbursement-tool.service` 重启和 `/api/health` 检查；该地址是当时 DHCP 分配的历史验证地址，不作为后续默认 server IP
+- [x] Linux 服务器燃油补助验证：临时报销单发票合计 `300.00`、报销金额 `180.00` 计入总额成功；`301.00` 被拒绝；临时报销单已彻底清理
 
 ### 已同步到 CHANGELOG
 - [x] 源码开发服务重启入口
@@ -51,3 +76,9 @@
 - [x] 发布脚本避免覆盖历史 ZIP
 - [x] active-plan 记录过程，CHANGELOG 记录面向用户的版本结果
 - [x] V1.0.0 / V1.1.0 历史版本更新日志口径修正
+- [x] 燃油补助报销金额手动调整与保存体验优化
+- [x] 行程日期校验提示和跨月行程保存修正
+- [x] 自动保存延时支持在个性化设置中调整
+- [x] 总览看板出差负荷热力图色阶调整
+- [x] 个性化设置页紧凑面板布局优化
+- [x] 字体授权风险和内置字体目录提示归入 PDF 填充字体卡片

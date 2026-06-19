@@ -38,6 +38,7 @@ class ExpenseItemWrite(BaseModel):
     id: int | None = None
     category: str = Field(min_length=1)
     remark: str | None = None
+    reimbursable_amount: Decimal | None = Field(default=None, ge=0)
 
 
 class ReportBase(BaseModel):
@@ -147,7 +148,9 @@ class ExpenseItemRead(BaseModel):
     category: str
     remark: str | None = None
     invoice_count: int = 0
+    invoice_total: Decimal = Decimal("0.00")
     amount: Decimal = Decimal("0.00")
+    reimbursable_amount: Decimal | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

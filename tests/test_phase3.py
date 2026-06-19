@@ -359,6 +359,14 @@ def test_calculate_subsidy_days_across_month():
     assert calculate_subsidy_days(2026, trips) == 4
 
 
+def test_calculate_subsidy_days_allows_long_same_year_cross_month_trip():
+    trips = [
+        Trip(depart_month=5, depart_day=10, arrive_month=6, arrive_day=8, sort_order=1),
+    ]
+
+    assert calculate_subsidy_days(2026, trips) == 30
+
+
 def test_calculate_subsidy_days_allows_short_cross_year_trip():
     trips = [
         Trip(depart_month=12, depart_day=30, arrive_month=1, arrive_day=2, sort_order=1),
@@ -692,6 +700,125 @@ def test_upload_invoice_to_existing_custom_category_succeeds_and_confirmed_amoun
 
     assert invoice.expense_category == "custom:宴请"
     assert report.total_amount == Decimal("188.80")
+
+
+def test_fuel_subsidy_reimbursable_amount_overrides_invoice_total(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+    fuel_item = next(item for item in updated.expense_items if item.category == "fuel_subsidy")
+
+    assert fuel_item.invoice_total == Decimal("300.00")
+    assert fuel_item.amount == Decimal("180.00")
+    assert updated.total_amount == Decimal("180.00")
+
+
+def test_fuel_subsidy_reimbursable_amount_cannot_exceed_invoice_total(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report(
+            db,
+            report.id,
+            ReportUpdate(
+                report_date=date(2026, 6, 3),
+                expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("301.00")}],
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "不能大于" in exc_info.value.detail
+
+
+def test_non_fuel_category_ignores_reimbursable_amount(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="luggage",
+            file_path="uploads/luggage.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "luggage", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+    luggage_item = next(item for item in updated.expense_items if item.category == "luggage")
+
+    assert luggage_item.reimbursable_amount is None
+    assert luggage_item.amount == Decimal("300.00")
+    assert updated.total_amount == Decimal("300.00")
+
+
+def test_fuel_subsidy_reimbursable_amount_clamps_after_invoice_decrease(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="fuel_subsidy",
+        file_path="uploads/fuel.pdf",
+        file_type="pdf",
+        amount=Decimal("300.00"),
+        amount_confirmed=True,
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(report)
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+
+    update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("120.00"), amount_confirmed=True))
+    db.refresh(report)
+    fuel_item = next(item for item in report.expense_items if item.category == "fuel_subsidy")
+
+    assert fuel_item.reimbursable_amount == Decimal("120.00")
+    assert report.total_amount == Decimal("120.00")
 
 
 def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):

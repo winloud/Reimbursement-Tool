@@ -16,6 +16,7 @@
 - 测试或验证：读取或更新 `docs/testing/` 中相关测试依据。
 - 发布版本：读取 `docs/releases/active-plan.md`、根目录 `README.md`、`CHANGELOG.md` 和发布脚本。
 - 不确定项目状态时：读取 `docs/README.md` 和 `docs/expense-reimbursement-plan.md`。
+- Linux 服务器部署、迁移或运维：读取 `docs/deployment/linux-server.md`、`docs/releases/active-plan.md` 和相关部署脚本；涉及技术路线变化时同步读取或更新 `docs/decisions/`。
 
 ## 工作规则
 
@@ -26,6 +27,7 @@
 - 重要测试结果必须写入 docs/testing/ 或 active-plan 的测试记录。
 - 不要未经用户确认改变核心技术路线。
 - 不要上传、push、发布到远端，除非用户明确要求。
+- 开发阶段默认只在本地修改和测试，不要主动同步、部署或验证 Linux 服务器；仅当用户明确要求 server 测试、部署、同步，或发布前验证时，才操作 Linux 服务器。服务器 IP 地址不要写死，必须以用户当次提供或确认的地址为准；已记录的历史 IP 仅作验证记录，不作为默认目标。
 - 不要把 release ZIP、运行态 data/uploads/logs、测试样本纳入 Git。
 - 不要删除用户数据、测试样本或运行态目录，除非用户明确确认。
 
@@ -41,6 +43,7 @@
 - 如果 active-plan 中有“待同步到 CHANGELOG”的用户可见变化，是否已经同步。
 - 是否运行了必要测试；未运行时说明原因。
 - git status 是否只包含预期变更。
+- 是否需要更新 `docs/deployment/linux-server.md` 中的部署步骤、环境约束或验证记录。
 
 ## 发布规则
 

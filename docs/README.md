@@ -19,6 +19,9 @@
 ## 测试依据
 - testing/
 
+## 部署
+- Linux 服务器部署：[deployment/linux-server.md](deployment/linux-server.md)
+
 ## 历史归档
 - archive/
 
