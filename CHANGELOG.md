@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## v1.1.1 - 2026-06-20
+
 ### Added
 
 - 新增源码开发服务重启入口：`restart-dev.cmd` 调用 `scripts/restart-dev.ps1`，可统一重启后端 `127.0.0.1:8000` 和前端 `127.0.0.1:5174`。
@@ -11,11 +13,13 @@
 - 新增开发文档入口 `docs/README.md` 和当前开发计划 `docs/releases/active-plan.md`。
 - 燃油补助新增可手动填写的报销金额；为空时仍按已确认发票合计计算。
 - 个性化设置新增自动保存延时，可在 3-60 秒之间调整报销单编辑页的自动保存等待时间。
+- 新增 GitHub tag 发布工作流：推送 `v*` 标签后自动构建主 ZIP 和可选 OpenCV runtime ZIP，并从本文件对应版本段落生成 GitHub Release notes。
 
 ### Changed
 
 - 发布 ZIP 命名规则改为 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 - 发布脚本不再清空 `release/` 目录，也不覆盖已有主 ZIP 或 OpenCV runtime ZIP；如同名文件已存在，脚本会报错并要求手动删除。
+- 发布脚本默认版本更新为 `1.1.1`。
 - 根目录 `README.md` 保持最终用户发布说明定位，移除源码开发服务重启说明。
 - 报销单编辑页自动保存改为延时保存，并新增手动保存；PDF 预览、下载、状态流转和页面导航前会先尝试保存未提交修改。
 - 总览看板出差负荷热力图色阶改为从绿色过渡到赭黄色，便于区分连续出差负荷。
@@ -38,6 +42,7 @@
 - 将 240 个发票样本的二维码路线对照测试记录移动到 `docs/testing/`。
 - 新增 Linux 服务器部署文档 `docs/deployment/linux-server.md`，记录 Python 3.13、systemd、Nginx 和服务器本地字体部署要求。
 - 新增 `CHANGELOG.md`，并明确 `active-plan` 记录过程、`CHANGELOG` 记录面向用户和交付流程的结果。
+- 冻结本轮发布记录到 `docs/releases/v1.1.1-plan.md`，并重建下一轮 `docs/releases/active-plan.md`。
 
 ## v1.1.0 - 2026-06-09
 

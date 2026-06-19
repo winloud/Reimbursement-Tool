@@ -20,7 +20,7 @@
 
 ## 二、当前状态
 
-- 当前稳定版：`v1.1.0`
+- 当前稳定版：`v1.1.1`
 - 当前开发版：TBD
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
@@ -66,6 +66,7 @@
 
 | 版本 | 状态 | 文档 |
 | --- | --- | --- |
+| `v1.1.1` | 已发布 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | `v1.1.0` | 已发布 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
 | 当前开发 | 规划中 | [releases/active-plan.md](releases/active-plan.md) |
 
@@ -83,6 +84,7 @@
 
 | 测试 | 结论 | 文档 |
 | --- | --- | --- |
+| V1.1.1 发布验证 | 后端、前端工具测试、前端构建、CHANGELOG 提取、主 ZIP 和 ZIP 内容检查均已验证 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | 发票 QR 两路线对照测试 | `test example/` 240 个 PDF 中，zxing 与 OpenCV payload 和最终解析结果均 `240/240` 一致 | [testing/invoice_qr_route_comparison_2026-06-09.md](testing/invoice_qr_route_comparison_2026-06-09.md) |
 | V1.1.0 发布验证 | 后端、前端工具测试、前端构建、主 ZIP、可选 OpenCV runtime、冻结 EXE 短启动均已验证 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
 
@@ -95,4 +97,4 @@
 1. 增加新版本安装/覆盖升级说明，明确哪些目录可覆盖、哪些运行态数据必须保留。
 2. 增加一键备份/恢复或至少提供可视化备份入口。
 3. 增加诊断信息导出：版本号、数据目录、日志路径、QR 引擎、浏览器/WebView2 状态。
-4. 完善发布清单：`README.md`、`CHANGELOG.md`、测试结果摘要、已知问题和本地 tag。
+4. 完善发布后的 GitHub Actions 结果回查和 Release 资产校验记录。
