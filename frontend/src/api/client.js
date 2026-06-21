@@ -83,6 +83,73 @@ export const executeDataImport = async (payload) => {
   return response.data;
 };
 
+export const getMaintenanceInfo = async () => {
+  const response = await apiClient.get("/api/maintenance/info");
+  return response.data;
+};
+
+export const createMaintenanceBackup = async () => {
+  const response = await apiClient.post("/api/maintenance/backups");
+  return response.data;
+};
+
+export const downloadMaintenanceBackup = async (backupId) => {
+  try {
+    const response = await apiClient.get(`/api/maintenance/backups/${encodeURIComponent(backupId)}/download`, {
+      responseType: "blob",
+    });
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
+    };
+  } catch (err) {
+    return normalizeBlobError(err);
+  }
+};
+
+export const previewMaintenanceRestore = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiClient.post("/api/maintenance/restore/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+};
+
+export const executeMaintenanceRestore = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/restore/execute", payload);
+  return response.data;
+};
+
+export const previewMaintenanceUpdate = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiClient.post("/api/maintenance/updates/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const executeMaintenanceUpdate = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/updates/execute", payload, { timeout: 120000 });
+  return response.data;
+};
+
+export const downloadMaintenanceDiagnostics = async () => {
+  try {
+    const response = await apiClient.get("/api/maintenance/diagnostics", {
+      responseType: "blob",
+    });
+    return {
+      blob: response.data,
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".json"),
+    };
+  } catch (err) {
+    return normalizeBlobError(err);
+  }
+};
+
 export const getReport = async (id) => {
   const response = await apiClient.get(`/api/reports/${id}`);
   return response.data;

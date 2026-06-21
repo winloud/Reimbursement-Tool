@@ -15,6 +15,7 @@
 
 ## 技术决策
 - decisions/
+- ZIP 桌面升级路线：[decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md)
 
 ## 测试依据
 - testing/
@@ -27,3 +28,4 @@
 
 ## 开发与调试
 - 本地开发服务启动/重启：[dev-server.md](dev-server.md)
+- ZIP 本地安装、升级和备份指南：[zip-upgrade-guide.md](zip-upgrade-guide.md)

@@ -43,10 +43,13 @@ node_modules/
 data/*.db
 data/import_staging/
 data/backups/
+data/restore_staging/
+data/update_staging/
 
 # Local desktop runtime artifacts
 logs/
 browser-profile/
+window-state.json
 
 # Backend uploads
 backend/uploads/

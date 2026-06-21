@@ -55,7 +55,9 @@
   - major：不兼容旧数据或旧使用方式。
 - 运行测试和打包验证。
 - 确认 release/ 只作为本地产物，不提交 Git。
-- ZIP 包文件名规则为 `报销管理-vX.Y.Z-yyyymmdd.zip`，避免同名覆盖；已有 ZIP 只允许用户手动删除。
+- 正式 ZIP 包文件名规则为 `报销管理-vX.Y.Z-yyyymmdd.zip`，避免同名覆盖；已有 ZIP 只允许用户手动删除。
+- 预览 ZIP 不得自作主张编造或占用正式版本号。未绑定目标版本时命名为 `报销管理-preview-yyyymmdd-NNN.zip`；如果 `docs/releases/active-plan.md` 已明确目标版本 `vX.Y.Z`，命名为 `报销管理-vX.Y.Z-preview-yyyymmdd-NNN.zip`。`NNN` 为当天三位数字流水号，例如 `001`。
+- 只有正式发版或用户明确指定正式版本时，才生成 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 - 发布版本时，默认按 `docs/releases/active-plan.md`、`CHANGELOG.md`、`scripts/build_release.ps1` 和 `.github/workflows/publish-release.yml` 的 tag 发布流程执行；推送 `vX.Y.Z` tag 后由 GitHub Actions 创建或更新 GitHub Release，并自动从 `CHANGELOG.md` 抽取对应版本说明。
 - GitHub Release 主 ZIP 资产使用 ASCII 文件名 `reimbursement-tool-vX.Y.Z-yyyymmdd.zip`，避免 GitHub 规范化非 ASCII 资产名；本地 `release/` 主 ZIP 仍使用 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 - 发布完成后，将 docs/releases/active-plan.md 冻结为 docs/releases/vX.Y.Z-plan.md。

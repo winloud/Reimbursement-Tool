@@ -4,7 +4,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
+from backend import app_metadata
 from backend.main import create_app
+from backend import runtime_paths
 from backend.runtime_paths import uploaded_path
 
 
@@ -34,12 +36,66 @@ def test_uploaded_path_uses_runtime_upload_root(tmp_path: Path):
     assert uploaded_path("8/invoice.pdf", tmp_path) == tmp_path / "8" / "invoice.pdf"
 
 
+def test_frozen_app_root_detects_portable_install_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    exe_path = tmp_path / "报销管理" / "versions" / "1.2.0" / "报销管理.exe"
+    exe_path.parent.mkdir(parents=True)
+    exe_path.write_bytes(b"exe")
+    monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
+    monkeypatch.setattr(runtime_paths.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
+
+    assert runtime_paths.app_root() == tmp_path / "报销管理"
+
+
+def test_app_root_prefers_launcher_configured_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    configured_root = tmp_path / "portable-root"
+    monkeypatch.setenv("REIMBURSEMENT_APP_ROOT", str(configured_root))
+
+    assert runtime_paths.app_root() == configured_root
+
+
+def test_app_version_prefers_launcher_configured_version(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv("REIMBURSEMENT_APP_VERSION", "1.2.0")
+
+    assert app_metadata.resolve_app_version() == "1.2.0"
+
+
+def test_app_version_detects_portable_version_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    exe_path = tmp_path / "报销管理" / "versions" / "1.2.0" / "报销管理.exe"
+    exe_path.parent.mkdir(parents=True)
+    exe_path.write_bytes(b"exe")
+    monkeypatch.delenv("REIMBURSEMENT_APP_VERSION", raising=False)
+    monkeypatch.setattr(app_metadata.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app_metadata.sys, "executable", str(exe_path))
+
+    assert app_metadata.resolve_app_version() == "1.2.0"
+
+
 def test_release_script_can_build_optional_opencv_runtime_package():
     script = (Path(__file__).resolve().parents[1] / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$BuildOpenCvRuntime" in script
+    assert "[switch]$PreviewBuild" in script
+    assert "[string]$PreviewSerial" in script
+    assert "[switch]$TestBuild" in script
+    assert "[string]$TestBuildSerial" in script
+    assert "TestBuild is deprecated. Use -PreviewBuild and -PreviewSerial NNN." in script
+    assert "$PreviewId = \"preview-$ReleaseDate-$PreviewSerial\"" in script
+    assert '$ZipFileName = "{0}-{1}.zip" -f $AppName, $PreviewId' in script
+    assert '$ZipFileName = "{0}-v{1}-{2}.zip" -f $AppName, $Version, $PreviewId' in script
+    assert "PreviewSerial must be a three-digit daily serial" in script
+    assert "Version is required for formal release builds. Use -PreviewBuild" in script
+    assert "Compress-ArchiveWithRetry" in script
+    assert "Compress-Archive failed on attempt" in script
+    assert '$ZipFileName = "{0}-v{1}-{2}.zip" -f $AppName, $PackageVersion, $ReleaseDate' in script
+    assert '$StageName = ".staging-{0}-{1}" -f $PackageVersion, $ReleaseDate' in script
     assert "[string]$ReleaseDate" in script
     assert "ReleaseDate must use yyyymmdd format" in script
+    assert "reimbursement_launcher.spec" in script
+    assert "portable-release.json" in script
+    assert '"versions\\$PackageVersion"' in script
+    assert "scripts\\upgrade_zip_release.ps1" in script
+    assert '"browser-profile", "vendor"' in script
     assert "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip" in script
     assert "opencv_package_version" in script
     assert "numpy_version" in script

@@ -22,6 +22,7 @@ import ScheduleIcon from "@mui/icons-material/Schedule";
 import TuneIcon from "@mui/icons-material/Tune";
 import TranslateIcon from "@mui/icons-material/Translate";
 import { getSettingFonts, getSettings, updateSettings } from "../api/client";
+import MaintenancePanel from "./MaintenancePanel";
 import {
   AUTOSAVE_DELAY_MAX_SECONDS,
   AUTOSAVE_DELAY_MIN_SECONDS,
@@ -366,6 +367,8 @@ export default function SettingsPage() {
               </Box>
             </CardContent>
           </Card>
+
+          <MaintenancePanel />
         </Stack>
       )}
 

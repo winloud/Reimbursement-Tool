@@ -24,7 +24,7 @@
 - 当前开发版：TBD
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
-- 发布方式：本地生成 ZIP，不同步上传；用户解压后运行 `报销管理/报销管理.exe`
+- 发布方式：本地生成 ZIP，不同步上传；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
 - 默认发票二维码识别路线：`zxing-cpp`
 - 可选兼容路线：`OpenCV + NumPy + WeChatQRCode`，通过 EXE 同目录 runtime ZIP 本地安装
 
@@ -48,7 +48,7 @@
 
 ### 数据与统计
 
-- SQLite 本地存储，运行态数据位于 EXE 同级 `data/`、`uploads/`、`logs/`。
+- SQLite 本地存储，运行态数据位于便携安装根目录 `data/`、`uploads/`、`logs/`。
 - 支持完整报销数据 ZIP 导入导出，导入执行前自动备份数据库和受影响附件。
 - 看板支持金额汇总、月份范围、费用分布、趋势图和出差负荷热力图。
 
@@ -77,6 +77,7 @@
 | 决策 | 结论 | 文档 |
 | --- | --- | --- |
 | 发票二维码识别路线 | 默认 `zxing-cpp`，OpenCV WeChatQRCode 作为可选兼容模式 | [decisions/0001-invoice-qr-engine.md](decisions/0001-invoice-qr-engine.md) |
+| ZIP 桌面升级路线 | 采用便携式安装根目录、根目录 launcher 和版本目录，不与 Linux server 强行合并升级执行链 | [decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md) |
 
 ---
 
@@ -94,7 +95,6 @@
 
 优先级建议：
 
-1. 增加新版本安装/覆盖升级说明，明确哪些目录可覆盖、哪些运行态数据必须保留。
-2. 增加一键备份/恢复或至少提供可视化备份入口。
-3. 增加诊断信息导出：版本号、数据目录、日志路径、QR 引擎、浏览器/WebView2 状态。
-4. 完善发布后的 GitHub Actions 结果回查和 Release 资产校验记录。
+1. 完成便携式 ZIP 安装根目录、程序内更新和发布包结构验证。
+2. 完善正式发布 README 中的首次安装、从旧 ZIP 迁移和程序内更新说明。
+3. 完善发布后的 GitHub Actions 结果回查和 Release 资产校验记录。
