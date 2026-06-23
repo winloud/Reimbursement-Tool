@@ -604,6 +604,7 @@ export default function ReportEdit() {
   const handleFilesUpload = async ({ files, expenseCategory, tripId = null, key }) => {
     const fileList = Array.from(files || []);
     if (fileList.length === 0 || readonly || !id) return;
+    if (!(await ensureSavedBeforeAction())) return;
 
     const uploaded = [];
     setError("");

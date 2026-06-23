@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
@@ -42,6 +43,25 @@ describe("report edit utilities", () => {
     assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [] }), true);
     assert.equal(isEmptyDraft({ form: { ...form, purpose: "成都出差" }, defaults, trips: [], invoices: [] }), false);
     assert.equal(isEmptyDraft({ form, defaults, trips: [makeBlankTrip("2026-06-03")], invoices: [] }), false);
+  });
+
+  it("saves pending report edits before uploading invoices", () => {
+    const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const handlerStart = source.indexOf("const handleFilesUpload = async");
+    const handlerEnd = source.indexOf("const handleDeleteInvoice", handlerStart);
+    assert.notEqual(handlerStart, -1);
+    assert.notEqual(handlerEnd, -1);
+
+    const handler = source.slice(handlerStart, handlerEnd);
+    const saveIndex = handler.indexOf("ensureSavedBeforeAction()");
+    const uploadStateIndex = handler.indexOf("setUploadState");
+    const uploadIndex = handler.indexOf("uploadInvoice");
+    const reloadIndex = handler.indexOf("await loadForEdit({ quiet: true })");
+
+    assert.ok(saveIndex > -1);
+    assert.ok(saveIndex < uploadStateIndex);
+    assert.ok(saveIndex < uploadIndex);
+    assert.ok(saveIndex < reloadIndex);
   });
 
   it("builds create and update payloads using backend field names", () => {

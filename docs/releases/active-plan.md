@@ -60,6 +60,7 @@
 - `scripts/build_release.ps1` 生成 `portable-release.json`、`current-version.json` 和 `zip-upgrade-guide.md`，用于程序内更新校验和发布包说明。
 - `scripts/build_release.ps1` 新增 `-PreviewBuild` 和 `-PreviewSerial NNN`，预览包命名从 `测试版<数字流水号>` 调整为 `preview-yyyymmdd-NNN`；如果 active-plan 已定义目标版本则使用 `vX.Y.Z-preview-yyyymmdd-NNN`。
 - 新增技术决策记录 `docs/decisions/0002-portable-install-root.md`。
+- 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -90,6 +91,12 @@
 - [x] v1.2.0 preview-002 更新预览验证：`create_update_preview()` 可识别 `1.2.0-preview-20260622-002`，返回 `versions/1.2.0-preview-20260622-002/报销管理.exe`。
 - [x] v1.2.0 preview-002 全量复验：`python -m pytest`，174 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）；`git diff --check` 通过，仅有既有 CRLF 转换提示。
 - [x] `git diff --check` 通过；仅有既有 CRLF 转换提示。
+- [x] 发票上传前保存保护定向测试：`node --test src/pages/reportEditUtils.test.js`，12 passed。
+- [x] 前端构建复验：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 发票上传前保存保护后全量前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 发票上传前保存保护后全量后端回归：`python -m pytest`，174 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] v1.2.0 preview-20260623-001 测试包输出：`release\报销管理-v1.2.0-preview-20260623-001.zip`，大小约 44.98 MB。当前环境 `.release-venv` 引用的旧 Python 路径失效且网络受限无法重装打包依赖，因此本次复用 2026-06-22 已验证的 PyInstaller 输出，替换最新 `frontend\dist` 后生成预览 ZIP；本次修复仅涉及前端静态资源。
+- [x] v1.2.0 preview-20260623-001 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260623-001\报销管理.exe` 和最新前端 `index-BWW0mK91.js`；manifest/current-version 均为 `1.2.0-preview-20260623-001`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录和程序内更新。
+- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新和发票上传前保存保护修复。
