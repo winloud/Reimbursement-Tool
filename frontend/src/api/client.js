@@ -143,7 +143,7 @@ export const downloadMaintenanceDiagnostics = async () => {
     });
     return {
       blob: response.data,
-      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".json"),
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
     };
   } catch (err) {
     return normalizeBlobError(err);

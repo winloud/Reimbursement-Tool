@@ -26,7 +26,15 @@ import {
   previewMaintenanceUpdate,
   previewMaintenanceRestore,
 } from "../api/client";
-import { formatFileSize, latestBackup, restorePreviewSummary, updatePreviewSummary } from "./maintenanceUtils";
+import {
+  browserRuntimeSummary,
+  formatFileSize,
+  latestBackup,
+  qrEngineSummary,
+  restorePreviewSummary,
+  updatePreviewSummary,
+  yesNo,
+} from "./maintenanceUtils";
 
 const cardSx = {
   border: 1,
@@ -271,7 +279,7 @@ export default function MaintenancePanel() {
                 onClick={handleDiagnostics}
                 disabled={loading || Boolean(busy)}
               >
-                导出诊断
+                导出诊断包
               </Button>
               <Button
                 variant="contained"
@@ -298,6 +306,11 @@ export default function MaintenancePanel() {
             </Stack>
           ) : (
             <Stack spacing={2}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={800}>
+                  诊断信息
+                </Typography>
+              </Box>
               <Box
                 sx={{
                   display: "grid",
@@ -306,11 +319,32 @@ export default function MaintenancePanel() {
                 }}
               >
                 <InfoRow label="程序版本" value={info?.app_version} />
+                <InfoRow label="当前版本" value={info?.current_version} />
                 <InfoRow label="安装根目录" value={info?.app_root} />
                 <InfoRow label="当前版本目录" value={info?.current_version_dir} />
+                <InfoRow label="数据目录" value={info?.data_dir} />
                 <InfoRow label="数据库" value={info?.database_path} />
                 <InfoRow label="附件目录" value={info?.uploads_dir} />
                 <InfoRow label="备份目录" value={info?.backups_dir} />
+                <InfoRow label="日志路径" value={info?.log_file?.path || info?.logs_dir} />
+                <InfoRow
+                  label="日志状态"
+                  value={
+                    info?.log_file?.exists
+                      ? `${formatFileSize(info.log_file.size_bytes)}${info.log_file.modified_at ? ` · ${info.log_file.modified_at}` : ""}`
+                      : "未生成"
+                  }
+                />
+                <InfoRow label="QR 引擎" value={qrEngineSummary(info?.qr_engine)} />
+                <InfoRow
+                  label="OpenCV runtime"
+                  value={
+                    info?.qr_engine
+                      ? `${yesNo(info.qr_engine.opencv_runtime_installed)}${info.qr_engine.opencv_package_version ? ` · ${info.qr_engine.opencv_package_version}` : ""}`
+                      : "-"
+                  }
+                />
+                <InfoRow label="浏览器/WebView2" value={browserRuntimeSummary(info?.browser_runtime)} />
               </Box>
 
               <Divider />

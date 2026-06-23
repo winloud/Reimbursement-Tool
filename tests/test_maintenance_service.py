@@ -173,6 +173,10 @@ def test_execute_restore_creates_pre_restore_backup_and_restores_data(monkeypatc
 
 def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(maintenance_service, "is_webview2_available", lambda: True)
+    monkeypatch.setattr(maintenance_service, "find_chromium_browser", lambda: ("Google Chrome", tmp_path / "chrome.exe"))
+    monkeypatch.setattr(maintenance_service, "get_installed_opencv_runtime", lambda: None)
+    monkeypatch.setattr(maintenance_service, "wechat_model_paths", lambda: {})
     write_database(paths["database"], "backup")
     backup = maintenance_service.create_backup(reason="manual")
 
@@ -181,6 +185,41 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.database_exists is True
     assert info.database_path == paths["database"].as_posix()
     assert info.backups[0].backup_id == backup.backup_id
+    assert info.qr_engine.selected_engine == "zxing"
+    assert info.browser_runtime.webview2_available is True
+    assert info.browser_runtime.chromium_name == "Google Chrome"
+
+
+def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(maintenance_service, "is_webview2_available", lambda: False)
+    monkeypatch.setattr(maintenance_service, "find_chromium_browser", lambda: None)
+    monkeypatch.setattr(maintenance_service, "get_installed_opencv_runtime", lambda: {"opencv_package_version": "4.10.0.84"})
+    monkeypatch.setattr(maintenance_service, "wechat_model_paths", lambda: {})
+    write_database(paths["database"], "private data")
+    (paths["uploads"] / "1").mkdir(parents=True)
+    (paths["uploads"] / "1" / "invoice.pdf").write_bytes(b"private invoice")
+    paths["logs"].mkdir(parents=True)
+    (paths["logs"] / "app.log").write_text("diagnostic log", encoding="utf-8")
+
+    payload, filename = maintenance_service.build_diagnostics_package()
+
+    assert filename.endswith(".zip")
+    with zipfile.ZipFile(BytesIO(payload)) as archive:
+        names = set(archive.namelist())
+        assert "manifest.json" in names
+        assert "diagnostics.json" in names
+        assert "config/settings.json" in names
+        assert "env/environment.json" in names
+        assert "logs/app.log" in names
+        assert "data/expense.db" not in names
+        assert "uploads/1/invoice.pdf" not in names
+        diagnostics = json.loads(archive.read("diagnostics.json").decode("utf-8"))
+        assert diagnostics["qr_engine"]["opencv_runtime_installed"] is True
+        assert diagnostics["browser_runtime"]["preferred_runtime"] == "unavailable"
+        assert json.loads(archive.read("config/settings.json").decode("utf-8"))["available"] is False
 
 
 def test_update_preview_validates_portable_release_package(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

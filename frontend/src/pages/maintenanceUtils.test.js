@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatFileSize, latestBackup, restorePreviewSummary, updatePreviewSummary } from "./maintenanceUtils.js";
+import {
+  browserRuntimeSummary,
+  formatFileSize,
+  latestBackup,
+  qrEngineSummary,
+  restorePreviewSummary,
+  updatePreviewSummary,
+  yesNo,
+} from "./maintenanceUtils.js";
 
 test("formatFileSize formats byte units", () => {
   assert.equal(formatFileSize(12), "12 B");
@@ -35,5 +43,26 @@ test("updatePreviewSummary includes version and package size", () => {
       size_bytes: 3 * 1024 * 1024,
     }),
     "版本 1.2.0，10 个文件，3.0 MB",
+  );
+});
+
+test("diagnostic summaries format runtime states", () => {
+  assert.equal(yesNo(true), "可用");
+  assert.equal(yesNo(false), "不可用");
+  assert.equal(
+    qrEngineSummary({
+      selected_engine: "opencv_wechat",
+      selected_engine_label: "OpenCV WeChatQRCode",
+      opencv_runtime_installed: true,
+    }),
+    "OpenCV WeChatQRCode，OpenCV runtime 已安装",
+  );
+  assert.equal(
+    browserRuntimeSummary({
+      preferred_runtime: "Google Chrome app-mode",
+      chromium_name: "Google Chrome",
+      webview2_available: true,
+    }),
+    "Google Chrome app-mode，Google Chrome，WebView2 可用",
   );
 });

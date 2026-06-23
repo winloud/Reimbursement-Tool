@@ -1,8 +1,10 @@
 from typing import Annotated
 
-from fastapi import APIRouter, File, UploadFile
+from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse, Response
+from sqlalchemy.orm import Session
 
+from backend.database.session import get_db
 from backend.schemas.common import ApiResponse
 from backend.schemas.maintenance import (
     BackupCreateRead,
@@ -16,7 +18,7 @@ from backend.schemas.maintenance import (
     UpdatePreviewRead,
 )
 from backend.services.maintenance_service import (
-    build_diagnostics_json,
+    build_diagnostics_package,
     create_backup,
     create_restore_preview,
     create_update_preview,
@@ -31,8 +33,8 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
 @router.get("/info", response_model=ApiResponse[MaintenanceInfoRead])
-def get_info() -> ApiResponse[MaintenanceInfoRead]:
-    return ApiResponse(data=get_maintenance_info())
+def get_info(db: Session = Depends(get_db)) -> ApiResponse[MaintenanceInfoRead]:
+    return ApiResponse(data=get_maintenance_info(db))
 
 
 @router.get("/backups", response_model=ApiResponse[list[BackupRead]])
@@ -72,10 +74,10 @@ def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExec
 
 
 @router.get("/diagnostics")
-def get_diagnostics() -> Response:
-    payload, filename = build_diagnostics_json()
+def get_diagnostics(db: Session = Depends(get_db)) -> Response:
+    payload, filename = build_diagnostics_package(db)
     return Response(
         content=payload,
-        media_type="application/json",
+        media_type="application/zip",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )

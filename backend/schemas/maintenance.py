@@ -12,6 +12,32 @@ class BackupRead(BaseModel):
     reason: str = "manual"
 
 
+class DiagnosticQrEngineRead(BaseModel):
+    selected_engine: str
+    selected_engine_label: str
+    opencv_runtime_installed: bool = False
+    opencv_package_version: str | None = None
+    opencv_runtime_dir: str | None = None
+    opencv_model_files_complete: bool = False
+    opencv_model_files_missing: list[str] = Field(default_factory=list)
+
+
+class DiagnosticBrowserRuntimeRead(BaseModel):
+    webview2_available: bool = False
+    chromium_available: bool = False
+    chromium_name: str | None = None
+    chromium_path: str | None = None
+    preferred_runtime: str
+    error: str | None = None
+
+
+class DiagnosticLogFileRead(BaseModel):
+    path: str
+    exists: bool = False
+    size_bytes: int = 0
+    modified_at: str | None = None
+
+
 class MaintenanceInfoRead(BaseModel):
     app_version: str
     app_root: str
@@ -27,6 +53,9 @@ class MaintenanceInfoRead(BaseModel):
     database_exists: bool
     uploads_exists: bool
     backups: list[BackupRead] = Field(default_factory=list)
+    qr_engine: DiagnosticQrEngineRead | None = None
+    browser_runtime: DiagnosticBrowserRuntimeRead | None = None
+    log_file: DiagnosticLogFileRead | None = None
 
 
 class BackupCreateRead(BaseModel):

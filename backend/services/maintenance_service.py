@@ -1,8 +1,11 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 import shutil
 import sqlite3
+import sys
 import tempfile
 import zipfile
 from datetime import datetime
@@ -12,11 +15,37 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
 from backend.app_metadata import APP_VERSION
 from backend.database import connection as db_connection
 from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT
-from backend.schemas.maintenance import BackupRead, MaintenanceInfoRead, RestoreExecuteRead, RestorePreviewRead, UpdateExecuteRead, UpdatePreviewRead
+from backend.schemas.maintenance import (
+    BackupRead,
+    DiagnosticBrowserRuntimeRead,
+    DiagnosticLogFileRead,
+    DiagnosticQrEngineRead,
+    MaintenanceInfoRead,
+    RestoreExecuteRead,
+    RestorePreviewRead,
+    UpdateExecuteRead,
+    UpdatePreviewRead,
+)
+from backend.services.invoice_qr_runtime import (
+    INVOICE_QR_ENGINE_OPENCV_WECHAT,
+    INVOICE_QR_ENGINE_ZXING,
+    OPENCV_RUNTIME_DIR,
+    get_installed_opencv_runtime,
+    normalize_invoice_qr_engine,
+    wechat_model_paths,
+)
+from backend.services.settings_service import get_or_create_settings
+
+try:
+    from desktop_dependencies import find_chromium_browser, is_webview2_available
+except Exception:  # pragma: no cover - desktop helpers may be unavailable on some hosts
+    find_chromium_browser = None
+    is_webview2_available = None
 
 BACKUP_SCHEMA_VERSION = 1
 UPDATE_SCHEMA_VERSION = 1
@@ -230,7 +259,99 @@ def list_backups() -> list[BackupRead]:
     return sorted(backups, key=lambda item: item.created_at, reverse=True)
 
 
-def get_maintenance_info() -> MaintenanceInfoRead:
+def _settings_payload(db: Session | None = None) -> dict:
+    if db is None:
+        return {"available": False, "reason": "database session unavailable"}
+    settings = get_or_create_settings(db)
+    return {
+        "available": True,
+        "department": settings.department,
+        "employee_name": settings.employee_name,
+        "daily_subsidy": str(settings.daily_subsidy),
+        "pdf_fill_font_key": settings.pdf_fill_font_key,
+        "double_print_vat_special_invoices": settings.double_print_vat_special_invoices,
+        "invoice_qr_engine": settings.invoice_qr_engine,
+        "autosave_delay_seconds": settings.autosave_delay_seconds,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
+
+
+def _selected_qr_engine(db: Session | None = None) -> str:
+    if db is None:
+        return INVOICE_QR_ENGINE_ZXING
+    settings = get_or_create_settings(db)
+    return normalize_invoice_qr_engine(settings.invoice_qr_engine)
+
+
+def _qr_engine_label(engine: str) -> str:
+    if engine == INVOICE_QR_ENGINE_OPENCV_WECHAT:
+        return "OpenCV WeChatQRCode"
+    return "zxing-cpp"
+
+
+def get_qr_engine_diagnostics(db: Session | None = None) -> DiagnosticQrEngineRead:
+    selected_engine = _selected_qr_engine(db)
+    runtime_manifest = get_installed_opencv_runtime()
+    model_paths = wechat_model_paths()
+    missing_models = [relative for relative, path in model_paths.items() if not path.exists()]
+    return DiagnosticQrEngineRead(
+        selected_engine=selected_engine,
+        selected_engine_label=_qr_engine_label(selected_engine),
+        opencv_runtime_installed=runtime_manifest is not None,
+        opencv_package_version=runtime_manifest.get("opencv_package_version") if runtime_manifest else None,
+        opencv_runtime_dir=OPENCV_RUNTIME_DIR.as_posix(),
+        opencv_model_files_complete=runtime_manifest is not None and not missing_models,
+        opencv_model_files_missing=missing_models,
+    )
+
+
+def get_browser_runtime_diagnostics() -> DiagnosticBrowserRuntimeRead:
+    error = None
+    webview2_available = False
+    chromium = None
+    try:
+        if is_webview2_available is not None:
+            webview2_available = bool(is_webview2_available())
+        if find_chromium_browser is not None:
+            chromium = find_chromium_browser()
+    except Exception as exc:
+        error = str(exc)
+
+    chromium_name = chromium[0] if chromium else None
+    chromium_path = chromium[1].as_posix() if chromium else None
+    if chromium_name == "Google Chrome":
+        preferred_runtime = "Google Chrome app-mode"
+    elif webview2_available:
+        preferred_runtime = "Microsoft Edge WebView2"
+    elif chromium_name:
+        preferred_runtime = f"{chromium_name} app-mode"
+    else:
+        preferred_runtime = "unavailable"
+
+    return DiagnosticBrowserRuntimeRead(
+        webview2_available=webview2_available,
+        chromium_available=chromium is not None,
+        chromium_name=chromium_name,
+        chromium_path=chromium_path,
+        preferred_runtime=preferred_runtime,
+        error=error,
+    )
+
+
+def get_log_file_diagnostics() -> DiagnosticLogFileRead:
+    log_path = LOG_DIR / "app.log"
+    if not log_path.exists() or not log_path.is_file():
+        return DiagnosticLogFileRead(path=log_path.as_posix(), exists=False)
+    stat = log_path.stat()
+    return DiagnosticLogFileRead(
+        path=log_path.as_posix(),
+        exists=True,
+        size_bytes=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+    )
+
+
+def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
     current_version = _current_installed_version()
     current_version_dir = None
     if current_version:
@@ -250,6 +371,9 @@ def get_maintenance_info() -> MaintenanceInfoRead:
         database_exists=DATABASE_PATH.exists(),
         uploads_exists=UPLOAD_ROOT.exists(),
         backups=list_backups(),
+        qr_engine=get_qr_engine_diagnostics(db),
+        browser_runtime=get_browser_runtime_diagnostics(),
+        log_file=get_log_file_diagnostics(),
     )
 
 
@@ -622,9 +746,28 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
     )
 
 
-def build_diagnostics_json() -> tuple[bytes, str]:
-    info = get_maintenance_info()
+def _environment_payload() -> dict:
+    return {
+        "python_version": sys.version,
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "executable": sys.executable,
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "cwd": Path.cwd().as_posix(),
+        "environment": {
+            key: value
+            for key in ("REIMBURSEMENT_APP_ROOT", "REIMBURSEMENT_APP_VERSION", "PYTHONPATH")
+            if (value := os.environ.get(key))
+        },
+    }
+
+
+def _diagnostics_payload(db: Session | None = None) -> dict:
+    info = get_maintenance_info(db)
+    settings = _settings_payload(db)
     payload = {
+        "schema_version": 1,
         "app_version": APP_VERSION,
         "generated_at": _utc_now().isoformat(),
         "paths": {
@@ -638,11 +781,55 @@ def build_diagnostics_json() -> tuple[bytes, str]:
         "state": {
             "portable_install": info.portable_install,
             "current_version": info.current_version,
+            "current_version_dir": info.current_version_dir,
             "database_exists": info.database_exists,
             "uploads_exists": info.uploads_exists,
             "backups_total": len(info.backups),
         },
+        "qr_engine": info.qr_engine.model_dump() if info.qr_engine else None,
+        "browser_runtime": info.browser_runtime.model_dump() if info.browser_runtime else None,
+        "log_file": info.log_file.model_dump() if info.log_file else None,
+        "settings": settings,
+        "environment": _environment_payload(),
         "backups": [backup.model_dump() for backup in info.backups[:20]],
     }
+    return payload
+
+
+def build_diagnostics_json(db: Session | None = None) -> tuple[bytes, str]:
+    payload = _diagnostics_payload(db)
     filename = f"reimbursement-diagnostics-{_timestamp()}.json"
     return _write_json_bytes(payload), filename
+
+
+def build_diagnostics_package(db: Session | None = None) -> tuple[bytes, str]:
+    diagnostics = _diagnostics_payload(db)
+    settings = diagnostics.get("settings") or {"available": False}
+    environment = diagnostics.get("environment") or {}
+    files: list[dict] = []
+    payload = BytesIO()
+    log_tail = _read_log_tail()
+    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(diagnostics), "diagnostics.json"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(settings), "config/settings.json"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(environment), "env/environment.json"))
+        if log_tail:
+            files.append(_zip_bytes_entry(archive, log_tail, "logs/app.log"))
+
+        manifest = {
+            "schema_version": 1,
+            "package_type": "reimbursement_diagnostics",
+            "app_version": APP_VERSION,
+            "generated_at": diagnostics["generated_at"],
+            "log_tail_bytes": LOG_TAIL_BYTES,
+            "log_truncated": bool(
+                diagnostics.get("log_file", {}).get("size_bytes", 0) > LOG_TAIL_BYTES
+                if diagnostics.get("log_file")
+                else False
+            ),
+            "files": files,
+        }
+        archive.writestr("manifest.json", _write_json_bytes(manifest))
+
+    filename = f"reimbursement-diagnostics-{_timestamp()}.zip"
+    return payload.getvalue(), filename

@@ -53,6 +53,7 @@
 ### 重要改动
 - 新增 `backend/services/maintenance_service.py`、`backend/routers/maintenance.py` 和维护相关 schema。
 - 新增完整备份 ZIP 格式：`backup-manifest.json`、`data/expense.db`、`uploads/`、可选 `vendor/` 和最近日志摘要。
+- 扩展设置页“诊断信息”和诊断包导出：展示当前版本、数据目录、QR 引擎、浏览器/WebView2 状态和日志路径；导出 ZIP 包含 `diagnostics.json`、配置摘要、环境信息和日志尾部，不包含数据库或附件。
 - 恢复执行前自动创建 `pre_restore_*.zip`，并在恢复数据库后运行现有 SQLite 迁移。
 - 新增 `frontend/src/pages/MaintenancePanel.jsx`，在个性化设置页提供备份、恢复和诊断导出入口。
 - 新增 `scripts/upgrade_zip_release.ps1`，并由 `scripts/build_release.ps1` 复制到发布 ZIP 根目录。
@@ -116,6 +117,10 @@
 - [x] 零输入 preview artifact workflow 增强验证：`python -m pytest tests\test_changelog_release_notes.py`，4 passed；`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
 - [x] GitHub Actions 云端 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28003609676` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260623-001`，大小约 45.34 MB。
 - [x] GitHub Actions 直接可更新 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28004126113` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260623-002`，workflow 在上传前展开发布 ZIP 并校验 `portable-release.json` 存在，artifact 大小约 45.38 MB。
+- [x] 诊断信息前端工具测试：`node --test src/**/*.test.js`，47 passed。
+- [x] 诊断信息前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 诊断信息后端语法检查：使用 Codex bundled Python 执行 `python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py tests\test_maintenance_service.py` 通过。
+- [x] 诊断信息后端 pytest：用户在交互式 PowerShell 中执行 `py -3.10 -m pytest tests\test_maintenance_service.py`，9 passed。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
+- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
