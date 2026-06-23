@@ -64,6 +64,7 @@
 - `scripts/build_release.ps1` 生成 `portable-release.json`、`current-version.json` 和 `zip-upgrade-guide.md`，用于程序内更新校验和发布包说明。
 - `scripts/build_release.ps1` 新增 `-PreviewBuild` 和 `-PreviewSerial NNN`，预览包命名从 `测试版<数字流水号>` 调整为 `preview-yyyymmdd-NNN`；如果 active-plan 已定义目标版本则使用 `vX.Y.Z-preview-yyyymmdd-NNN`。
 - 新增 `Build Preview Artifact` GitHub Actions workflow：手动触发后自动解析版本/日期/流水号，运行测试和 preview 打包，只上传 Actions artifact，不创建或更新 GitHub Release。
+- 修复云端 preview artifact 包装方式：上传 artifact 前先展开本地发布 ZIP，使 GitHub 下载的 artifact ZIP 顶层直接包含 `报销管理/portable-release.json`，可被程序内更新识别。
 - 新增技术决策记录 `docs/decisions/0002-portable-install-root.md`。
 - 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
 - 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。

@@ -165,9 +165,20 @@ jobs:
             throw "Preview ZIP was not generated for $env:PREVIEW_ID."
           }
 
-          $asciiZip = Join-Path "release" "$env:ARTIFACT_BASE_NAME.zip"
-          Copy-Item -LiteralPath $previewZip.FullName -Destination $asciiZip -Force
-          "artifact_path=$asciiZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $payloadRoot = Join-Path "release" "preview-artifact-payload"
+          if (Test-Path -LiteralPath $payloadRoot) {
+            Remove-Item -LiteralPath $payloadRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $previewZip.FullName -DestinationPath $payloadRoot -Force
+
+          $manifest = Get-ChildItem -LiteralPath $payloadRoot -Filter "portable-release.json" -Recurse |
+            Select-Object -First 1
+          if (-not $manifest) {
+            throw "Expanded preview artifact payload is missing portable-release.json."
+          }
+
+          "artifact_path=release/preview-artifact-payload/*" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "artifact_name=$env:ARTIFACT_BASE_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload preview artifact
