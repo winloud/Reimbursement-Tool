@@ -14,7 +14,7 @@
 - 新增程序内更新：在“数据维护”中选择新版发布 ZIP，预览后安装，安装前自动创建完整备份，重启后生效。
 - 图片格式发票新增二维码识别能力；未识别到二维码时仍可手动确认金额。
 - PDF 发票新增逐页识别能力；一个多页 PDF 中识别到多张发票时，会创建多条发票记录并逐张确认。
-- 新增 GitHub Actions 手动 preview artifact 构建入口，可在云端生成 preview ZIP 供测试下载，不创建 GitHub Release。
+- 新增 GitHub Actions 手动 preview artifact 构建入口，可零输入在云端生成 preview ZIP 供测试下载，不创建 GitHub Release。
 
 ### Changed
 

@@ -33,7 +33,7 @@
 - 新增 `docs/zip-upgrade-guide.md`，更新 docs 索引和 CHANGELOG；README 保持 v1.1.1 发布说明定位。
 - 桌面窗口状态写入 EXE 同级 `window-state.json`；保持 Google Chrome app-mode 优先策略，并在 Chrome/Edge app-mode 路径中读取和保存窗口大小位置，继续复用稳定 `browser-profile`。
 - 图片发票优先复用现有二维码识别路线，不引入 OCR runtime；PDF 发票从只识别第一页改为逐页识别，识别到多张发票时拆分为独立 PDF 附件并创建多条发票记录。
-- 新增 `.github/workflows/build-preview.yml`，支持手动输入目标版本、三位预览流水号和可选日期，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
+- 新增 `.github/workflows/build-preview.yml`，支持零输入手动触发；默认从 active-plan 读取目标版本、按中国时区取日期、按已有 artifact 自动递增三位预览流水号，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -63,7 +63,7 @@
 - 维护接口新增更新包预览和执行；执行前创建 `pre_update_*.zip`，安装新版本目录后原子切换 `current-version.json`，不删除旧版本目录。
 - `scripts/build_release.ps1` 生成 `portable-release.json`、`current-version.json` 和 `zip-upgrade-guide.md`，用于程序内更新校验和发布包说明。
 - `scripts/build_release.ps1` 新增 `-PreviewBuild` 和 `-PreviewSerial NNN`，预览包命名从 `测试版<数字流水号>` 调整为 `preview-yyyymmdd-NNN`；如果 active-plan 已定义目标版本则使用 `vX.Y.Z-preview-yyyymmdd-NNN`。
-- 新增 `Build Preview Artifact` GitHub Actions workflow：手动触发后运行测试和 preview 打包，只上传 Actions artifact，不创建或更新 GitHub Release。
+- 新增 `Build Preview Artifact` GitHub Actions workflow：手动触发后自动解析版本/日期/流水号，运行测试和 preview 打包，只上传 Actions artifact，不创建或更新 GitHub Release。
 - 新增技术决策记录 `docs/decisions/0002-portable-install-root.md`。
 - 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
 - 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。
@@ -112,6 +112,7 @@
 - [x] 手动 preview artifact workflow 断言和全量后端回归：`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
 - [x] 手动 preview artifact workflow 后前端工具测试：`node --test src/**/*.test.js`，46 passed。
 - [x] 手动 preview artifact workflow 后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 零输入 preview artifact workflow 增强验证：`python -m pytest tests\test_changelog_release_notes.py`，4 passed；`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
 
 ### 已同步到 CHANGELOG
 - 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。

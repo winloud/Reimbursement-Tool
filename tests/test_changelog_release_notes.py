@@ -63,11 +63,14 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
 
     assert "workflow_dispatch:" in workflow
     assert "preview_serial:" in workflow
+    assert "docs/releases/active-plan.md" in workflow
     assert "China Standard Time" in workflow
+    assert "actions: read" in workflow
+    assert "actions/artifacts?per_page=100" in workflow
     assert "-PreviewBuild" in workflow
     assert "-PreviewSerial" in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "retention-days: 14" in workflow
-    assert "reimbursement-tool-v$version-$previewId" in workflow
+    assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow
     assert "gh release create" not in workflow
     assert "contents: read" in workflow

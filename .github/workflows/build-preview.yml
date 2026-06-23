@@ -4,13 +4,13 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: "Target semver to bind the preview to. Leave empty for an unbound preview."
+        description: "Target semver to bind the preview to. Leave empty to read docs/releases/active-plan.md."
         required: false
-        default: "1.2.0"
+        default: ""
       preview_serial:
-        description: "Three-digit daily preview serial, for example 001."
-        required: true
-        default: "001"
+        description: "Optional three-digit daily preview serial. Leave empty to auto-increment from existing artifacts."
+        required: false
+        default: ""
       release_date:
         description: "Optional yyyymmdd date. Leave empty to use the current China date."
         required: false
@@ -18,6 +18,7 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 jobs:
   preview:
@@ -31,14 +32,24 @@ jobs:
       - name: Resolve preview metadata
         id: preview
         shell: pwsh
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         run: |
           $version = "${{ inputs.version }}".Trim()
           $serial = "${{ inputs.preview_serial }}".Trim()
           $releaseDate = "${{ inputs.release_date }}".Trim()
 
-          if ($serial -notmatch "^\d{3}$") {
-            throw "preview_serial must be a three-digit daily serial, for example 001."
+          if ([string]::IsNullOrWhiteSpace($version)) {
+            $activePlan = Get-Content -Raw -LiteralPath "docs/releases/active-plan.md"
+            if ($activePlan -notmatch "版本号：v?(\d+\.\d+\.\d+)") {
+              throw "Cannot resolve target version from docs/releases/active-plan.md."
+            }
+            $version = $Matches[1]
           }
+          if ($version -notmatch "^\d+\.\d+\.\d+$") {
+            throw "version must use X.Y.Z format."
+          }
+
           if ([string]::IsNullOrWhiteSpace($releaseDate)) {
             $chinaTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("China Standard Time")
             $releaseDate = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $chinaTimeZone).ToString("yyyyMMdd")
@@ -46,18 +57,40 @@ jobs:
           if ($releaseDate -notmatch "^\d{8}$") {
             throw "release_date must use yyyymmdd format."
           }
-          if (-not [string]::IsNullOrWhiteSpace($version) -and $version -notmatch "^\d+\.\d+\.\d+$") {
-            throw "version must use X.Y.Z format, or be empty for an unbound preview."
+
+          if ([string]::IsNullOrWhiteSpace($serial)) {
+            $escapedVersion = [regex]::Escape($version)
+            $artifactPattern = "^reimbursement-tool-v$escapedVersion-preview-$releaseDate-(\d{3})$"
+            $headers = @{
+              Authorization = "Bearer $env:GITHUB_TOKEN"
+              Accept = "application/vnd.github+json"
+              "X-GitHub-Api-Version" = "2022-11-28"
+            }
+            $maxSerial = 0
+            for ($page = 1; $page -le 10; $page += 1) {
+              $uri = "https://api.github.com/repos/${{ github.repository }}/actions/artifacts?per_page=100&page=$page"
+              $response = Invoke-RestMethod -Method Get -Uri $uri -Headers $headers
+              foreach ($artifact in @($response.artifacts)) {
+                if ($artifact.name -match $artifactPattern) {
+                  $maxSerial = [Math]::Max($maxSerial, [int]$Matches[1])
+                }
+              }
+              if (@($response.artifacts).Count -lt 100) {
+                break
+              }
+            }
+            if ($maxSerial -ge 999) {
+              throw "No preview serials are available for $releaseDate."
+            }
+            $serial = "{0:D3}" -f ($maxSerial + 1)
+          }
+          elseif ($serial -notmatch "^\d{3}$") {
+            throw "preview_serial must be a three-digit daily serial, for example 001."
           }
 
           $previewId = "preview-$releaseDate-$serial"
-          $previewVersion = if ([string]::IsNullOrWhiteSpace($version)) { $previewId } else { "$version-$previewId" }
-          $artifactBaseName = if ([string]::IsNullOrWhiteSpace($version)) {
-            "reimbursement-tool-$previewId"
-          }
-          else {
-            "reimbursement-tool-v$version-$previewId"
-          }
+          $previewVersion = "$version-$previewId"
+          $artifactBaseName = "reimbursement-tool-v$version-$previewId"
 
           "PREVIEW_TARGET_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PREVIEW_SERIAL=$serial" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
