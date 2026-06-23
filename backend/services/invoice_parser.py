@@ -1,4 +1,5 @@
 import base64
+from io import BytesIO
 import re
 from datetime import date, datetime
 from decimal import Decimal, InvalidOperation
@@ -191,7 +192,22 @@ def extract_pdf_text(file_path: Path) -> str:
         return extract_pdf_text_with_pypdf(file_path)
 
 
-def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]:
+def pdf_page_count(file_path: Path) -> int:
+    try:
+        import fitz
+
+        with fitz.open(str(file_path)) as doc:
+            return int(doc.page_count)
+    except Exception:
+        try:
+            from pypdf import PdfReader
+
+            return len(PdfReader(str(file_path)).pages)
+        except Exception:
+            return 0
+
+
+def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2, page_index: int = 0) -> dict[str, Any]:
     try:
         import fitz
         from PIL import Image
@@ -208,7 +224,10 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
             if doc.page_count == 0:
                 return {"text": "", "preview_image": None, "qr_image": None, "render_error": "empty_pdf"}
 
-            page = doc[0]
+            if page_index < 0 or page_index >= doc.page_count:
+                return {"text": "", "preview_image": None, "qr_image": None, "render_error": "page_out_of_range"}
+
+            page = doc[page_index]
             text = page.get_text("text") or ""
             words = [
                 {"x0": item[0], "y0": item[1], "x1": item[2], "y1": item[3], "text": item[4]}
@@ -224,6 +243,9 @@ def extract_pdf_page_artifacts(file_path: Path, zoom: int = 2) -> dict[str, Any]
                 "text": text,
                 "preview_image": preview_image,
                 "qr_image": qr_image,
+                "page_index": page_index,
+                "page_number": page_index + 1,
+                "page_count": doc.page_count,
                 "page_size": {"width": float(page_rect.width), "height": float(page_rect.height)},
                 "words": words,
                 "render_error": None,
@@ -856,8 +878,49 @@ def build_tax_total_amount_highlight(artifacts: dict[str, Any], amount: Decimal)
     }
 
 
-def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
-    artifacts = extract_pdf_page_artifacts(file_path)
+def make_preview_image(qr_image: Any | None, max_size: int = 1600) -> str | None:
+    if qr_image is None:
+        return None
+    try:
+        from PIL import ImageOps
+
+        image = ImageOps.exif_transpose(qr_image).copy()
+        if image.mode not in {"RGB", "RGBA"}:
+            image = image.convert("RGB")
+        image.thumbnail((max_size, max_size))
+        buffer = BytesIO()
+        image.save(buffer, format="PNG")
+        return "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+    except Exception:
+        return None
+
+
+def extract_image_artifacts(file_path: Path) -> dict[str, Any]:
+    try:
+        from PIL import Image, ImageOps
+
+        with Image.open(file_path) as image:
+            normalized = ImageOps.exif_transpose(image).convert("RGB")
+            return {
+                "text": "",
+                "preview_image": make_preview_image(normalized),
+                "qr_image": normalized.copy(),
+                "render_error": None,
+            }
+    except Exception as exc:
+        return {
+            "text": "",
+            "preview_image": None,
+            "qr_image": None,
+            "render_error": f"image_open_failed: {exc}",
+        }
+
+
+def parse_invoice_artifacts(
+    artifacts: dict[str, Any],
+    source: str,
+    invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING,
+) -> InvoiceParsedData:
     text_fields = extract_fields_from_text(artifacts.get("text") or "")
     qr_image = artifacts.get("qr_image") or artifacts.get("image_bgr")
     selected_qr_engine = normalize_invoice_qr_engine(invoice_qr_engine)
@@ -917,7 +980,7 @@ def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGIN
     }
     parse_attempts = [
         {
-            "method": "pymupdf_render",
+            "method": "pymupdf_render" if source == "pdf" else "image_open",
             "success": artifacts.get("preview_image") is not None and artifacts.get("render_error") is None,
             "result": {
                 "preview_image": artifacts.get("preview_image") is not None,
@@ -933,10 +996,12 @@ def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGIN
             "result": text_result,
         },
     ]
+    if source != "pdf":
+        parse_attempts = [attempt for attempt in parse_attempts if attempt["method"] != "pymupdf_text_regex"]
 
     raw = {
-        "source": "pdf",
-        "parser": f"pymupdf_{selected_qr_engine}",
+        "source": source,
+        "parser": f"{'pymupdf' if source == 'pdf' else 'image'}_{selected_qr_engine}",
         "invoice_qr_engine": selected_qr_engine,
         "parse_method": parse_method,
         "parse_success": parse_success,
@@ -951,6 +1016,9 @@ def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGIN
         "preview_highlights": preview_highlights,
         "render_error": artifacts.get("render_error"),
     }
+    for key in ("page_index", "page_number", "page_count"):
+        if key in artifacts:
+            raw[key] = artifacts[key]
 
     return InvoiceParsedData(
         invoice_no=invoice_no,
@@ -962,7 +1030,47 @@ def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGIN
     )
 
 
+def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
+    artifacts = extract_pdf_page_artifacts(file_path)
+    return parse_invoice_artifacts(artifacts, "pdf", invoice_qr_engine=invoice_qr_engine)
+
+
+def parse_pdf_invoice_pages(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> list[InvoiceParsedData]:
+    page_count = pdf_page_count(file_path)
+    if page_count <= 0:
+        return [parse_pdf_invoice(file_path, invoice_qr_engine=invoice_qr_engine)]
+
+    parsed_pages = [
+        parse_invoice_artifacts(
+            extract_pdf_page_artifacts(file_path, page_index=page_index),
+            "pdf",
+            invoice_qr_engine=invoice_qr_engine,
+        )
+        for page_index in range(page_count)
+    ]
+    successful_pages = [parsed for parsed in parsed_pages if parsed.raw.get("parse_success")]
+    return successful_pages or parsed_pages[:1]
+
+
+def parse_image_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
+    return parse_invoice_artifacts(extract_image_artifacts(file_path), "image", invoice_qr_engine=invoice_qr_engine)
+
+
+def parse_invoice_file_many(
+    file_path: Path,
+    file_type: str,
+    invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING,
+) -> list[InvoiceParsedData]:
+    if file_type == "pdf":
+        return parse_pdf_invoice_pages(file_path, invoice_qr_engine=invoice_qr_engine)
+    if file_type == "image":
+        return [parse_image_invoice(file_path, invoice_qr_engine=invoice_qr_engine)]
+    return [InvoiceParsedData(raw={"source": file_type})]
+
+
 def parse_invoice_file(file_path: Path, file_type: str, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
     if file_type == "pdf":
         return parse_pdf_invoice(file_path, invoice_qr_engine=invoice_qr_engine)
+    if file_type == "image":
+        return parse_image_invoice(file_path, invoice_qr_engine=invoice_qr_engine)
     return InvoiceParsedData(raw={"source": file_type})

@@ -54,3 +54,20 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
     assert "releases/assets/$($asset.id)" in workflow
+
+
+def test_preview_workflow_manually_builds_artifact_without_publishing_release():
+    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "build-preview.yml").read_text(
+        encoding="utf-8"
+    )
+
+    assert "workflow_dispatch:" in workflow
+    assert "preview_serial:" in workflow
+    assert "China Standard Time" in workflow
+    assert "-PreviewBuild" in workflow
+    assert "-PreviewSerial" in workflow
+    assert "actions/upload-artifact@v4" in workflow
+    assert "retention-days: 14" in workflow
+    assert "reimbursement-tool-v$version-$previewId" in workflow
+    assert "gh release create" not in workflow
+    assert "contents: read" in workflow

@@ -617,13 +617,14 @@ export default function ReportEdit() {
         if (!res.success) {
           throw new Error(res.message || `${file.name} 上传失败`);
         }
-        uploaded.push(res.data);
+        const uploadedItems = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
+        uploaded.push(...uploadedItems);
       }
       await loadForEdit({ quiet: true });
       if (uploaded.length > 0) {
         setInvoiceQueue(uploaded);
         setSelectedInvoice(uploaded[0]);
-        setToast(fileList.length > 1 ? "批量上传完成，请逐张确认发票信息" : "发票已上传，请确认发票信息");
+        setToast(uploaded.length > 1 ? "批量上传完成，请逐张确认发票信息" : "发票已上传，请确认发票信息");
       }
     } catch (err) {
       setError(getApiErrorMessage(err, "上传失败"));

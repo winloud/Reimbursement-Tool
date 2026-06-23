@@ -15,6 +15,8 @@
 - [x] 将 ZIP 桌面发布调整为便携式安装根目录：根目录 launcher + `versions\<version>` 真实程序目录。
 - [x] 新增程序内选择新版发布 ZIP、预览并安装更新，更新前自动创建完整备份。
 - [x] 固化预览包命名规则：未绑定目标版本时使用 `preview-yyyymmdd-NNN`，绑定目标版本时使用 `vX.Y.Z-preview-yyyymmdd-NNN`，不得占用正式版本号。
+- [x] 改进发票上传识别：图片发票走二维码识别，PDF 发票逐页识别，多页多发票 PDF 上传后拆成多条发票记录。
+- [x] 新增 GitHub Actions 手动 preview artifact 构建入口，不创建 GitHub Release。
 
 ## 范围
 本次做：
@@ -30,6 +32,8 @@
 - 新增设置页“数据维护”面板。
 - 新增 `docs/zip-upgrade-guide.md`，更新 docs 索引和 CHANGELOG；README 保持 v1.1.1 发布说明定位。
 - 桌面窗口状态写入 EXE 同级 `window-state.json`；保持 Google Chrome app-mode 优先策略，并在 Chrome/Edge app-mode 路径中读取和保存窗口大小位置，继续复用稳定 `browser-profile`。
+- 图片发票优先复用现有二维码识别路线，不引入 OCR runtime；PDF 发票从只识别第一页改为逐页识别，识别到多张发票时拆分为独立 PDF 附件并创建多条发票记录。
+- 新增 `.github/workflows/build-preview.yml`，支持手动输入目标版本、三位预览流水号和可选日期，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -59,8 +63,11 @@
 - 维护接口新增更新包预览和执行；执行前创建 `pre_update_*.zip`，安装新版本目录后原子切换 `current-version.json`，不删除旧版本目录。
 - `scripts/build_release.ps1` 生成 `portable-release.json`、`current-version.json` 和 `zip-upgrade-guide.md`，用于程序内更新校验和发布包说明。
 - `scripts/build_release.ps1` 新增 `-PreviewBuild` 和 `-PreviewSerial NNN`，预览包命名从 `测试版<数字流水号>` 调整为 `preview-yyyymmdd-NNN`；如果 active-plan 已定义目标版本则使用 `vX.Y.Z-preview-yyyymmdd-NNN`。
+- 新增 `Build Preview Artifact` GitHub Actions workflow：手动触发后运行测试和 preview 打包，只上传 Actions artifact，不创建或更新 GitHub Release。
 - 新增技术决策记录 `docs/decisions/0002-portable-install-root.md`。
 - 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
+- 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。
+- PDF 发票新增逐页解析能力；多页 PDF 中识别到多张发票时，上传一次会创建多条发票记录并进入逐张确认队列。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -97,6 +104,14 @@
 - [x] 发票上传前保存保护后全量后端回归：`python -m pytest`，174 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
 - [x] v1.2.0 preview-20260623-001 测试包输出：`release\报销管理-v1.2.0-preview-20260623-001.zip`，大小约 44.98 MB。当前环境 `.release-venv` 引用的旧 Python 路径失效且网络受限无法重装打包依赖，因此本次复用 2026-06-22 已验证的 PyInstaller 输出，替换最新 `frontend\dist` 后生成预览 ZIP；本次修复仅涉及前端静态资源。
 - [x] v1.2.0 preview-20260623-001 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260623-001\报销管理.exe` 和最新前端 `index-BWW0mK91.js`；manifest/current-version 均为 `1.2.0-preview-20260623-001`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 图片发票二维码、PDF 逐页识别、多页 PDF 拆分上传定向测试：`python -m pytest tests\test_phase3.py`，47 passed，5 warnings（既有 PyInstaller/SWIG deprecation warnings）。
+- [x] 多发票上传返回前端兼容复验：`node --test src/pages/reportEditUtils.test.js`，12 passed。
+- [x] 发票识别改进后全量后端回归：`python -m pytest`，177 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
+- [x] 发票识别改进后全量前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 发票识别改进后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 手动 preview artifact workflow 断言和全量后端回归：`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
+- [x] 手动 preview artifact workflow 后前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 手动 preview artifact workflow 后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新和发票上传前保存保护修复。
+- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
