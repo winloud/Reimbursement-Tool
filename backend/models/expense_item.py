@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.connection import Base
@@ -14,6 +14,7 @@ class ExpenseItem(Base):
     report_id: Mapped[int] = mapped_column(ForeignKey("expense_reports.id"), nullable=False, index=True)
     category: Mapped[str] = mapped_column(String, nullable=False)
     remark: Mapped[str | None] = mapped_column(String, nullable=True)
+    reimbursable_amount: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
 
     report = relationship("ExpenseReport", back_populates="expense_items")
@@ -31,5 +32,11 @@ class ExpenseItem(Base):
         return len(self.active_confirmed_invoices)
 
     @property
+    def invoice_total(self) -> Decimal:
+        return sum((invoice.amount for invoice in self.active_confirmed_invoices), Decimal("0.00")).quantize(Decimal("0.01"))
+
+    @property
     def amount(self) -> Decimal:
-        return sum((invoice.amount for invoice in self.active_confirmed_invoices), Decimal("0.00"))
+        if self.category == "fuel_subsidy" and self.reimbursable_amount is not None:
+            return Decimal(self.reimbursable_amount).quantize(Decimal("0.01"))
+        return self.invoice_total

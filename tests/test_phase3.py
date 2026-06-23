@@ -20,6 +20,7 @@ from backend.services.invoice_service import (
     soft_delete_invoice,
     update_invoice,
     upload_invoice,
+    upload_invoices,
 )
 from backend.services.report_service import TripDateError, calculate_subsidy_days, create_report, update_report
 
@@ -54,6 +55,58 @@ def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_pa
     assert parsed.raw["amount_source"] == "tax_total_small"
     assert parsed.raw["preview_highlights"][0]["type"] == "tax_total_amount"
     assert parsed.raw["preview_highlights"][0]["amount"] == "266.50"
+
+
+def test_parse_image_invoice_reads_qr_payload(monkeypatch, tmp_path: Path):
+    from PIL import Image
+
+    image_path = tmp_path / "invoice.png"
+    Image.new("RGB", (120, 80), color="white").save(image_path)
+
+    def fake_decode(_image, include_details=False, engine="zxing"):
+        payloads = ["01,10,044001800111,28104068,181.52,20260603,checksum"]
+        details = [{"method": f"{engine}_qrcode", "success": True, "result": {"payloads": payloads}}]
+        return (payloads, details) if include_details else payloads
+
+    monkeypatch.setattr("backend.services.invoice_parser.decode_qr_payloads_from_image", fake_decode)
+
+    parsed = invoice_parser.parse_image_invoice(image_path)
+
+    assert parsed.invoice_no == "28104068"
+    assert parsed.invoice_date == date(2026, 6, 3)
+    assert parsed.amount == Decimal("181.52")
+    assert parsed.preview_image.startswith("data:image/png;base64,")
+    assert parsed.raw["source"] == "image"
+    assert parsed.raw["parse_method"] == "qrcode"
+
+
+def test_parse_pdf_invoice_pages_returns_successful_pages(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("backend.services.invoice_parser.pdf_page_count", lambda _path: 2)
+
+    def fake_artifacts(_path, zoom=2, page_index=0):
+        invoice_no = "10000001" if page_index == 0 else "10000002"
+        amount = "88.00" if page_index == 0 else "99.00"
+        return {
+            "text": f"发票号码: {invoice_no}\n开票日期: 2026年6月{page_index + 1}日\n价税合计（小写） ￥{amount}",
+            "preview_image": "data:image/png;base64,abc",
+            "qr_image": object(),
+            "page_index": page_index,
+            "page_number": page_index + 1,
+            "page_count": 2,
+            "render_error": None,
+        }
+
+    monkeypatch.setattr("backend.services.invoice_parser.extract_pdf_page_artifacts", fake_artifacts)
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False, engine="zxing": ([], []) if include_details else [],
+    )
+
+    parsed_pages = invoice_parser.parse_pdf_invoice_pages(tmp_path / "multi.pdf")
+
+    assert [item.invoice_no for item in parsed_pages] == ["10000001", "10000002"]
+    assert [item.amount for item in parsed_pages] == [Decimal("88.00"), Decimal("99.00")]
+    assert [item.raw["page_number"] for item in parsed_pages] == [1, 2]
 
 
 def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Path):
@@ -359,6 +412,14 @@ def test_calculate_subsidy_days_across_month():
     assert calculate_subsidy_days(2026, trips) == 4
 
 
+def test_calculate_subsidy_days_allows_long_same_year_cross_month_trip():
+    trips = [
+        Trip(depart_month=5, depart_day=10, arrive_month=6, arrive_day=8, sort_order=1),
+    ]
+
+    assert calculate_subsidy_days(2026, trips) == 30
+
+
 def test_calculate_subsidy_days_allows_short_cross_year_trip():
     trips = [
         Trip(depart_month=12, depart_day=30, arrive_month=1, arrive_day=2, sort_order=1),
@@ -487,6 +548,54 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     assert invoice.amount_confirmed is False
     db.refresh(report)
     assert report.total_amount == Decimal("0.00")
+
+
+def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_path: Path, db):
+    from pypdf import PdfWriter
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    writer.add_blank_page(width=200, height=200)
+    pdf_buffer = BytesIO()
+    writer.write(pdf_buffer)
+    pdf_buffer.seek(0)
+
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(
+                invoice_no="10000001",
+                invoice_date=date(2026, 6, 1),
+                amount=Decimal("88.00"),
+                raw={"source": "pdf", "page_index": 0, "page_number": 1, "page_count": 2, "parse_success": True},
+            ),
+            InvoiceParsedData(
+                invoice_no="10000002",
+                invoice_date=date(2026, 6, 2),
+                amount=Decimal("99.00"),
+                raw={"source": "pdf", "page_index": 1, "page_number": 2, "page_count": 2, "parse_success": True},
+            ),
+        ],
+    )
+
+    uploaded = upload_invoices(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="multi.pdf", file=pdf_buffer),
+    )
+
+    invoices = [invoice for invoice, _parsed in uploaded]
+    assert len(invoices) == 2
+    assert [invoice.invoice_no for invoice in invoices] == ["10000001", "10000002"]
+    assert len({invoice.file_path for invoice in invoices}) == 2
+    for invoice in invoices:
+        assert invoice.file_type == "pdf"
+        assert (upload_root / Path(invoice.file_path).relative_to("uploads")).exists()
 
 
 def test_confirming_invoice_updates_report_totals(monkeypatch, db):
@@ -692,6 +801,125 @@ def test_upload_invoice_to_existing_custom_category_succeeds_and_confirmed_amoun
 
     assert invoice.expense_category == "custom:宴请"
     assert report.total_amount == Decimal("188.80")
+
+
+def test_fuel_subsidy_reimbursable_amount_overrides_invoice_total(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+    fuel_item = next(item for item in updated.expense_items if item.category == "fuel_subsidy")
+
+    assert fuel_item.invoice_total == Decimal("300.00")
+    assert fuel_item.amount == Decimal("180.00")
+    assert updated.total_amount == Decimal("180.00")
+
+
+def test_fuel_subsidy_reimbursable_amount_cannot_exceed_invoice_total(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    with pytest.raises(HTTPException) as exc_info:
+        update_report(
+            db,
+            report.id,
+            ReportUpdate(
+                report_date=date(2026, 6, 3),
+                expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("301.00")}],
+            ),
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "不能大于" in exc_info.value.detail
+
+
+def test_non_fuel_category_ignores_reimbursable_amount(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="luggage",
+            file_path="uploads/luggage.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "luggage", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+    luggage_item = next(item for item in updated.expense_items if item.category == "luggage")
+
+    assert luggage_item.reimbursable_amount is None
+    assert luggage_item.amount == Decimal("300.00")
+    assert updated.total_amount == Decimal("300.00")
+
+
+def test_fuel_subsidy_reimbursable_amount_clamps_after_invoice_decrease(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="fuel_subsidy",
+        file_path="uploads/fuel.pdf",
+        file_type="pdf",
+        amount=Decimal("300.00"),
+        amount_confirmed=True,
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(report)
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+
+    update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("120.00"), amount_confirmed=True))
+    db.refresh(report)
+    fuel_item = next(item for item in report.expense_items if item.category == "fuel_subsidy")
+
+    assert fuel_item.reimbursable_amount == Decimal("120.00")
+    assert report.total_amount == Decimal("120.00")
 
 
 def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):

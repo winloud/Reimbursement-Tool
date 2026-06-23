@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import Boolean, DateTime, Numeric, String
+from sqlalchemy import Boolean, DateTime, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from backend.database.connection import Base
@@ -18,4 +18,5 @@ class Settings(Base):
     pdf_fill_font_key: Mapped[str] = mapped_column(String, default="system:simsun", nullable=False)
     double_print_vat_special_invoices: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     invoice_qr_engine: Mapped[str] = mapped_column(String, default=INVOICE_QR_ENGINE_ZXING, nullable=False)
+    autosave_delay_seconds: Mapped[int] = mapped_column(Integer, default=3, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)

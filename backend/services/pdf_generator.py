@@ -74,15 +74,20 @@ def _register_fill_font() -> str:
     return FALLBACK_FONT_NAME
 
 
-FILL_FONT_NAME = _register_fill_font()
-ITEM_FILL_FONT_NAME = _register_ttf_font(
-    ITEM_LABEL_FONT_NAME,
-    [
+def _item_label_font_candidates() -> list[Path]:
+    configured_kaiti = resolve_font_file("system:simkai")
+    candidates = [
         Path("C:/Windows/Fonts/simkai.ttf"),
         Path("C:/Windows/Fonts/kaiti.ttf"),
         Path("C:/Windows/Fonts/STKAITI.TTF"),
-    ],
-) or FILL_FONT_NAME
+    ]
+    if configured_kaiti is not None:
+        candidates.insert(0, configured_kaiti)
+    return candidates
+
+
+FILL_FONT_NAME = _register_fill_font()
+ITEM_FILL_FONT_NAME = _register_ttf_font(ITEM_LABEL_FONT_NAME, _item_label_font_candidates()) or FILL_FONT_NAME
 
 
 def _register_pdf_fill_font(font_key: str | None) -> str:
@@ -296,17 +301,24 @@ def _expense_label(category: str) -> str:
 
 def _other_expense_rows(report: ExpenseReport) -> list[ExpenseRow]:
     rows: list[ExpenseRow] = []
+    items_by_category = {item.category: item for item in report.expense_items}
     for category in _ordered_other_categories(report):
-        invoices = [
-            invoice
-            for invoice in _confirmed_invoices(report)
-            if invoice.expense_category == category and invoice.trip_id is None
-        ]
-        amount = sum((invoice.amount for invoice in invoices), Decimal("0.00"))
+        item = items_by_category.get(category)
+        if item is None:
+            invoices = [
+                invoice
+                for invoice in _confirmed_invoices(report)
+                if invoice.expense_category == category and invoice.trip_id is None
+            ]
+            amount = sum((invoice.amount for invoice in invoices), Decimal("0.00"))
+            count = len(invoices)
+        else:
+            amount = item.amount
+            count = item.invoice_count
         amount = quantize_currency(amount)
         if amount == Decimal("0.00"):
             continue
-        rows.append(ExpenseRow(category=category, label=_expense_label(category), count=len(invoices), amount=amount))
+        rows.append(ExpenseRow(category=category, label=_expense_label(category), count=count, amount=amount))
     return rows
 
 

@@ -4,13 +4,14 @@ from fastapi import FastAPI, HTTPException, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
+from backend.app_metadata import APP_TITLE, APP_VERSION
 from backend.database.connection import create_db_and_tables
-from backend.routers import data_transfer, health, invoices, reports, settings, stats
+from backend.routers import data_transfer, health, invoices, maintenance, reports, settings, stats
 from backend.runtime_paths import FRONTEND_DIST_DIR
 
 
 def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool = True) -> FastAPI:
-    app = FastAPI(title="出差旅费报销管理工具", version="1.1.0")
+    app = FastAPI(title=APP_TITLE, version=APP_VERSION)
 
     app.add_middleware(
         CORSMiddleware,
@@ -33,6 +34,7 @@ def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool
     app.include_router(invoices.router)
     app.include_router(stats.router)
     app.include_router(data_transfer.router)
+    app.include_router(maintenance.router)
 
     mount_frontend(app, frontend_dist_dir)
     return app

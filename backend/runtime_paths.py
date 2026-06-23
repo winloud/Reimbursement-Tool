@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -16,8 +17,14 @@ def bundle_root() -> Path:
 
 
 def app_root() -> Path:
+    configured_root = os.environ.get("REIMBURSEMENT_APP_ROOT")
+    if configured_root:
+        return Path(configured_root).resolve()
     if is_frozen_app():
-        return Path(sys.executable).resolve().parent
+        executable_dir = Path(sys.executable).resolve().parent
+        if executable_dir.parent.name == "versions":
+            return executable_dir.parent.parent
+        return executable_dir
     return SOURCE_ROOT
 
 

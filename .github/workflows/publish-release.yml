@@ -1,0 +1,123 @@
+name: Publish Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build ZIP and publish GitHub Release
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Resolve version and release date
+        shell: pwsh
+        run: |
+          $version = "${{ github.ref_name }}".TrimStart("v")
+          if (-not $version) {
+            throw "Cannot resolve release version from ref ${{ github.ref_name }}"
+          }
+          $chinaTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("China Standard Time")
+          $releaseDate = [System.TimeZoneInfo]::ConvertTimeFromUtc([DateTime]::UtcNow, $chinaTimeZone).ToString("yyyyMMdd")
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_DATE=$releaseDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements.txt pytest
+
+      - name: Run tests
+        run: |
+          python -m pytest -q
+          node --test frontend/src/pages/reportEditUtils.test.js
+          node --test frontend/src/pages/settingsPageUtils.test.js
+          node --test frontend/src/pages/dashboardUtils.test.js
+          node --test frontend/src/api/client.test.js
+          node --test frontend/src/api/reportFilters.test.js
+
+      - name: Extract release notes from CHANGELOG
+        run: python scripts/extract_changelog_section.py --version "${{ env.RELEASE_VERSION }}" --output release-notes.md
+
+      - name: Build release ZIPs
+        shell: pwsh
+        run: .\scripts\build_release.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -BuildOpenCvRuntime
+
+      - name: Prepare GitHub Release assets
+        shell: pwsh
+        run: |
+          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
+            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+            Select-Object -First 1
+          if (-not $mainZip) {
+            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          }
+
+          $githubMainZip = Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip"
+          Copy-Item -LiteralPath $mainZip.FullName -Destination $githubMainZip -Force
+
+      - name: Publish GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = "${{ github.ref_name }}"
+          $assets = @(
+            Get-Item -LiteralPath (Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip")
+            Get-ChildItem -LiteralPath "release" -Filter "opencv-wechat-runtime-*.zip" | Sort-Object Name
+          )
+          if ($assets.Count -eq 0) {
+            throw "No release ZIP assets were generated."
+          }
+          $assetPaths = @($assets | ForEach-Object { $_.FullName })
+          $desiredAssetNames = @($assets | ForEach-Object { $_.Name })
+
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release edit $tag --title $tag --notes-file release-notes.md
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to update GitHub Release $tag."
+            }
+            $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+            foreach ($asset in $existing.assets) {
+              if ($asset.name -like "*.zip" -and $desiredAssetNames -notcontains $asset.name) {
+                gh api -X DELETE "repos/$env:GITHUB_REPOSITORY/releases/assets/$($asset.id)"
+                if ($LASTEXITCODE -ne 0) {
+                  throw "Failed to delete stale release asset $($asset.name)."
+                }
+              }
+            }
+            & gh release upload $tag @assetPaths --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to upload release assets for $tag."
+            }
+          }
+          else {
+            & gh release create $tag @assetPaths --title $tag --notes-file release-notes.md --verify-tag
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create GitHub Release $tag."
+            }
+          }

@@ -7,22 +7,27 @@ from sqlalchemy.orm import Session
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse
 from backend.schemas.invoice import InvoiceParsedData, InvoiceRead, InvoiceUpdate, InvoiceUploadResult
-from backend.services.invoice_service import get_invoice_or_404, parse_existing_invoice, soft_delete_invoice, update_invoice, upload_invoice
+from backend.services.invoice_service import get_invoice_or_404, parse_existing_invoice, soft_delete_invoice, update_invoice, upload_invoices
 from backend.runtime_paths import uploaded_path
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 
 
-@router.post("/upload", response_model=ApiResponse[InvoiceUploadResult])
+@router.post("/upload", response_model=ApiResponse[list[InvoiceUploadResult]])
 def post_invoice_upload(
     report_id: Annotated[int, Form(ge=1)],
     expense_category: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
     trip_id: Annotated[int | None, Form()] = None,
     db: Session = Depends(get_db),
-) -> ApiResponse[InvoiceUploadResult]:
-    invoice, parsed = upload_invoice(db, report_id, expense_category, file, trip_id)
-    return ApiResponse(data=InvoiceUploadResult.model_validate(invoice).model_copy(update={"parsed": parsed}), message="发票已上传")
+) -> ApiResponse[list[InvoiceUploadResult]]:
+    uploaded = upload_invoices(db, report_id, expense_category, file, trip_id)
+    results = [
+        InvoiceUploadResult.model_validate(invoice).model_copy(update={"parsed": parsed})
+        for invoice, parsed in uploaded
+    ]
+    message = "发票已上传" if len(results) <= 1 else f"已从文件中识别并上传 {len(results)} 张发票"
+    return ApiResponse(data=results, message=message)
 
 
 @router.get("/{invoice_id}/file")

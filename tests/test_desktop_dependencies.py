@@ -1,3 +1,6 @@
+import json
+import sys
+
 import desktop_dependencies
 import desktop_app
 
@@ -35,7 +38,7 @@ def test_desktop_window_uses_chromium_before_webview2(monkeypatch):
     monkeypatch.setattr(desktop_app, "run_chromium_app_window", lambda base_url: calls.append(("chromium", base_url)))
 
     def fail_pywebview(_base_url):
-        raise AssertionError("pywebview should not be used when Chrome or Edge is available")
+        raise AssertionError("pywebview should not be used when Chrome is available")
 
     monkeypatch.setattr(desktop_app, "run_pywebview_window", fail_pywebview)
 
@@ -68,13 +71,14 @@ def test_chromium_app_window_reuses_stable_profile_and_removes_legacy_profiles(m
     legacy_profile.mkdir()
     unrelated_dir = log_dir / "keep"
     unrelated_dir.mkdir()
+    (tmp_path / "window-state.json").write_text(json.dumps({"width": 1366, "height": 768, "x": 40, "y": 50}), encoding="utf-8")
     captured_args = []
 
     class FakeProcess:
         returncode = 0
 
-        def wait(self):
-            return None
+        def poll(self):
+            return 0
 
     def fake_popen(args, **_kwargs):
         captured_args.append(args)
@@ -84,6 +88,7 @@ def test_chromium_app_window_reuses_stable_profile_and_removes_legacy_profiles(m
     monkeypatch.setattr(desktop_app, "LOG_DIR", log_dir)
     monkeypatch.setattr(desktop_app, "find_chromium_browser", lambda: ("Microsoft Edge", tmp_path / "msedge.exe"))
     monkeypatch.setattr(desktop_app.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(desktop_app, "capture_chromium_window_state", lambda: True)
 
     desktop_app.run_chromium_app_window("http://127.0.0.1:34567")
     desktop_app.run_chromium_app_window("http://127.0.0.1:45678")
@@ -99,6 +104,119 @@ def test_chromium_app_window_reuses_stable_profile_and_removes_legacy_profiles(m
         f"--user-data-dir={tmp_path / 'browser-profile'}",
         f"--user-data-dir={tmp_path / 'browser-profile'}",
     ]
+    assert all("--window-size=1366,768" in args for args in captured_args)
+    assert all("--window-position=40,50" in args for args in captured_args)
     assert (tmp_path / "browser-profile").is_dir()
     assert not legacy_profile.exists()
     assert unrelated_dir.exists()
+
+
+def test_chromium_process_polling_captures_window_state_until_exit(monkeypatch):
+    calls = []
+    poll_results = [None, None, 0]
+
+    class FakeProcess:
+        def poll(self):
+            return poll_results.pop(0)
+
+    monkeypatch.setattr(desktop_app, "capture_chromium_window_state", lambda: calls.append("capture") or True)
+    monkeypatch.setattr(desktop_app.time, "sleep", lambda _seconds: calls.append("sleep"))
+
+    desktop_app.wait_for_chromium_process(FakeProcess(), poll_interval_seconds=0.01)
+
+    assert calls == ["capture", "sleep", "capture", "sleep", "capture"]
+
+
+def test_window_state_loads_defaults_for_missing_or_invalid_file(tmp_path):
+    missing = tmp_path / "missing-window-state.json"
+    invalid = tmp_path / "invalid-window-state.json"
+    invalid.write_text("{not-json", encoding="utf-8")
+
+    assert desktop_app.load_window_state(missing) == {
+        "width": 1280,
+        "height": 860,
+        "x": None,
+        "y": None,
+    }
+    assert desktop_app.load_window_state(invalid) == {
+        "width": 1280,
+        "height": 860,
+        "x": None,
+        "y": None,
+    }
+
+
+def test_window_state_clamps_size_and_persists_position(tmp_path):
+    state_path = tmp_path / "window-state.json"
+
+    desktop_app.save_window_state({"width": 800, "height": 500, "x": 120, "y": 80}, state_path)
+
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "width": 1024,
+        "height": 700,
+        "x": 120,
+        "y": 80,
+    }
+
+
+def test_pywebview_window_restores_and_remembers_window_state(monkeypatch, tmp_path):
+    state_path = tmp_path / "window-state.json"
+    state_path.write_text(json.dumps({"width": 1366, "height": 768, "x": 50, "y": 70}), encoding="utf-8")
+    captured = {}
+
+    class FakeEvent:
+        def __init__(self):
+            self.handlers = []
+
+        def __iadd__(self, handler):
+            self.handlers.append(handler)
+            return self
+
+    class FakeEvents:
+        def __init__(self):
+            self.resized = FakeEvent()
+            self.moved = FakeEvent()
+            self.closing = FakeEvent()
+
+    class FakeWindow:
+        def __init__(self):
+            self.events = FakeEvents()
+
+    fake_window = FakeWindow()
+
+    class FakeWebview:
+        @staticmethod
+        def create_window(title, url, **kwargs):
+            captured["title"] = title
+            captured["url"] = url
+            captured["kwargs"] = kwargs
+            return fake_window
+
+        @staticmethod
+        def start(**kwargs):
+            captured["start"] = kwargs
+
+    monkeypatch.setattr(desktop_app, "APP_ROOT", tmp_path)
+    monkeypatch.setitem(sys.modules, "webview", FakeWebview)
+
+    desktop_app.run_pywebview_window("http://127.0.0.1:12345")
+    fake_window.events.resized.handlers[0](1440, 900)
+    fake_window.events.moved.handlers[0](88, 99)
+    fake_window.events.closing.handlers[0]()
+
+    assert captured["title"] == desktop_app.APP_TITLE
+    assert captured["url"] == "http://127.0.0.1:12345"
+    assert captured["kwargs"] == {
+        "width": 1366,
+        "height": 768,
+        "x": 50,
+        "y": 70,
+        "min_size": (1024, 700),
+    }
+    assert captured["start"] == {"gui": "edgechromium", "debug": False}
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "width": 1440,
+        "height": 900,
+        "x": 88,
+        "y": 99,
+    }

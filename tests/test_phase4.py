@@ -10,19 +10,20 @@ from reportlab.pdfgen import canvas
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
 from backend.routers.reports import get_report_pdf
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, TripWrite
+from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportUpdate, TripWrite
 from backend.services.amount_converter import amount_to_chinese_upper
 from backend.services.pdf_generator import (
     ITEM_FILL_FONT_NAME,
     _other_expense_rows,
     _build_overlay,
+    _item_label_font_candidates,
     _trip_values,
     build_merged_report_pdf,
     build_pdf_filename,
     build_report_pdf,
     ensure_pdf_exportable,
 )
-from backend.services.report_service import create_report
+from backend.services.report_service import create_report, update_report
 
 
 def write_blank_pdf(path: Path, pages: int = 1, pagesize: tuple[int, int] = (595, 298)) -> None:
@@ -110,6 +111,30 @@ def test_other_expense_rows_skip_zero_amount_and_keep_dynamic_order(db):
 
     assert [row.label for row in rows] == ["市内交通费", "住宿费", "宴请"]
     assert [row.amount for row in rows] == [Decimal("12.00"), Decimal("30.00"), Decimal("20.00")]
+
+
+def test_other_expense_rows_use_fuel_subsidy_reimbursable_amount(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date="2026-06-04",
+        ),
+    )
+    add_confirmed_invoice(db, report, "fuel_subsidy", "300.00", 1)
+    db.commit()
+    db.refresh(report)
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date="2026-06-04",
+            expense_items=[ExpenseItemWrite(category="fuel_subsidy", reimbursable_amount=Decimal("180.00"))],
+        ),
+    )
+
+    rows = _other_expense_rows(report)
+
+    assert [(row.label, row.count, row.amount) for row in rows] == [("燃油补助", 1, Decimal("180.00"))]
 
 
 def test_report_pdf_paginates_other_expenses_from_first_page(monkeypatch, tmp_path, db):
@@ -330,6 +355,18 @@ def test_overlay_applies_configured_font_only_to_regular_fields(monkeypatch, db)
     assert fonts_by_field["total_amount"] == "CustomFill"
     assert fonts_by_field["custom:宴请_label"] == ITEM_FILL_FONT_NAME
     assert fonts_by_field["page_label"] is None
+
+
+def test_item_label_font_candidates_prefer_configured_kaiti(monkeypatch, tmp_path):
+    deployed_kaiti = tmp_path / "fonts" / "simkai.ttf"
+    deployed_kaiti.parent.mkdir()
+    deployed_kaiti.write_bytes(b"not a real font")
+    monkeypatch.setattr("backend.services.pdf_generator.resolve_font_file", lambda key: deployed_kaiti if key == "system:simkai" else None)
+
+    candidates = _item_label_font_candidates()
+
+    assert candidates[0] == deployed_kaiti
+    assert Path("C:/Windows/Fonts/simkai.ttf") in candidates
 
 
 def test_trip_values_fill_zero_when_trip_has_no_transport_invoice(db):

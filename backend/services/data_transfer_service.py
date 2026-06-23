@@ -56,6 +56,12 @@ def _decimal(value) -> Decimal:
     return Decimal(str(value or "0.00")).quantize(Decimal("0.01"))
 
 
+def _optional_decimal(value) -> Decimal | None:
+    if value is None:
+        return None
+    return _decimal(value)
+
+
 def _parse_date(value: str | None) -> date_type | None:
     if not value:
         return None
@@ -139,6 +145,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
             "original_id": item.id,
             "category": item.category,
             "remark": item.remark,
+            "reimbursable_amount": _money(item.reimbursable_amount) if item.reimbursable_amount is not None else None,
         }
         for item in report.expense_items
     ]
@@ -449,6 +456,7 @@ def _create_or_overwrite_report(
                 report_id=target_report.id,
                 category=item_payload["category"],
                 remark=item_payload.get("remark"),
+                reimbursable_amount=_optional_decimal(item_payload.get("reimbursable_amount")),
             )
         )
     db.flush()

@@ -1,10 +1,15 @@
 param(
-    [string]$Version = "1.1.0",
+    [string]$Version = "",
+    [switch]$PreviewBuild,
+    [string]$PreviewSerial = "",
+    [switch]$TestBuild,
+    [string]$TestBuildSerial = "",
     [switch]$UseSystemPython,
     [switch]$SkipDependencyInstall,
     [switch]$ReuseReleaseVenv,
     [switch]$BuildOpenCvRuntime,
-    [string]$OpenCvPackageVersion = "4.10.0.84"
+    [string]$OpenCvPackageVersion = "4.10.0.84",
+    [string]$ReleaseDate = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -13,16 +18,67 @@ $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $BasePython = if ($env:PYTHON) { $env:PYTHON } else { "python" }
 $ReleaseVenv = Join-Path $Root ".release-venv"
 $Python = $BasePython
-$AppName = "报销管理"
+$AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))
+$AppExeName = "$AppName.exe"
 $DistApp = Join-Path $Root "dist\$AppName"
+$LauncherExe = Join-Path $Root "dist\$AppName-launcher.exe"
 $ReleaseDir = Join-Path $Root "release"
-$StageRoot = Join-Path $ReleaseDir ".staging-$Version"
-$ZipPath = Join-Path $ReleaseDir "$AppName-v$Version.zip"
+if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
+    $ReleaseDate = Get-Date -Format "yyyyMMdd"
+}
+if ($ReleaseDate -notmatch "^\d{8}$") {
+    throw "ReleaseDate must use yyyymmdd format."
+}
+if ($TestBuild) {
+    Write-Warning "TestBuild is deprecated. Use -PreviewBuild and -PreviewSerial NNN."
+    $PreviewBuild = $true
+    if ([string]::IsNullOrWhiteSpace($PreviewSerial) -and -not [string]::IsNullOrWhiteSpace($TestBuildSerial)) {
+        $PreviewSerial = $TestBuildSerial
+    }
+}
+if ($PreviewBuild) {
+    if ([string]::IsNullOrWhiteSpace($PreviewSerial)) {
+        throw "PreviewSerial is required for preview builds, for example 001."
+    }
+    if ($PreviewSerial -notmatch "^\d{3}$") {
+        throw "PreviewSerial must be a three-digit daily serial, for example 001."
+    }
+    $PreviewId = "preview-$ReleaseDate-$PreviewSerial"
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        $PackageVersion = $PreviewId
+        $ZipFileName = "{0}-{1}.zip" -f $AppName, $PreviewId
+    }
+    else {
+        if ($Version -notmatch "^\d+\.\d+\.\d+$") {
+            throw "Version must use X.Y.Z format when binding a preview build to a target version."
+        }
+        $PackageVersion = "$Version-$PreviewId"
+        $ZipFileName = "{0}-v{1}-{2}.zip" -f $AppName, $Version, $PreviewId
+    }
+    $ZipPath = Join-Path -Path $ReleaseDir -ChildPath $ZipFileName
+}
+else {
+    if (-not [string]::IsNullOrWhiteSpace($PreviewSerial) -or -not [string]::IsNullOrWhiteSpace($TestBuildSerial)) {
+        throw "PreviewSerial is only valid with -PreviewBuild."
+    }
+    if ([string]::IsNullOrWhiteSpace($Version)) {
+        throw "Version is required for formal release builds. Use -PreviewBuild for preview packages."
+    }
+    if ($Version -notmatch "^\d+\.\d+\.\d+$") {
+        throw "Version must use X.Y.Z format for formal release builds. Use -PreviewBuild for preview packages."
+    }
+    $PackageVersion = $Version
+    $ZipFileName = "{0}-v{1}-{2}.zip" -f $AppName, $PackageVersion, $ReleaseDate
+    $ZipPath = Join-Path -Path $ReleaseDir -ChildPath $ZipFileName
+}
+$StageName = ".staging-{0}-{1}" -f $PackageVersion, $ReleaseDate
+$StageRoot = Join-Path -Path $ReleaseDir -ChildPath $StageName
 
 function Remove-PathInside {
     param(
         [Parameter(Mandatory = $true)][string]$Path,
-        [Parameter(Mandatory = $true)][string]$AllowedRoot
+        [Parameter(Mandatory = $true)][string]$AllowedRoot,
+        [int]$MaxAttempts = 5
     )
 
     if (-not (Test-Path -LiteralPath $Path)) {
@@ -35,7 +91,45 @@ function Remove-PathInside {
         throw "Refusing to remove path outside allowed root: $resolvedPath"
     }
 
-    Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw
+            }
+            Write-Host "Remove-Item failed on attempt $attempt; retrying..."
+            Start-Sleep -Seconds 2
+        }
+    }
+}
+
+function Compress-ArchiveWithRetry {
+    param(
+        [Parameter(Mandatory = $true)][string]$SourcePath,
+        [Parameter(Mandatory = $true)][string]$DestinationPath,
+        [Parameter(Mandatory = $true)][string]$AllowedRoot,
+        [int]$MaxAttempts = 5
+    )
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            if (Test-Path -LiteralPath $DestinationPath) {
+                Remove-PathInside -Path $DestinationPath -AllowedRoot $AllowedRoot
+            }
+            Compress-Archive -Path $SourcePath -DestinationPath $DestinationPath
+            return
+        }
+        catch {
+            if ($attempt -ge $MaxAttempts) {
+                throw
+            }
+            Write-Host "Compress-Archive failed on attempt $attempt; retrying..."
+            Start-Sleep -Seconds 2
+        }
+    }
 }
 
 function Get-TreeSizeBytes {
@@ -124,6 +218,10 @@ function New-OpenCvRuntimePackage {
     $RuntimeStage = Join-Path $ReleaseDir ".opencv-runtime-$OpenCvPackageVersion"
     $ModelSource = Join-Path $Root "docs\archive\wechat_qrcode"
 
+    if (Test-Path -LiteralPath $RuntimeZipPath) {
+        throw "OpenCV runtime ZIP already exists: $RuntimeZipPath. Delete it manually before rebuilding."
+    }
+
     Remove-PathInside -Path $RuntimeStage -AllowedRoot $ReleaseDir
     New-Item -ItemType Directory -Path $RuntimeStage -Force | Out-Null
 
@@ -148,10 +246,26 @@ function New-OpenCvRuntimePackage {
     }
     $Manifest | ConvertTo-Json -Depth 4 | Set-Content -Path (Join-Path $RuntimeStage "runtime.json") -Encoding UTF8
 
-    Compress-Archive -Path (Join-Path $RuntimeStage "*") -DestinationPath $RuntimeZipPath -Force
+    Compress-ArchiveWithRetry -SourcePath (Join-Path $RuntimeStage "*") -DestinationPath $RuntimeZipPath -AllowedRoot $ReleaseDir
     Remove-PathInside -Path $RuntimeStage -AllowedRoot $ReleaseDir
     Write-Host "OpenCV runtime output: $RuntimeZipPath"
     Write-Host "OpenCV runtime zip size: $(Format-SizeMb -Bytes (Get-TreeSizeBytes -Path $RuntimeZipPath))"
+}
+
+function Write-JsonFile {
+    param(
+        [Parameter(Mandatory = $true)]$Value,
+        [Parameter(Mandatory = $true)][string]$Path
+    )
+
+    $json = $Value | ConvertTo-Json -Depth 8
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($Path, $json, $utf8NoBom)
+}
+
+New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
+if (Test-Path -LiteralPath $ZipPath) {
+    throw "Release ZIP already exists: $ZipPath. Delete it manually before rebuilding."
 }
 
 if (-not $UseSystemPython) {
@@ -196,26 +310,56 @@ if ($LASTEXITCODE -ne 0) {
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE"
 }
+& $Python -m PyInstaller --clean --noconfirm (Join-Path $Root "reimbursement_launcher.spec")
+if ($LASTEXITCODE -ne 0) {
+    throw "PyInstaller launcher build failed with exit code $LASTEXITCODE"
+}
 
 if (-not (Test-Path -LiteralPath $DistApp)) {
     throw "PyInstaller output not found: $DistApp"
 }
+if (-not (Test-Path -LiteralPath $LauncherExe)) {
+    throw "PyInstaller launcher output not found: $LauncherExe"
+}
 
-foreach ($name in @("data", "uploads", "logs", "browser-profile")) {
+foreach ($name in @("data", "uploads", "logs", "browser-profile", "vendor", "window-state.json")) {
     Remove-PathInside -Path (Join-Path $DistApp $name) -AllowedRoot $DistApp
 }
 Remove-OptionalDistFiles -AppRoot $DistApp
 $DistSize = Get-TreeSizeBytes -Path $DistApp
 
-New-Item -ItemType Directory -Path $ReleaseDir -Force | Out-Null
-foreach ($item in Get-ChildItem -LiteralPath $ReleaseDir -Force) {
-    Remove-PathInside -Path $item.FullName -AllowedRoot $ReleaseDir
+Remove-PathInside -Path $StageRoot -AllowedRoot $ReleaseDir
+New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
+$StageAppRoot = Join-Path $StageRoot $AppName
+$StageVersionRoot = Join-Path $StageAppRoot "versions\$PackageVersion"
+New-Item -ItemType Directory -Path $StageAppRoot -Force | Out-Null
+New-Item -ItemType Directory -Path (Split-Path -Parent $StageVersionRoot) -Force | Out-Null
+Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination (Join-Path $StageAppRoot "README.md")
+Copy-Item -LiteralPath (Join-Path $Root "docs\zip-upgrade-guide.md") -Destination (Join-Path $StageAppRoot "zip-upgrade-guide.md")
+Copy-Item -LiteralPath (Join-Path $Root "scripts\upgrade_zip_release.ps1") -Destination (Join-Path $StageAppRoot "upgrade_zip_release.ps1")
+Copy-Item -LiteralPath $LauncherExe -Destination (Join-Path $StageAppRoot $AppExeName)
+foreach ($item in Get-ChildItem -LiteralPath $DistApp -Force) {
+    Copy-Item -LiteralPath $item.FullName -Destination (Join-Path $StageVersionRoot $item.Name) -Recurse -Force
 }
 
-New-Item -ItemType Directory -Path $StageRoot -Force | Out-Null
-Copy-Item -LiteralPath (Join-Path $Root "README.md") -Destination (Join-Path $StageRoot "README.md")
-Copy-Item -LiteralPath $DistApp -Destination $StageRoot -Recurse
-Compress-Archive -Path (Join-Path $StageRoot "*") -DestinationPath $ZipPath -Force
+$PortableManifest = [ordered]@{
+    schema_version = 1
+    package_type = "reimbursement_portable_release"
+    app_version = $PackageVersion
+    release_date = $ReleaseDate
+    app_dir = $AppName
+    launcher_path = "$AppName/$AppExeName"
+    current_version_file = "$AppName/current-version.json"
+    version_dir = "$AppName/versions/$PackageVersion"
+    executable_path = "$AppName/versions/$PackageVersion/$AppExeName"
+}
+$CurrentVersion = [ordered]@{
+    current_version = $PackageVersion
+    release_date = $ReleaseDate
+}
+Write-JsonFile -Value $PortableManifest -Path (Join-Path $StageAppRoot "portable-release.json")
+Write-JsonFile -Value $CurrentVersion -Path (Join-Path $StageAppRoot "current-version.json")
+Compress-ArchiveWithRetry -SourcePath (Join-Path $StageRoot "*") -DestinationPath $ZipPath -AllowedRoot $ReleaseDir
 Remove-PathInside -Path $StageRoot -AllowedRoot $ReleaseDir
 
 Write-Host "Release output: $ZipPath"

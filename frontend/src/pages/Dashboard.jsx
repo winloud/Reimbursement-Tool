@@ -55,13 +55,19 @@ import {
 
 const CATEGORY_COLORS = ["#2563EB", "#16A34A", "#F59E0B", "#DC2626", "#7C3AED", "#0891B2", "#DB2777", "#64748B"];
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
+const TRIP_HEAT_START_RGB = [108, 166, 119];
+const TRIP_HEAT_END_RGB = [205, 165, 93];
+const interpolateTripHeatRgb = (index, total) => {
+  const ratio = total <= 1 ? 0 : index / (total - 1);
+  return TRIP_HEAT_START_RGB.map((start, channelIndex) =>
+    Math.round(start + (TRIP_HEAT_END_RGB[channelIndex] - start) * ratio),
+  );
+};
 const TRIP_HEAT_COLORS = Array.from({ length: 10 }, (_, index) => {
-  const level = index + 1;
-  const alpha = 0.22 + index * 0.068;
+  const [red, green, blue] = interpolateTripHeatRgb(index, 10);
   return {
-    bg: `rgba(18, 97, 50, ${alpha.toFixed(2)})`,
-    color: level >= 7 ? "#FFFFFF" : "#052E16",
-    border: `rgba(18, 97, 50, ${Math.min(alpha + 0.1, 0.9).toFixed(2)})`,
+    bg: `rgba(${red}, ${green}, ${blue}, 0.82)`,
+    border: `rgb(${red}, ${green}, ${blue})`,
   };
 });
 

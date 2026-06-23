@@ -1,0 +1,118 @@
+# 当前开发计划
+
+## 状态
+- 版本号：v1.2.0
+- 计划状态：本地验证完成
+- 预计版本类型：minor
+
+## 目标
+- [x] 保持现有 ZIP 发布方式，不引入 Windows 安装器。
+- [x] 增加本地 ZIP 升级辅助脚本，升级前创建完整备份并复制运行态目录。
+- [x] 增加程序内完整备份、恢复预览、恢复执行和诊断信息导出。
+- [x] 在个性化设置页新增“数据维护”入口。
+- [x] 新增当前开发版 ZIP 安装、升级、备份恢复说明；正式发布时再同步 README。
+- [x] 桌面 EXE 记住用户调整后的窗口大小和位置。
+- [x] 将 ZIP 桌面发布调整为便携式安装根目录：根目录 launcher + `versions\<version>` 真实程序目录。
+- [x] 新增程序内选择新版发布 ZIP、预览并安装更新，更新前自动创建完整备份。
+- [x] 固化预览包命名规则：未绑定目标版本时使用 `preview-yyyymmdd-NNN`，绑定目标版本时使用 `vX.Y.Z-preview-yyyymmdd-NNN`，不得占用正式版本号。
+- [x] 改进发票上传识别：图片发票走二维码识别，PDF 发票逐页识别，多页多发票 PDF 上传后拆成多条发票记录。
+- [x] 新增 GitHub Actions 手动 preview artifact 构建入口，不创建 GitHub Release。
+
+## 范围
+本次做：
+- ZIP 发布包继续包含 `README.md` 和干净的 `报销管理/` 安装根目录，不包含运行态数据目录。
+- `报销管理\报销管理.exe` 改为根目录 launcher，真实 PyInstaller 程序位于 `报销管理\versions\<version>\`。
+- ZIP 根目录只包含 `报销管理\` 文件夹，不再额外放置 `README.md`、`portable-release.json`、`upgrade_zip_release.ps1` 等散文件。
+- `报销管理\current-version.json` 决定 launcher 启动哪个版本；运行数据继续在 `报销管理\` 根目录。
+- 新增 `scripts/upgrade_zip_release.ps1`，发布时复制到 ZIP 根目录，支持 `-OldAppDir`、`-NewAppDir`、`-BackupDir`。
+- 发布 ZIP 额外携带 `zip-upgrade-guide.md`，用于当前开发版安装、迁移和程序内更新说明。
+- 预览打包命名规则调整为：未绑定目标版本时输出 `报销管理-preview-yyyymmdd-NNN.zip`；如果 active-plan 已定义目标版本 `vX.Y.Z`，输出 `报销管理-vX.Y.Z-preview-yyyymmdd-NNN.zip`；正式发布才输出 `报销管理-vX.Y.Z-yyyymmdd.zip`。
+- 新增 `/api/maintenance` 维护接口，用于备份、恢复、诊断和路径信息查询。
+- 新增 `/api/maintenance/updates/preview` 和 `/api/maintenance/updates/execute`，用于程序内预览并安装新版 ZIP。
+- 新增设置页“数据维护”面板。
+- 新增 `docs/zip-upgrade-guide.md`，更新 docs 索引和 CHANGELOG；README 保持 v1.1.1 发布说明定位。
+- 桌面窗口状态写入 EXE 同级 `window-state.json`；保持 Google Chrome app-mode 优先策略，并在 Chrome/Edge app-mode 路径中读取和保存窗口大小位置，继续复用稳定 `browser-profile`。
+- 图片发票优先复用现有二维码识别路线，不引入 OCR runtime；PDF 发票从只识别第一页改为逐页识别，识别到多张发票时拆分为独立 PDF 附件并创建多条发票记录。
+- 新增 `.github/workflows/build-preview.yml`，支持零输入手动触发；默认从 active-plan 读取目标版本、按中国时区取日期、按已有 artifact 自动递增三位预览流水号，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
+
+本次不做：
+- 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
+- 不做安装器；不安装 Inno Setup、NSIS、WiX；不修改注册表；不做联网自动更新。
+- 不迁移运行数据到 `%LOCALAPPDATA%`，继续保留安装根目录数据策略。
+- 桌面 app 和 Linux server 暂不合并为同一升级执行链；只共享版本 manifest、升级前备份和可回滚原则。
+
+## 版本号判断
+- 如果只是修复问题：patch
+- 如果增加用户可见功能：minor
+- 如果数据结构或使用方式有不兼容变化：major
+
+---
+
+## 完成记录
+
+### 重要改动
+- 新增 `backend/services/maintenance_service.py`、`backend/routers/maintenance.py` 和维护相关 schema。
+- 新增完整备份 ZIP 格式：`backup-manifest.json`、`data/expense.db`、`uploads/`、可选 `vendor/` 和最近日志摘要。
+- 恢复执行前自动创建 `pre_restore_*.zip`，并在恢复数据库后运行现有 SQLite 迁移。
+- 新增 `frontend/src/pages/MaintenancePanel.jsx`，在个性化设置页提供备份、恢复和诊断导出入口。
+- 新增 `scripts/upgrade_zip_release.ps1`，并由 `scripts/build_release.ps1` 复制到发布 ZIP 根目录。
+- 新增 `docs/zip-upgrade-guide.md` 记录当前开发版 ZIP 本地安装、升级和备份恢复步骤；根目录 README 暂不写入未发布能力。
+- 新增桌面窗口大小和位置记忆；pywebview 路径通过事件保存 `window-state.json`，Chrome/Edge app-mode 路径启动时读取已有窗口状态，并在窗口运行期间捕捉当前大小位置写回 `window-state.json`。
+- 新增 `portable_launcher.py` 和 `reimbursement_launcher.spec`，发布时生成根目录 launcher。
+- `backend/runtime_paths.py` 支持 `REIMBURSEMENT_APP_ROOT` 和 `versions\<version>` 自动识别，确保数据目录落在便携安装根目录。
+- 维护接口新增更新包预览和执行；执行前创建 `pre_update_*.zip`，安装新版本目录后原子切换 `current-version.json`，不删除旧版本目录。
+- `scripts/build_release.ps1` 生成 `portable-release.json`、`current-version.json` 和 `zip-upgrade-guide.md`，用于程序内更新校验和发布包说明。
+- `scripts/build_release.ps1` 新增 `-PreviewBuild` 和 `-PreviewSerial NNN`，预览包命名从 `测试版<数字流水号>` 调整为 `preview-yyyymmdd-NNN`；如果 active-plan 已定义目标版本则使用 `vX.Y.Z-preview-yyyymmdd-NNN`。
+- 新增 `Build Preview Artifact` GitHub Actions workflow：手动触发后自动解析版本/日期/流水号，运行测试和 preview 打包，只上传 Actions artifact，不创建或更新 GitHub Release。
+- 新增技术决策记录 `docs/decisions/0002-portable-install-root.md`。
+- 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
+- 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。
+- PDF 发票新增逐页解析能力；多页 PDF 中识别到多张发票时，上传一次会创建多条发票记录并进入逐张确认队列。
+
+### 验证记录
+- [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
+- [x] 前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 全量后端回归：`python -m pytest`，173 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] 发布打包验证：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -Version 1.1.1 -ReleaseDate 20260621 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.1.1-20260621.zip`。
+- [x] ZIP 内容检查：根目录包含 `README.md` 和 `upgrade_zip_release.ps1`；`tar -tf ... | findstr /C:"/data/" /C:"/uploads/" /C:"/logs/" /C:"/browser-profile/" /C:"/vendor/"` 无匹配，确认运行态目录未进入发布包。
+- [x] 桌面窗口记忆定向测试：`python -m pytest tests\test_desktop_dependencies.py`，9 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] 窗口记忆问题修复验证：保持 Chrome 优先策略，Chrome/Edge app-mode 启动时应用 `window-state.json` 并在运行期间捕捉窗口大小位置；`python -m pytest tests\test_desktop_dependencies.py`，10 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] 便携升级定向测试：`python -m pytest tests\test_maintenance_service.py tests\test_zip_upgrade_script.py tests\test_phase6_release.py tests\test_desktop_dependencies.py`，26 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] PowerShell 脚本语法检查：`scripts\build_release.ps1`、`scripts\upgrade_zip_release.ps1` 均可解析。
+- [x] 预览包命名规则定向测试：`python -m pytest tests\test_phase6_release.py tests\test_zip_upgrade_script.py`，9 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] 便携发布打包验证：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -Version 1.2.1 -ReleaseDate 20260621 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.1-20260621.zip`。
+- [x] 便携 ZIP 内容检查：`release\报销管理-v1.2.4-20260621.zip` 根目录只包含 `报销管理\`；安装根目录内包含 `portable-release.json`、`报销管理.exe` launcher、`current-version.json`、`zip-upgrade-guide.md`；真实程序位于 `versions\1.2.4\报销管理.exe`，且保留 `versions\1.2.4\_internal\`。
+- [x] 便携 ZIP 运行态排除检查：`tar -tf ... | findstr /C:"/data/" /C:"/uploads/" /C:"/logs/" /C:"/browser-profile/" /C:"/vendor/" /C:"window-state.json"` 无匹配。
+- [x] 真实发布 ZIP 更新预览验证：`create_update_preview()` 可识别 `release\报销管理-v1.2.4-20260621.zip`，返回版本 `1.2.4` 和 `versions/1.2.4/报销管理.exe`。
+- [x] 真实发布 ZIP 更新执行验证：在临时便携安装根目录中执行 `execute_update()` 成功，创建 `pre_update_*.zip`，安装 `versions\1.2.4\报销管理.exe` 和 `_internal\frontend\dist\index.html`，并切换 `current-version.json`。
+- [x] 旧测试版 ZIP 打包验证：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -TestBuild -TestBuildSerial 20260621002 -ReleaseDate 20260621 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-测试版20260621002-20260621.zip`。该命名已被新的 `preview` 规则取代，脚本后续同步。
+- [x] 旧测试版 ZIP 内容检查：根目录只包含 `报销管理\`；真实程序位于 `versions\测试版20260621002\报销管理.exe`；`portable-release.json` 和 `current-version.json` 均记录 `测试版20260621002`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 旧测试版 ZIP 更新预览和执行验证：`create_update_preview()` 可识别 `测试版20260621002`；在临时便携安装根目录中执行 `execute_update()` 成功，创建 `pre_update_*.zip`，安装 `versions\测试版20260621002\报销管理.exe` 和 `_internal\frontend\dist\index.html`，并切换 `current-version.json`。
+- [x] 预览包命名文档规则确认：正式包为 `报销管理-vX.Y.Z-yyyymmdd.zip`；未绑定目标版本的预览包为 `报销管理-preview-yyyymmdd-NNN.zip`；active-plan 已定义目标版本 `vX.Y.Z` 时，预览包为 `报销管理-vX.Y.Z-preview-yyyymmdd-NNN.zip`。
+- [x] v1.2.0 preview 打包验证：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 001 -ReleaseDate 20260622 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260622-001.zip`。
+- [x] v1.2.0 preview ZIP 内容检查：根目录只包含 `报销管理\`；真实程序位于 `versions\1.2.0-preview-20260622-001\报销管理.exe`；`portable-release.json` 和 `current-version.json` 均记录 `1.2.0-preview-20260622-001`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] v1.2.0 preview 更新预览和执行验证：`create_update_preview()` 可识别 `1.2.0-preview-20260622-001`；在临时便携安装根目录中执行 `execute_update()` 成功，创建 `pre_update_*.zip`，安装 `versions\1.2.0-preview-20260622-001\报销管理.exe` 和 `_internal\frontend\dist\index.html`，并切换 `current-version.json`。
+- [x] v1.2.0 preview 全量复验：`python -m pytest`，173 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）；`git diff --check` 通过，仅有既有 CRLF 转换提示。
+- [x] v1.2.0 preview 窗口记忆修复后重新打包：保持 Chrome 优先策略，修复 Chrome/Edge app-mode 路径窗口状态保存；`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 002 -ReleaseDate 20260622 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260622-002.zip`。
+- [x] v1.2.0 preview-002 ZIP 内容检查：根目录只包含 `报销管理\`；真实程序位于 `versions\1.2.0-preview-20260622-002\报销管理.exe`；`portable-release.json` 和 `current-version.json` 均记录 `1.2.0-preview-20260622-002`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] v1.2.0 preview-002 更新预览验证：`create_update_preview()` 可识别 `1.2.0-preview-20260622-002`，返回 `versions/1.2.0-preview-20260622-002/报销管理.exe`。
+- [x] v1.2.0 preview-002 全量复验：`python -m pytest`，174 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）；`git diff --check` 通过，仅有既有 CRLF 转换提示。
+- [x] `git diff --check` 通过；仅有既有 CRLF 转换提示。
+- [x] 发票上传前保存保护定向测试：`node --test src/pages/reportEditUtils.test.js`，12 passed。
+- [x] 前端构建复验：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 发票上传前保存保护后全量前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 发票上传前保存保护后全量后端回归：`python -m pytest`，174 passed，7 warnings（既有 PyInstaller/FastAPI deprecation warnings）。
+- [x] v1.2.0 preview-20260623-001 测试包输出：`release\报销管理-v1.2.0-preview-20260623-001.zip`，大小约 44.98 MB。当前环境 `.release-venv` 引用的旧 Python 路径失效且网络受限无法重装打包依赖，因此本次复用 2026-06-22 已验证的 PyInstaller 输出，替换最新 `frontend\dist` 后生成预览 ZIP；本次修复仅涉及前端静态资源。
+- [x] v1.2.0 preview-20260623-001 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260623-001\报销管理.exe` 和最新前端 `index-BWW0mK91.js`；manifest/current-version 均为 `1.2.0-preview-20260623-001`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 图片发票二维码、PDF 逐页识别、多页 PDF 拆分上传定向测试：`python -m pytest tests\test_phase3.py`，47 passed，5 warnings（既有 PyInstaller/SWIG deprecation warnings）。
+- [x] 多发票上传返回前端兼容复验：`node --test src/pages/reportEditUtils.test.js`，12 passed。
+- [x] 发票识别改进后全量后端回归：`python -m pytest`，177 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
+- [x] 发票识别改进后全量前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 发票识别改进后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 手动 preview artifact workflow 断言和全量后端回归：`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
+- [x] 手动 preview artifact workflow 后前端工具测试：`node --test src/**/*.test.js`，46 passed。
+- [x] 手动 preview artifact workflow 后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 零输入 preview artifact workflow 增强验证：`python -m pytest tests\test_changelog_release_notes.py`，4 passed；`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
+
+### 已同步到 CHANGELOG
+- 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
