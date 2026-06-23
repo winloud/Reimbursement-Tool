@@ -115,6 +115,7 @@
 - [x] 手动 preview artifact workflow 后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] 零输入 preview artifact workflow 增强验证：`python -m pytest tests\test_changelog_release_notes.py`，4 passed；`python -m pytest`，178 passed，7 warnings（既有 PyInstaller/FastAPI/SWIG deprecation warnings）。
 - [x] GitHub Actions 云端 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28003609676` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260623-001`，大小约 45.34 MB。
+- [x] GitHub Actions 直接可更新 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28004126113` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260623-002`，workflow 在上传前展开发布 ZIP 并校验 `portable-release.json` 存在，artifact 大小约 45.38 MB。
 
 ### 已同步到 CHANGELOG
 - 已在 Unreleased 记录数据维护、诊断导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
