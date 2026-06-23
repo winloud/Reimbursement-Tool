@@ -136,15 +136,19 @@ jobs:
       - name: Build preview ZIP
         shell: pwsh
         run: |
-          $arguments = @(
-            "-PreviewBuild",
-            "-PreviewSerial", $env:PREVIEW_SERIAL,
-            "-ReleaseDate", $env:RELEASE_DATE
-          )
           if (-not [string]::IsNullOrWhiteSpace($env:PREVIEW_TARGET_VERSION)) {
-            $arguments += @("-Version", $env:PREVIEW_TARGET_VERSION)
+            & .\scripts\build_release.ps1 `
+              -PreviewBuild `
+              -PreviewSerial $env:PREVIEW_SERIAL `
+              -ReleaseDate $env:RELEASE_DATE `
+              -Version $env:PREVIEW_TARGET_VERSION
           }
-          & .\scripts\build_release.ps1 @arguments
+          else {
+            & .\scripts\build_release.ps1 `
+              -PreviewBuild `
+              -PreviewSerial $env:PREVIEW_SERIAL `
+              -ReleaseDate $env:RELEASE_DATE
+          }
           if ($LASTEXITCODE -ne 0) {
             throw "Preview build failed with exit code $LASTEXITCODE."
           }
