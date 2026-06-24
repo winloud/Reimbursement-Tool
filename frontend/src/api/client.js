@@ -112,6 +112,18 @@ export const downloadMaintenanceBackup = async (backupId) => {
   }
 };
 
+export const deleteMaintenanceBackup = async (backupId) => {
+  const response = await apiClient.delete(`/api/maintenance/backups/${encodeURIComponent(backupId)}`, {
+    data: { confirm_delete: true },
+  });
+  return response.data;
+};
+
+export const cleanupMaintenanceBackups = async () => {
+  const response = await apiClient.post("/api/maintenance/backups/cleanup", { confirm_cleanup: true });
+  return response.data;
+};
+
 export const previewMaintenanceRestore = async (file) => {
   const formData = new FormData();
   formData.append("file", file);
@@ -148,6 +160,19 @@ export const executeMaintenanceUpdate = async (payload) => {
 
 export const switchMaintenanceVersion = async (payload) => {
   const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
+  return response.data;
+};
+
+export const deleteMaintenanceVersion = async (version) => {
+  const response = await apiClient.delete(`/api/maintenance/versions/${encodeURIComponent(version)}`, {
+    data: { confirm_delete: true },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const cleanupMaintenanceVersions = async () => {
+  const response = await apiClient.post("/api/maintenance/versions/cleanup", { confirm_cleanup: true }, { timeout: 120000 });
   return response.data;
 };
 

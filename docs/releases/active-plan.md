@@ -20,6 +20,8 @@
 - [x] 增加数据库完整性检查。
 - [x] 批量删除、导入覆盖、状态回退前自动创建安全快照。
 - [x] 为程序内更新和已安装版本切换增加数据结构兼容性门禁。
+- [x] 数据维护页增加备份和已安装版本删除/清理入口。
+- [x] 报销单管理列表默认按出差开始日期倒序排列。
 
 ## 范围
 本次做：
@@ -40,6 +42,8 @@
 - 新增 `/api/maintenance/database-check`，检查 SQLite `integrity_check`、`foreign_key_check`、报销业务一致性和发票附件状态，并在数据维护页面展示摘要。
 - 批量软删除、批量彻底删除、导入覆盖和报销单状态回退前创建完整备份快照；快照失败时中止原操作，避免无保护地执行危险变更。
 - 程序内更新和已安装版本切换读取发布 manifest 中的数据结构兼容范围，当前数据库结构未知、目标版本缺少兼容性信息或当前数据库结构超出目标支持范围时禁止自动安装/切换。
+- 数据维护页在备份恢复区列出已有备份，可删除选中备份或一键清理旧备份；在程序更新区列出已安装版本，可删除非当前版本或一键清理旧版本。
+- 报销单管理默认排序从报销日期调整为出差开始日期倒序；无出差开始日期的记录排在后面。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -88,6 +92,8 @@
 - 数据维护页改为“备份与恢复 / 程序更新 / 诊断与检查”三块任务区；按用户反馈移除顶部 4 个摘要块、步骤式状态条和运行环境折叠，更新、恢复、诊断错误改为就近显示在对应区域。
 - 程序更新区新增已安装版本切换/回退：列出 `versions\` 下已有版本，切换前创建 `pre_version_switch_*.zip` 完整备份，只更新根目录 `current-version.json`，重启后由 launcher 启动目标版本；已存在版本目录的更新 ZIP 不再引导重复安装，而提示直接切换。
 - 新增数据结构兼容性门禁：SQLite 迁移后写入 `PRAGMA user_version`；发布包 `portable-release.json`、版本目录 manifest 和 `current-version.json` 记录 `data_schema_version`、`min_supported_data_schema_version`、`max_supported_data_schema_version`；维护接口在更新预览、安装和已安装版本切换时返回兼容性状态，执行阶段会拒绝未知或不兼容目标，避免旧程序打开新结构数据。
+- 数据维护页新增备份文件管理和已安装版本管理：备份可删除选中项或清理旧备份（保留最近备份）；版本可删除非当前版本或清理旧版本（保留当前版本）；后端新增对应删除/清理接口并继续做路径和当前版本保护。
+- 报销单列表服务默认按 `trip_start_date` 倒序排序，再按报销日期和创建时间倒序兜底；回收站列表仍按删除时间排序。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -198,6 +204,12 @@
 - [x] 数据结构兼容性门禁 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 - [x] v1.2.0 preview-20260625-002 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 002 -ReleaseDate 20260625 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260625-002.zip`，大小约 45.02 MB。
 - [x] v1.2.0 preview-20260625-002 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、版本目录 `portable-release.json`、launcher、版本 EXE 和前端 `dist\index.html`；三个版本配置文件均记录 `1.2.0-preview-20260625-002` 和数据结构兼容范围 `1-1`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 备份/版本清理和报销单默认排序后端语法检查：`python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\services\report_service.py tests\test_maintenance_service.py tests\test_report_crud.py` 通过。
+- [x] 备份/版本清理和报销单默认排序后端定向测试：`python -m pytest tests\test_maintenance_service.py tests\test_report_crud.py`，43 passed。
+- [x] 备份/版本清理和报销单默认排序前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 备份/版本清理和报销单默认排序前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 备份/版本清理和报销单默认排序后端全量回归：`python -m pytest`，210 passed，7 warnings（既有 SWIG/FastAPI deprecation warnings）。
+- [x] 备份/版本清理和报销单默认排序 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护独立页面、侧边栏数据维护入口移到末尾、数据维护页结构优化、已安装版本切换/回退、数据结构兼容性门禁、备份选择器默认打开备份目录、备份恢复标题说明、更新完成后重启按钮、重启时关闭旧桌面窗口、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。
+- 已在 Unreleased 记录数据维护独立页面、侧边栏数据维护入口移到末尾、数据维护页结构优化、已安装版本切换/回退、数据结构兼容性门禁、备份和已安装版本删除/清理、备份选择器默认打开备份目录、备份恢复标题说明、更新完成后重启按钮、重启时关闭旧桌面窗口、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序和默认排序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。

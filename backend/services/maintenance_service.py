@@ -30,7 +30,9 @@ from backend.data_schema import (
 )
 from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
 from backend.schemas.maintenance import (
+    BackupCleanupRead,
     BackupRead,
+    BackupDeleteRead,
     DataCompatibilityRead,
     DatabaseIntegrityCheckRead,
     DatabaseIntegrityIssueRead,
@@ -45,6 +47,8 @@ from backend.schemas.maintenance import (
     RestorePreviewRead,
     UpdateExecuteRead,
     UpdatePreviewRead,
+    VersionCleanupRead,
+    VersionDeleteRead,
     VersionSwitchRead,
 )
 from backend.services.invoice_qr_runtime import (
@@ -429,6 +433,27 @@ def list_backups() -> list[BackupRead]:
         return []
     backups = [_backup_read(path) for path in BACKUP_ROOT.glob("*.zip") if path.is_file()]
     return sorted(backups, key=lambda item: item.created_at, reverse=True)
+
+
+def delete_backup(backup_id: str, confirm_delete: bool) -> BackupDeleteRead:
+    if not confirm_delete:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除备份需要二次确认")
+    path = get_backup_file(backup_id)
+    deleted_path = path.as_posix()
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除备份失败：{exc}") from exc
+    return BackupDeleteRead(deleted=True, backup_id=path.name, deleted_path=deleted_path)
+
+
+def cleanup_old_backups(confirm_cleanup: bool) -> BackupCleanupRead:
+    if not confirm_cleanup:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理旧备份需要二次确认")
+    backups = list_backups()
+    kept_backup_id = backups[0].backup_id if backups else None
+    deleted_backups = [delete_backup(backup.backup_id, confirm_delete=True) for backup in backups[1:]]
+    return BackupCleanupRead(deleted_backups=deleted_backups, kept_backup_id=kept_backup_id)
 
 
 def _settings_payload(db: Session | None = None) -> dict:
@@ -1037,6 +1062,45 @@ def list_installed_versions(current_version: str | None = None) -> list[Installe
 
     versions.sort(key=lambda item: (not item.current, item.modified_at or "", item.version), reverse=False)
     return versions
+
+
+def delete_installed_version(version: str, confirm_delete: bool) -> VersionDeleteRead:
+    if not confirm_delete:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能删除版本")
+
+    target_version = _safe_version(version)
+    current_version = _current_installed_version()
+    if target_version == current_version:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除当前正在使用的版本")
+
+    versions_root = APP_ROOT / VERSIONS_DIR_NAME
+    target_version_dir = _path_inside(versions_root, target_version)
+    if not target_version_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
+
+    deleted_path = target_version_dir.as_posix()
+    try:
+        shutil.rmtree(target_version_dir)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除版本失败：{exc}") from exc
+    return VersionDeleteRead(deleted=True, version=target_version, deleted_path=deleted_path)
+
+
+def cleanup_old_installed_versions(confirm_cleanup: bool) -> VersionCleanupRead:
+    if not confirm_cleanup:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理旧版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能清理版本")
+
+    current_version = _current_installed_version()
+    deleted_versions = [
+        delete_installed_version(version.version, confirm_delete=True)
+        for version in list_installed_versions(current_version)
+        if not version.current
+    ]
+    return VersionCleanupRead(deleted_versions=deleted_versions)
 
 
 def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:

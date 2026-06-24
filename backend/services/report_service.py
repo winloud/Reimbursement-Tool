@@ -622,6 +622,22 @@ def list_report_category_options(db: Session) -> list[dict[str, str]]:
     return options
 
 
+def _date_sort_value(value: date | None) -> int:
+    return value.toordinal() if value else -1
+
+
+def _datetime_sort_value(value: datetime | None) -> float:
+    return value.timestamp() if value else -1
+
+
+def _report_trip_start_desc_key(report: ExpenseReport) -> tuple[int, int, float]:
+    return (
+        _date_sort_value(report.trip_start_date),
+        _date_sort_value(report.report_date),
+        _datetime_sort_value(report.created_at),
+    )
+
+
 def list_reports(
     db: Session,
     page: int = 1,
@@ -657,6 +673,8 @@ def list_reports(
         for report in db.scalars(statement).all()
         if report_matches_filters(report, filters, include_deleted_invoices=deleted_only)
     ]
+    if not deleted_only:
+        all_items.sort(key=_report_trip_start_desc_key, reverse=True)
     total = len(all_items)
     start = (page - 1) * page_size
     return all_items[start : start + page_size], total

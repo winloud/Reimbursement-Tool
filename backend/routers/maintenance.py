@@ -8,6 +8,10 @@ from backend.database.session import get_db
 from backend.schemas.common import ApiResponse
 from backend.schemas.maintenance import (
     BackupCreateRead,
+    BackupCleanupRead,
+    BackupCleanupRequest,
+    BackupDeleteRead,
+    BackupDeleteRequest,
     BackupRead,
     DatabaseIntegrityCheckRead,
     MaintenanceInfoRead,
@@ -19,16 +23,24 @@ from backend.schemas.maintenance import (
     UpdateExecuteRead,
     UpdateExecuteRequest,
     UpdatePreviewRead,
+    VersionCleanupRead,
+    VersionCleanupRequest,
+    VersionDeleteRead,
+    VersionDeleteRequest,
     VersionSwitchRead,
     VersionSwitchRequest,
 )
 from backend.services.maintenance_service import (
     build_diagnostics_package,
     check_database_integrity,
+    cleanup_old_backups,
+    cleanup_old_installed_versions,
     create_backup,
     create_restore_preview,
     create_restore_preview_from_backup_dialog,
     create_update_preview,
+    delete_backup,
+    delete_installed_version,
     execute_restore,
     execute_update,
     get_backup_file,
@@ -67,6 +79,16 @@ def download_backup(backup_id: str) -> FileResponse:
     return FileResponse(path, media_type="application/zip", filename=path.name)
 
 
+@router.delete("/backups/{backup_id}", response_model=ApiResponse[BackupDeleteRead])
+def delete_backup_file(backup_id: str, payload: BackupDeleteRequest) -> ApiResponse[BackupDeleteRead]:
+    return ApiResponse(data=delete_backup(backup_id, payload.confirm_delete), message="备份已删除")
+
+
+@router.post("/backups/cleanup", response_model=ApiResponse[BackupCleanupRead])
+def post_backup_cleanup(payload: BackupCleanupRequest) -> ApiResponse[BackupCleanupRead]:
+    return ApiResponse(data=cleanup_old_backups(payload.confirm_cleanup), message="旧备份已清理")
+
+
 @router.post("/restore/preview", response_model=ApiResponse[RestorePreviewRead])
 def post_restore_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[RestorePreviewRead]:
     return ApiResponse(data=create_restore_preview(file), message="恢复预览已生成")
@@ -97,6 +119,16 @@ def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExec
 @router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])
 def post_version_switch(payload: VersionSwitchRequest) -> ApiResponse[VersionSwitchRead]:
     return ApiResponse(data=switch_installed_version(payload.version, payload.confirm_switch), message="版本已切换，重启后生效")
+
+
+@router.delete("/versions/{version}", response_model=ApiResponse[VersionDeleteRead])
+def delete_version(version: str, payload: VersionDeleteRequest) -> ApiResponse[VersionDeleteRead]:
+    return ApiResponse(data=delete_installed_version(version, payload.confirm_delete), message="版本已删除")
+
+
+@router.post("/versions/cleanup", response_model=ApiResponse[VersionCleanupRead])
+def post_version_cleanup(payload: VersionCleanupRequest) -> ApiResponse[VersionCleanupRead]:
+    return ApiResponse(data=cleanup_old_installed_versions(payload.confirm_cleanup), message="旧版本已清理")
 
 
 @router.post("/restart", response_model=ApiResponse[RestartRead])

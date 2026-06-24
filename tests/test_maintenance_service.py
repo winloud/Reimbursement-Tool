@@ -112,6 +112,24 @@ def upload_file_from_bytes(payload: bytes, filename: str = "backup.zip") -> Uplo
     return UploadFile(file=BytesIO(payload), filename=filename)
 
 
+def write_backup_zip(path: Path, created_at: str, reason: str = "manual") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(path, mode="w") as archive:
+        archive.writestr(
+            "backup-manifest.json",
+            json.dumps(
+                {
+                    "schema_version": maintenance_service.BACKUP_SCHEMA_VERSION,
+                    "app_version": "test",
+                    "created_at": created_at,
+                    "reason": reason,
+                    "files": [],
+                },
+                ensure_ascii=False,
+            ),
+        )
+
+
 def write_version_manifest(
     app_root: Path,
     version: str,
@@ -210,6 +228,36 @@ def test_create_backup_zip_contains_manifest_database_uploads_and_hashes(monkeyp
             payload = archive.read(item["path"])
             assert len(payload) == item["size_bytes"]
             assert maintenance_service._bytes_hash(payload) == item["sha256"]
+
+
+def test_delete_backup_removes_selected_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    backup_path = paths["backups"] / "manual_20260625000100_a.zip"
+    write_backup_zip(backup_path, "2026-06-25T00:01:00")
+
+    result = maintenance_service.delete_backup(backup_path.name, confirm_delete=True)
+
+    assert result.deleted is True
+    assert result.backup_id == backup_path.name
+    assert not backup_path.exists()
+
+
+def test_cleanup_old_backups_keeps_latest_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    oldest = paths["backups"] / "manual_20260625000100_a.zip"
+    middle = paths["backups"] / "manual_20260625000200_b.zip"
+    latest = paths["backups"] / "manual_20260625000300_c.zip"
+    write_backup_zip(oldest, "2026-06-25T00:01:00")
+    write_backup_zip(middle, "2026-06-25T00:02:00")
+    write_backup_zip(latest, "2026-06-25T00:03:00")
+
+    result = maintenance_service.cleanup_old_backups(confirm_cleanup=True)
+
+    assert result.kept_backup_id == latest.name
+    assert {item.backup_id for item in result.deleted_backups} == {oldest.name, middle.name}
+    assert latest.exists()
+    assert not oldest.exists()
+    assert not middle.exists()
 
 
 def test_restore_preview_rejects_malicious_zip_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -598,6 +646,54 @@ def test_switch_installed_version_rejects_missing_version(monkeypatch: pytest.Mo
         maintenance_service.switch_installed_version("1.1.1", confirm_switch=True)
 
     assert exc_info.value.status_code == 404
+
+
+def test_delete_installed_version_removes_non_current_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    result = maintenance_service.delete_installed_version("1.1.1", confirm_delete=True)
+
+    assert result.deleted is True
+    assert result.version == "1.1.1"
+    assert not (paths["app_root"] / "versions" / "1.1.1").exists()
+    assert (paths["app_root"] / "versions" / "1.2.0").exists()
+
+
+def test_delete_installed_version_rejects_current_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.delete_installed_version("1.2.0", confirm_delete=True)
+
+    assert exc_info.value.status_code == 400
+    assert "不能删除当前" in exc_info.value.detail
+    assert (paths["app_root"] / "versions" / "1.2.0").exists()
+
+
+def test_cleanup_old_installed_versions_keeps_current_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    for version in ("1.0.0", "1.1.1", "1.2.0"):
+        (paths["app_root"] / "versions" / version).mkdir(parents=True)
+        (paths["app_root"] / "versions" / version / "报销管理.exe").write_bytes(version.encode("utf-8"))
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    result = maintenance_service.cleanup_old_installed_versions(confirm_cleanup=True)
+
+    assert {item.version for item in result.deleted_versions} == {"1.0.0", "1.1.1"}
+    assert not (paths["app_root"] / "versions" / "1.0.0").exists()
+    assert not (paths["app_root"] / "versions" / "1.1.1").exists()
+    assert (paths["app_root"] / "versions" / "1.2.0").exists()
 
 
 def test_request_application_restart_schedules_launcher(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

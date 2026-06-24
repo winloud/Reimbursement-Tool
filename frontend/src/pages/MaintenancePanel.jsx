@@ -16,6 +16,8 @@ import {
   Typography,
 } from "@mui/material";
 import BackupIcon from "@mui/icons-material/Backup";
+import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DescriptionIcon from "@mui/icons-material/Description";
 import DownloadIcon from "@mui/icons-material/Download";
 import RestartAltIcon from "@mui/icons-material/RestartAlt";
@@ -25,7 +27,11 @@ import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
   checkMaintenanceDatabase,
+  cleanupMaintenanceBackups,
+  cleanupMaintenanceVersions,
   createMaintenanceBackup,
+  deleteMaintenanceBackup,
+  deleteMaintenanceVersion,
   downloadMaintenanceBackup,
   downloadMaintenanceDiagnostics,
   executeMaintenanceUpdate,
@@ -192,10 +198,13 @@ export default function MaintenancePanel() {
   const [updatePreview, setUpdatePreview] = useState(null);
   const [updateResult, setUpdateResult] = useState(null);
   const [versionSwitchResult, setVersionSwitchResult] = useState(null);
+  const [selectedBackupId, setSelectedBackupId] = useState("");
   const [selectedVersion, setSelectedVersion] = useState("");
   const [databaseCheck, setDatabaseCheck] = useState(null);
 
+  const backups = info?.backups || [];
   const backup = latestBackup(info?.backups);
+  const selectedBackup = selectedBackupId ? backups.find((item) => item.backup_id === selectedBackupId) : null;
   const backupSummary = backup ? `${backup.filename} · ${formatFileSize(backup.size_bytes)}` : "暂无备份";
   const installedVersions = info?.installed_versions || [];
   const switchableVersions = installedVersions.filter((version) => version.executable_exists && !version.current);
@@ -203,7 +212,10 @@ export default function MaintenancePanel() {
     ? installedVersions.find((version) => version.version === selectedVersion)
     : null;
   const selectedVersionCompatibility = selectedVersionRecord?.data_compatibility;
+  const selectedVersionCurrent = Boolean(selectedVersionRecord?.current);
   const selectedVersionCompatible = selectedVersionCompatibility?.status === "compatible";
+  const selectedVersionDeletable = Boolean(selectedVersionRecord && !selectedVersionRecord.current);
+  const oldVersionCleanupAvailable = installedVersions.some((version) => !version.current);
   const updateVersionRecord = updatePreview ? installedVersions.find((version) => version.version === updatePreview.app_version) : null;
   const updateVersionInstalled = Boolean(updateVersionRecord?.executable_exists);
   const updateVersionCurrent = Boolean(updateVersionRecord?.current);
@@ -221,10 +233,18 @@ export default function MaintenancePanel() {
         return;
       }
       setInfo(res.data);
-      const nextSwitchableVersions = (res.data?.installed_versions || []).filter((version) => version.executable_exists && !version.current);
-      setSelectedVersion((previous) =>
-        nextSwitchableVersions.some((version) => version.version === previous) ? previous : nextSwitchableVersions[0]?.version || "",
+      const nextBackups = res.data?.backups || [];
+      setSelectedBackupId((previous) =>
+        nextBackups.some((backupItem) => backupItem.backup_id === previous) ? previous : nextBackups[0]?.backup_id || "",
       );
+      const nextSwitchableVersions = (res.data?.installed_versions || []).filter((version) => version.executable_exists && !version.current);
+      const nextInstalledVersions = res.data?.installed_versions || [];
+      setSelectedVersion((previous) => {
+        if (nextInstalledVersions.some((version) => version.version === previous)) {
+          return previous;
+        }
+        return nextSwitchableVersions[0]?.version || nextInstalledVersions[0]?.version || "";
+      });
     } catch (err) {
       setGlobalError(getApiErrorMessage(err, "加载数据维护信息失败"));
     } finally {
@@ -262,6 +282,49 @@ export default function MaintenancePanel() {
       saveBlob(await downloadMaintenanceBackup(backup.backup_id));
     } catch (err) {
       setBackupError(getApiErrorMessage(err, "下载备份失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleDeleteBackup = async () => {
+    if (!selectedBackup) return;
+    const confirmed = window.confirm(`将删除备份 ${selectedBackup.filename}，此操作不能撤销。确认删除？`);
+    if (!confirmed) return;
+    setBusy("backup-delete");
+    setBackupError("");
+    try {
+      const res = await deleteMaintenanceBackup(selectedBackup.backup_id);
+      if (!res.success) {
+        setBackupError(res.message || "删除备份失败");
+        return;
+      }
+      setToast(`备份已删除：${selectedBackup.filename}`);
+      await loadInfo();
+    } catch (err) {
+      setBackupError(getApiErrorMessage(err, "删除备份失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleCleanupBackups = async () => {
+    if (backups.length <= 1) return;
+    const confirmed = window.confirm("将保留最近备份，并删除其余旧备份。确认清理？");
+    if (!confirmed) return;
+    setBusy("backup-cleanup");
+    setBackupError("");
+    try {
+      const res = await cleanupMaintenanceBackups();
+      if (!res.success) {
+        setBackupError(res.message || "清理旧备份失败");
+        return;
+      }
+      const deletedCount = res.data?.deleted_backups?.length || 0;
+      setToast(`旧备份已清理：${deletedCount} 个`);
+      await loadInfo();
+    } catch (err) {
+      setBackupError(getApiErrorMessage(err, "清理旧备份失败"));
     } finally {
       setBusy("");
     }
@@ -461,6 +524,53 @@ export default function MaintenancePanel() {
     }
   };
 
+  const handleDeleteVersion = async () => {
+    if (!selectedVersionRecord || selectedVersionRecord.current) return;
+    const confirmed = window.confirm(`将删除已安装版本 ${selectedVersionRecord.version}，此操作不能撤销。确认删除？`);
+    if (!confirmed) return;
+    setBusy("version-delete");
+    setUpdateError("");
+    try {
+      const res = await deleteMaintenanceVersion(selectedVersionRecord.version);
+      if (!res.success) {
+        setUpdateError(res.message || "删除版本失败");
+        return;
+      }
+      setToast(`版本已删除：${selectedVersionRecord.version}`);
+      setVersionSwitchResult(null);
+      setUpdateResult(null);
+      await loadInfo();
+    } catch (err) {
+      setUpdateError(getApiErrorMessage(err, "删除版本失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleCleanupVersions = async () => {
+    if (!oldVersionCleanupAvailable) return;
+    const confirmed = window.confirm("将保留当前版本，并删除所有旧版本目录。确认清理？");
+    if (!confirmed) return;
+    setBusy("version-cleanup");
+    setUpdateError("");
+    try {
+      const res = await cleanupMaintenanceVersions();
+      if (!res.success) {
+        setUpdateError(res.message || "清理旧版本失败");
+        return;
+      }
+      const deletedCount = res.data?.deleted_versions?.length || 0;
+      setToast(`旧版本已清理：${deletedCount} 个`);
+      setVersionSwitchResult(null);
+      setUpdateResult(null);
+      await loadInfo();
+    } catch (err) {
+      setUpdateError(getApiErrorMessage(err, "清理旧版本失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const handleRestartApp = async () => {
     const confirmed = window.confirm("将关闭当前程序并启动已安装的新版本。确认重启？");
     if (!confirmed) return;
@@ -523,23 +633,68 @@ export default function MaintenancePanel() {
                 {backupError && <Alert severity="error">{backupError}</Alert>}
 
                 <Box sx={softPanelSx}>
-                  <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
+                  <Stack spacing={1.5}>
+                    <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
+                      <Box sx={{ minWidth: 0 }}>
+                        <Typography variant="body2" fontWeight={800}>
+                          最近备份
+                        </Typography>
+                        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
+                          {backupSummary}
+                        </Typography>
+                      </Box>
+                      <Button
+                        variant="outlined"
+                        startIcon={busy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
+                        onClick={handleDownloadBackup}
+                        disabled={!backup || Boolean(busy)}
+                      >
+                        下载最近备份
+                      </Button>
+                    </Stack>
+                    <Divider />
+                    <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems={{ xs: "stretch", md: "center" }}>
+                      <FormControl size="small" sx={{ minWidth: { xs: 0, md: 360 }, flex: 1 }}>
+                        <InputLabel id="maintenance-backup-select-label">备份文件</InputLabel>
+                        <Select
+                          labelId="maintenance-backup-select-label"
+                          label="备份文件"
+                          value={selectedBackupId}
+                          onChange={(event) => setSelectedBackupId(event.target.value)}
+                          disabled={backups.length === 0}
+                        >
+                          {backups.map((backupItem) => (
+                            <MenuItem key={backupItem.backup_id} value={backupItem.backup_id}>
+                              {backupItem.filename} · {formatFileSize(backupItem.size_bytes)}
+                            </MenuItem>
+                          ))}
+                        </Select>
+                      </FormControl>
+                      <Button
+                        variant="outlined"
+                        color="error"
+                        startIcon={busy === "backup-delete" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
+                        onClick={handleDeleteBackup}
+                        disabled={!selectedBackup || Boolean(busy)}
+                        sx={{ flex: "0 0 auto" }}
+                      >
+                        删除选中
+                      </Button>
+                      <Button
+                        variant="outlined"
+                        startIcon={busy === "backup-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
+                        onClick={handleCleanupBackups}
+                        disabled={backups.length <= 1 || Boolean(busy)}
+                        sx={{ flex: "0 0 auto" }}
+                      >
+                        清理旧备份
+                      </Button>
+                    </Stack>
                     <Box sx={{ minWidth: 0 }}>
-                      <Typography variant="body2" fontWeight={800}>
-                        最近备份
-                      </Typography>
                       <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
-                        {backupSummary}
+                        清理旧备份会保留最近备份；删除选中备份不会影响当前数据。
                       </Typography>
                     </Box>
-                    <Button
-                      variant="outlined"
-                      startIcon={busy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
-                      onClick={handleDownloadBackup}
-                      disabled={!backup || Boolean(busy)}
-                    >
-                      下载最近备份
-                    </Button>
                   </Stack>
                 </Box>
 
@@ -610,23 +765,23 @@ export default function MaintenancePanel() {
                           当前版本：{info?.current_version || "-"}
                         </Typography>
                       </Box>
-                      {switchableVersions.length > 0 ? (
-                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ minWidth: { xs: 0, md: 460 } }}>
+                      {installedVersions.length > 0 ? (
+                        <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ minWidth: { xs: 0, md: 620 } }}>
                           <FormControl size="small" fullWidth>
-                            <InputLabel id="maintenance-version-switch-label">切换版本</InputLabel>
+                            <InputLabel id="maintenance-version-switch-label">已安装版本</InputLabel>
                             <Select
                               labelId="maintenance-version-switch-label"
-                              label="切换版本"
+                              label="已安装版本"
                               value={selectedVersion}
                               onChange={(event) => setSelectedVersion(event.target.value)}
                             >
-                              {switchableVersions.map((version) => (
+                              {installedVersions.map((version) => (
                                 <MenuItem
                                   key={version.version}
                                   value={version.version}
-                                  disabled={version.data_compatibility?.status !== "compatible"}
                                 >
                                   {version.version}
+                                  {version.current ? "（当前）" : ""}
                                   {version.data_compatibility?.status !== "compatible" ? `（${dataCompatibilityLabel(version.data_compatibility)}）` : ""}
                                 </MenuItem>
                               ))}
@@ -636,19 +791,41 @@ export default function MaintenancePanel() {
                             variant="outlined"
                             startIcon={busy === "version-switch" ? <CircularProgress size={16} /> : <RestartAltIcon />}
                             onClick={() => handleSwitchVersion(selectedVersion)}
-                            disabled={!selectedVersion || !selectedVersionCompatible || Boolean(busy)}
+                            disabled={!selectedVersion || selectedVersionCurrent || !selectedVersionCompatible || Boolean(busy)}
                             sx={{ flex: "0 0 auto" }}
                           >
                             切换版本
                           </Button>
+                          <Button
+                            variant="outlined"
+                            color="error"
+                            startIcon={busy === "version-delete" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
+                            onClick={handleDeleteVersion}
+                            disabled={!selectedVersionDeletable || Boolean(busy)}
+                            sx={{ flex: "0 0 auto" }}
+                          >
+                            删除选中
+                          </Button>
+                          <Button
+                            variant="outlined"
+                            startIcon={busy === "version-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
+                            onClick={handleCleanupVersions}
+                            disabled={!oldVersionCleanupAvailable || Boolean(busy)}
+                            sx={{ flex: "0 0 auto" }}
+                          >
+                            清理旧版本
+                          </Button>
                         </Stack>
                       ) : (
                         <Typography variant="body2" color="text.secondary">
-                          暂无可切换的旧版本
+                          暂无已安装版本
                         </Typography>
                       )}
                     </Stack>
-                    {selectedVersionCompatibility?.status && selectedVersionCompatibility.status !== "compatible" && (
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1.25 }}>
+                      清理旧版本会保留当前版本；删除版本不会删除数据库、附件或备份。
+                    </Typography>
+                    {!selectedVersionCurrent && selectedVersionCompatibility?.status && selectedVersionCompatibility.status !== "compatible" && (
                       <Alert severity={dataCompatibilitySeverity(selectedVersionCompatibility)} sx={{ mt: 1.25 }}>
                         {dataCompatibilityMessage(selectedVersionCompatibility)}
                       </Alert>
