@@ -48,8 +48,8 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "scripts/extract_changelog_section.py" in workflow
     assert "gh release create" in workflow
     assert "release-notes.md" in workflow
-    assert "-BuildOpenCvRuntime" in workflow
-    assert '"-ReleaseDate", $env:RELEASE_DATE' in workflow
+    assert "BuildOpenCvRuntime = $true" in workflow
+    assert "ReleaseDate = $env:RELEASE_DATE" in workflow
     assert "China Standard Time" in workflow
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow

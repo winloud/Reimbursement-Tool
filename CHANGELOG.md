@@ -16,6 +16,7 @@
 - GitHub 正式发布和 preview artifact workflow 启用 Python pip cache，减少后端与打包依赖重复下载时间。
 - GitHub 正式发布 workflow 优先复用已有 OpenCV runtime Release 资产，仅在缺少匹配 OpenCV 包版本资产时重建。
 - GitHub Actions workflow 升级 checkout、setup-python、setup-node 和 upload-artifact action 主版本，避免旧 Node.js action runtime 弃用提示。
+- GitHub 正式发布 workflow 改用 PowerShell 显式参数表调用打包脚本，避免正式发布日期被误判为预览流水号。
 
 ## v1.2.0 - 2026-06-25
 

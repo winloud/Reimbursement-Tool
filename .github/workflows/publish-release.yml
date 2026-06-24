@@ -125,14 +125,18 @@ jobs:
           OPENCV_RUNTIME_RESTORED: ${{ steps.opencv-runtime.outputs.restored }}
           OPENCV_PACKAGE_VERSION: ${{ steps.opencv-runtime.outputs.runtime_version }}
         run: |
-          $buildArgs = @("-Version", $env:RELEASE_VERSION, "-ReleaseDate", $env:RELEASE_DATE)
+          $buildParams = @{
+            Version = $env:RELEASE_VERSION
+            ReleaseDate = $env:RELEASE_DATE
+          }
           if ($env:OPENCV_RUNTIME_RESTORED -eq "true") {
             Write-Host "Skipping OpenCV runtime rebuild; restored existing runtime asset."
           }
           else {
-            $buildArgs += @("-BuildOpenCvRuntime", "-OpenCvPackageVersion", $env:OPENCV_PACKAGE_VERSION)
+            $buildParams.BuildOpenCvRuntime = $true
+            $buildParams.OpenCvPackageVersion = $env:OPENCV_PACKAGE_VERSION
           }
-          & .\scripts\build_release.ps1 @buildArgs
+          & .\scripts\build_release.ps1 @buildParams
           if ($LASTEXITCODE -ne 0) {
             throw "Release build failed with exit code $LASTEXITCODE."
           }
