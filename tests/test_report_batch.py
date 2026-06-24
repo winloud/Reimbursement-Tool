@@ -35,6 +35,12 @@ def configure_pdf_paths(monkeypatch, tmp_path: Path) -> None:
 
 def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印出差"))
     update_report_status(db, printed.id, "printed")
@@ -47,9 +53,13 @@ def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp
     assert filename.endswith(".zip")
     assert draft.status == "printed"
     assert printed.status == "printed"
+    assert draft.report_date == date(2026, 6, 24)
+    assert printed.report_date == date(2026, 6, 5)
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         names = archive.namelist()
         assert len(names) == 2
+        assert any(name.startswith("2026-06-24-草稿出差-") for name in names)
+        assert any(name.startswith("2026-06-05-已打印出差-") for name in names)
         for name in names:
             assert name.endswith(".pdf")
             assert len(PdfReader(BytesIO(archive.read(name))).pages) == 1
@@ -83,6 +93,12 @@ def test_batch_pdf_uses_vat_special_double_print_setting(monkeypatch, db):
 
 def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     invalid = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="未确认发票"))
     db.add(
@@ -107,6 +123,8 @@ def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, d
     assert "未确认发票" in exc.value.detail["failures"][0]["reason"]
     assert draft.status == "draft"
     assert invalid.status == "draft"
+    assert draft.report_date == date(2026, 6, 4)
+    assert invalid.report_date == date(2026, 6, 5)
 
 
 def test_batch_delete_only_deletes_draft_reports(monkeypatch, db):

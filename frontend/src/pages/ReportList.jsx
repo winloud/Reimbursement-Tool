@@ -352,6 +352,7 @@ export default function ReportList() {
       const res = await getReportPdfPreview(report.id);
       if (res.success) {
         setPreviewState({ open: true, report, pages: res.data.pages || [], loading: false, error: "" });
+        await fetchReports();
       } else {
         setPreviewState({ open: true, report, pages: [], loading: false, error: res.message || "预览失败" });
       }
@@ -892,6 +893,8 @@ export default function ReportList() {
                     disabled={items.length === 0 || loading}
                   />
                 </TableCell>
+                <TableCell>出差开始日期</TableCell>
+                <TableCell>出差结束日期</TableCell>
                 <TableCell>报销日期</TableCell>
                 <TableCell>出差事由</TableCell>
                 <TableCell align="center">补贴天数</TableCell>
@@ -904,13 +907,13 @@ export default function ReportList() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={isTrash ? 8 : 7} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isTrash ? 10 : 9} align="center" sx={{ py: 6 }}>
                     <CircularProgress size={28} />
                   </TableCell>
                 </TableRow>
               ) : items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isTrash ? 8 : 7} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={isTrash ? 10 : 9} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">暂无数据</Typography>
                   </TableCell>
                 </TableRow>
@@ -934,6 +937,8 @@ export default function ReportList() {
                           onChange={() => handleToggleReport(report.id)}
                         />
                       </TableCell>
+                      <TableCell>{formatDate(report.trip_start_date)}</TableCell>
+                      <TableCell>{formatDate(report.trip_end_date)}</TableCell>
                       <TableCell>{formatDate(report.report_date)}</TableCell>
                       <TableCell>{report.purpose || "—"}</TableCell>
                       <TableCell align="center">{report.subsidy_days ?? 0}</TableCell>
