@@ -12,6 +12,7 @@ from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -19,9 +20,11 @@ from sqlalchemy.orm import Session
 
 from backend.app_metadata import APP_VERSION
 from backend.database import connection as db_connection
-from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT
+from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
 from backend.schemas.maintenance import (
     BackupRead,
+    DatabaseIntegrityCheckRead,
+    DatabaseIntegrityIssueRead,
     DiagnosticBrowserRuntimeRead,
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
@@ -60,6 +63,17 @@ APP_EXE_NAME = "报销管理.exe"
 CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
 LOG_TAIL_BYTES = 200 * 1024
+VALID_REPORT_STATUSES = {"draft", "printed", "reimbursed"}
+VALID_EXPENSE_CATEGORIES = {
+    "transport_fare",
+    "luggage",
+    "city_transport",
+    "accommodation",
+    "postal",
+    "no_sleeper_subsidy",
+    "toll",
+    "fuel_subsidy",
+}
 
 
 def _utc_now() -> datetime:
@@ -351,6 +365,455 @@ def get_log_file_diagnostics() -> DiagnosticLogFileRead:
     )
 
 
+def _database_issue(
+    severity: str,
+    category: str,
+    code: str,
+    message: str,
+    *,
+    count: int = 0,
+    details: list[str] | None = None,
+) -> DatabaseIntegrityIssueRead:
+    return DatabaseIntegrityIssueRead(
+        severity=severity,
+        category=category,
+        code=code,
+        message=message,
+        count=count,
+        details=details or [],
+    )
+
+
+def _database_check_status(issues: list[DatabaseIntegrityIssueRead]) -> str:
+    if any(issue.severity == "error" for issue in issues):
+        return "error"
+    if issues:
+        return "warning"
+    return "ok"
+
+
+def _quote_identifier(value: str) -> str:
+    return f'"{value.replace(chr(34), chr(34) + chr(34))}"'
+
+
+def _open_readonly_database() -> sqlite3.Connection:
+    connection = sqlite3.connect(f"{DATABASE_PATH.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row["name"]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+
+
+def _table_counts(connection: sqlite3.Connection, tables: set[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in sorted(tables):
+        counts[table] = int(connection.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table)}").fetchone()[0])
+    return counts
+
+
+def _rows_issue(
+    issues: list[DatabaseIntegrityIssueRead],
+    rows: list[sqlite3.Row],
+    *,
+    severity: str,
+    category: str,
+    code: str,
+    message: str,
+    detail_builder,
+) -> None:
+    if not rows:
+        return
+    issues.append(
+        _database_issue(
+            severity,
+            category,
+            code,
+            message,
+            count=len(rows),
+            details=[detail_builder(row) for row in rows[:20]],
+        )
+    )
+
+
+def _append_duplicate_uid_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    if "expense_reports" in tables:
+        rows = connection.execute(
+            """
+            SELECT report_uid, COUNT(*) AS duplicate_count
+            FROM expense_reports
+            WHERE report_uid IS NOT NULL AND TRIM(report_uid) <> ''
+            GROUP BY report_uid
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="duplicate_report_uid",
+            message="存在重复报销单 UID",
+            detail_builder=lambda row: f"{row['report_uid']} ({row['duplicate_count']} 条)",
+        )
+    if "invoices" in tables:
+        rows = connection.execute(
+            """
+            SELECT invoice_uid, COUNT(*) AS duplicate_count
+            FROM invoices
+            WHERE invoice_uid IS NOT NULL AND TRIM(invoice_uid) <> ''
+            GROUP BY invoice_uid
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="duplicate_invoice_uid",
+            message="存在重复发票 UID",
+            detail_builder=lambda row: f"{row['invoice_uid']} ({row['duplicate_count']} 条)",
+        )
+
+
+def _append_business_integrity_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    _append_duplicate_uid_checks(connection, tables, issues)
+
+    if "expense_reports" in tables:
+        rows = connection.execute(
+            "SELECT id, status FROM expense_reports WHERE status NOT IN ('draft', 'printed', 'reimbursed')"
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="invalid_report_status",
+            message="存在无效报销单状态",
+            detail_builder=lambda row: f"report_id={row['id']}, status={row['status']}",
+        )
+
+    if {"trips", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT trips.id, trips.report_id
+            FROM trips
+            LEFT JOIN expense_reports ON expense_reports.id = trips.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_trip",
+            message="存在无所属报销单的行程",
+            detail_builder=lambda row: f"trip_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"expense_items", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT expense_items.id, expense_items.report_id
+            FROM expense_items
+            LEFT JOIN expense_reports ON expense_reports.id = expense_items.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_expense_item",
+            message="存在无所属报销单的费用项",
+            detail_builder=lambda row: f"expense_item_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"invoices", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id
+            FROM invoices
+            LEFT JOIN expense_reports ON expense_reports.id = invoices.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_invoice",
+            message="存在无所属报销单的发票",
+            detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
+        )
+
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id
+            FROM invoices
+            JOIN expense_reports ON expense_reports.id = invoices.report_id
+            WHERE expense_reports.deleted_at IS NOT NULL AND invoices.deleted_at IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="active_invoice_in_deleted_report",
+            message="已删除报销单下仍存在未删除发票",
+            detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"invoices", "trips"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id, invoices.trip_id, trips.report_id AS trip_report_id
+            FROM invoices
+            JOIN trips ON trips.id = invoices.trip_id
+            WHERE invoices.trip_id IS NOT NULL AND invoices.report_id != trips.report_id
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="invoice_trip_report_mismatch",
+            message="发票关联的行程不属于同一报销单",
+            detail_builder=lambda row: (
+                f"invoice_id={row['id']}, report_id={row['report_id']}, "
+                f"trip_id={row['trip_id']}, trip_report_id={row['trip_report_id']}"
+            ),
+        )
+
+    if "invoices" in tables:
+        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_EXPENSE_CATEGORIES))
+        rows = connection.execute(
+            f"""
+            SELECT id, expense_category
+            FROM invoices
+            WHERE expense_category NOT IN ({category_list})
+              AND expense_category NOT LIKE 'custom:%'
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="warning",
+            category="business",
+            code="unknown_invoice_category",
+            message="存在未知发票费用类别",
+            detail_builder=lambda row: f"invoice_id={row['id']}, category={row['expense_category']}",
+        )
+
+    if "expense_items" in tables:
+        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_EXPENSE_CATEGORIES))
+        rows = connection.execute(
+            f"""
+            SELECT id, category
+            FROM expense_items
+            WHERE category NOT IN ({category_list})
+              AND category NOT LIKE 'custom:%'
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="warning",
+            category="business",
+            code="unknown_expense_category",
+            message="存在未知费用项类别",
+            detail_builder=lambda row: f"expense_item_id={row['id']}, category={row['category']}",
+        )
+
+
+def _append_attachment_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    if "invoices" not in tables:
+        return
+    rows = connection.execute(
+        """
+        SELECT id, file_path
+        FROM invoices
+        WHERE deleted_at IS NULL AND file_path IS NOT NULL AND TRIM(file_path) <> ''
+        """
+    ).fetchall()
+    upload_root = UPLOAD_ROOT.resolve()
+    unsafe: list[str] = []
+    missing: list[str] = []
+    for row in rows:
+        file_path = str(row["file_path"])
+        try:
+            resolved = uploaded_path(file_path, UPLOAD_ROOT).resolve()
+        except OSError as exc:
+            unsafe.append(f"invoice_id={row['id']}, path={file_path}, error={exc}")
+            continue
+        if resolved != upload_root and not resolved.is_relative_to(upload_root):
+            unsafe.append(f"invoice_id={row['id']}, path={file_path}")
+            continue
+        if not resolved.exists():
+            missing.append(f"invoice_id={row['id']}, path={file_path}")
+
+    if unsafe:
+        issues.append(
+            _database_issue(
+                "error",
+                "attachments",
+                "unsafe_attachment_path",
+                "存在越界或不可解析的发票附件路径",
+                count=len(unsafe),
+                details=unsafe[:20],
+            )
+        )
+    if missing:
+        issues.append(
+            _database_issue(
+                "warning",
+                "attachments",
+                "missing_attachment_file",
+                "存在缺失的发票附件文件",
+                count=len(missing),
+                details=missing[:20],
+            )
+        )
+
+
+def check_database_integrity(db: Session | None = None) -> DatabaseIntegrityCheckRead:
+    del db
+    started = perf_counter()
+    checked_at = _utc_now().isoformat()
+    database_exists = DATABASE_PATH.exists()
+    database_size = DATABASE_PATH.stat().st_size if database_exists else 0
+    issues: list[DatabaseIntegrityIssueRead] = []
+    tables: dict[str, int] = {}
+    sqlite_integrity = None
+    foreign_key_issues = 0
+
+    if not database_exists:
+        issues.append(
+            _database_issue(
+                "error",
+                "database",
+                "database_missing",
+                "数据库文件不存在",
+                count=1,
+                details=[DATABASE_PATH.as_posix()],
+            )
+        )
+        return DatabaseIntegrityCheckRead(
+            status="error",
+            checked_at=checked_at,
+            elapsed_ms=round((perf_counter() - started) * 1000),
+            database_path=DATABASE_PATH.as_posix(),
+            database_exists=False,
+            database_size_bytes=0,
+            sqlite_integrity=None,
+            foreign_key_issues=0,
+            tables={},
+            issues=issues,
+        )
+
+    try:
+        connection = _open_readonly_database()
+    except sqlite3.Error as exc:
+        issues.append(
+            _database_issue(
+                "error",
+                "database",
+                "database_open_failed",
+                "数据库无法以只读方式打开",
+                count=1,
+                details=[str(exc)],
+            )
+        )
+        return DatabaseIntegrityCheckRead(
+            status="error",
+            checked_at=checked_at,
+            elapsed_ms=round((perf_counter() - started) * 1000),
+            database_path=DATABASE_PATH.as_posix(),
+            database_exists=True,
+            database_size_bytes=database_size,
+            sqlite_integrity=None,
+            foreign_key_issues=0,
+            tables={},
+            issues=issues,
+        )
+
+    try:
+        integrity_rows = [row[0] for row in connection.execute("PRAGMA integrity_check").fetchall()]
+        sqlite_integrity = "ok" if integrity_rows == ["ok"] else "; ".join(str(item) for item in integrity_rows)
+        if sqlite_integrity != "ok":
+            issues.append(
+                _database_issue(
+                    "error",
+                    "sqlite",
+                    "integrity_check_failed",
+                    "SQLite 物理完整性检查失败",
+                    count=len(integrity_rows),
+                    details=[str(item) for item in integrity_rows[:20]],
+                )
+            )
+
+        foreign_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
+        foreign_key_issues = len(foreign_rows)
+        if foreign_rows:
+            issues.append(
+                _database_issue(
+                    "error",
+                    "sqlite",
+                    "foreign_key_check_failed",
+                    "SQLite 外键一致性检查失败",
+                    count=len(foreign_rows),
+                    details=[
+                        f"table={row[0]}, rowid={row[1]}, parent={row[2]}, fkid={row[3]}"
+                        for row in foreign_rows[:20]
+                    ],
+                )
+            )
+
+        table_set = _table_names(connection)
+        tables = _table_counts(connection, table_set)
+        _append_business_integrity_checks(connection, table_set, issues)
+        _append_attachment_checks(connection, table_set, issues)
+    finally:
+        connection.close()
+
+    return DatabaseIntegrityCheckRead(
+        status=_database_check_status(issues),
+        checked_at=checked_at,
+        elapsed_ms=round((perf_counter() - started) * 1000),
+        database_path=DATABASE_PATH.as_posix(),
+        database_exists=True,
+        database_size_bytes=database_size,
+        sqlite_integrity=sqlite_integrity,
+        foreign_key_issues=foreign_key_issues,
+        tables=tables,
+        issues=issues,
+    )
+
+
 def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
     current_version = _current_installed_version()
     current_version_dir = None
@@ -422,6 +885,33 @@ def create_backup(reason: str = "manual") -> BackupRead:
         temp_zip_path.unlink(missing_ok=True)
         raise
     return _backup_read(backup_path)
+
+
+def _session_database_path(db: Session) -> Path | None:
+    try:
+        database = db.get_bind().url.database
+    except Exception:
+        return None
+    if not database or database == ":memory:":
+        return None
+    return Path(database).resolve()
+
+
+def _session_uses_runtime_database(db: Session) -> bool:
+    session_path = _session_database_path(db)
+    if session_path is None:
+        return False
+    runtime_path = DATABASE_PATH.resolve()
+    try:
+        return session_path.samefile(runtime_path)
+    except OSError:
+        return session_path == runtime_path
+
+
+def create_safety_snapshot(db: Session, reason: str) -> BackupRead | None:
+    if not _session_uses_runtime_database(db):
+        return None
+    return create_backup(reason=reason)
 
 
 def get_backup_file(backup_id: str) -> Path:
@@ -786,6 +1276,7 @@ def _diagnostics_payload(db: Session | None = None) -> dict:
             "uploads_exists": info.uploads_exists,
             "backups_total": len(info.backups),
         },
+        "database_check": check_database_integrity(db).model_dump(),
         "qr_engine": info.qr_engine.model_dump() if info.qr_engine else None,
         "browser_runtime": info.browser_runtime.model_dump() if info.browser_runtime else None,
         "log_file": info.log_file.model_dump() if info.log_file else None,

@@ -3,6 +3,9 @@ import test from "node:test";
 
 import {
   browserRuntimeSummary,
+  databaseCheckSeverity,
+  databaseCheckSummary,
+  databaseIssueSummary,
   formatFileSize,
   latestBackup,
   qrEngineSummary,
@@ -20,6 +23,18 @@ test("formatFileSize formats byte units", () => {
 test("latestBackup returns the first backup", () => {
   assert.equal(latestBackup([{ backup_id: "a" }, { backup_id: "b" }]).backup_id, "a");
   assert.equal(latestBackup([]), null);
+});
+
+test("database check summaries format status and issues", () => {
+  const check = {
+    status: "warning",
+    elapsed_ms: 12,
+    tables: { expense_reports: 1, invoices: 2 },
+    issues: [{ message: "存在缺失的发票附件文件", count: 2 }],
+  };
+  assert.equal(databaseCheckSeverity(check), "warning");
+  assert.equal(databaseCheckSummary(check), "数据库检查有警告，2 张表，1 个问题，耗时 12 ms");
+  assert.equal(databaseIssueSummary(check.issues[0]), "存在缺失的发票附件文件（2 项）");
 });
 
 test("restorePreviewSummary includes key restore contents", () => {

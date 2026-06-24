@@ -2,6 +2,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.schemas.report import ReportCreate, ReportStatusUpdate
+from backend.services import report_service
 from backend.services.report_service import (
     create_report,
     update_report_status,
@@ -40,7 +41,13 @@ def test_validate_status_transition_same_status_noop():
     validate_status_transition("reimbursed", "reimbursed")
 
 
-def test_update_report_status_full_legal_path(db):
+def test_update_report_status_full_legal_path(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
     report = create_report(db, ReportCreate(purpose="出差A"))
     assert report.status == "draft"
 
@@ -53,6 +60,24 @@ def test_update_report_status_full_legal_path(db):
     report = update_report_status(db, report.id, "printed")
     report = update_report_status(db, report.id, "reimbursed")
     assert report.status == "reimbursed"
+    assert snapshot_reasons == ["pre_status_rollback"]
+
+
+def test_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):
+    report = create_report(db, ReportCreate(purpose="出差快照失败"))
+    update_report_status(db, report.id, "printed")
+
+    def fail_snapshot(_db, reason):
+        raise HTTPException(status_code=500, detail=f"{reason} failed")
+
+    monkeypatch.setattr(report_service, "create_safety_snapshot", fail_snapshot)
+
+    with pytest.raises(HTTPException) as exc:
+        update_report_status(db, report.id, "draft")
+
+    db.refresh(report)
+    assert exc.value.status_code == 500
+    assert report.status == "printed"
 
 
 def test_update_report_status_illegal_raises(db):

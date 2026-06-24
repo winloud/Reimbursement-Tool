@@ -2,7 +2,7 @@
 
 ## 状态
 - 版本号：v1.2.0
-- 计划状态：本地验证完成
+- 计划状态：本地定向验证完成
 - 预计版本类型：minor
 
 ## 目标
@@ -17,6 +17,8 @@
 - [x] 固化预览包命名规则：未绑定目标版本时使用 `preview-yyyymmdd-NNN`，绑定目标版本时使用 `vX.Y.Z-preview-yyyymmdd-NNN`，不得占用正式版本号。
 - [x] 改进发票上传识别：图片发票走二维码识别，PDF 发票逐页识别，多页多发票 PDF 上传后拆成多条发票记录。
 - [x] 新增 GitHub Actions 手动 preview artifact 构建入口，不创建 GitHub Release。
+- [x] 增加数据库完整性检查。
+- [x] 批量删除、导入覆盖、状态回退前自动创建安全快照。
 
 ## 范围
 本次做：
@@ -34,6 +36,8 @@
 - 桌面窗口状态写入 EXE 同级 `window-state.json`；保持 Google Chrome app-mode 优先策略，并在 Chrome/Edge app-mode 路径中读取和保存窗口大小位置，继续复用稳定 `browser-profile`。
 - 图片发票优先复用现有二维码识别路线，不引入 OCR runtime；PDF 发票从只识别第一页改为逐页识别，识别到多张发票时拆分为独立 PDF 附件并创建多条发票记录。
 - 新增 `.github/workflows/build-preview.yml`，支持零输入手动触发；默认从 active-plan 读取目标版本、按中国时区取日期、按已有 artifact 自动递增三位预览流水号，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
+- 新增 `/api/maintenance/database-check`，检查 SQLite `integrity_check`、`foreign_key_check`、报销业务一致性和发票附件状态，并在数据维护面板展示摘要。
+- 批量软删除、批量彻底删除、导入覆盖和报销单状态回退前创建完整备份快照；快照失败时中止原操作，避免无保护地执行危险变更。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -70,6 +74,9 @@
 - 修复报销单编辑页在自动保存等待期间上传发票会覆盖未保存表单的问题：发票上传前先执行现有保存保护，保存失败则中止上传。
 - 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。
 - PDF 发票新增逐页解析能力；多页 PDF 中识别到多张发票时，上传一次会创建多条发票记录并进入逐张确认队列。
+- 新增数据库完整性检查：覆盖 SQLite 物理完整性、外键一致性、重复 UID、无效状态、孤儿记录、软删除不一致、发票与行程所属报销单不一致、未知费用类别和发票附件缺失/越界。
+- 数据维护面板新增“检查数据库”入口，并展示检查状态、表数量、问题数量和前几条问题摘要；诊断包附带数据库检查摘要。
+- 新增 `create_safety_snapshot()` 自动快照守门：批量软删除、批量彻底删除、导入覆盖和 `printed -> draft` 状态回退前先尝试创建完整备份；快照失败则中止原操作。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -121,6 +128,10 @@
 - [x] 诊断信息前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] 诊断信息后端语法检查：使用 Codex bundled Python 执行 `python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py tests\test_maintenance_service.py` 通过。
 - [x] 诊断信息后端 pytest：用户在交互式 PowerShell 中执行 `py -3.10 -m pytest tests\test_maintenance_service.py`，9 passed。
+- [x] 数据安全前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，6 passed。
+- [x] 数据安全前端构建：`npm.cmd run build` 成功；仍有既有 chunk size warning。
+- [x] 数据安全后端语法检查：使用 Codex bundled Python 3.12 执行 `python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py backend\services\report_batch_service.py backend\services\report_service.py backend\services\data_transfer_service.py tests\test_maintenance_service.py tests\test_report_batch.py tests\test_report_trash.py tests\test_status_machine.py tests\test_phase5_2.py` 通过。
+- [x] 数据安全后端 pytest：用户在交互式 PowerShell 中执行 `.\.release-venv\Scripts\python.exe -m pytest tests\test_maintenance_service.py tests\test_report_batch.py tests\test_report_trash.py tests\test_status_machine.py tests\test_phase5_2.py`，42 passed，5 warnings（既有 SWIG deprecation warnings）。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
+- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。

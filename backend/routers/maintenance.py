@@ -9,6 +9,7 @@ from backend.schemas.common import ApiResponse
 from backend.schemas.maintenance import (
     BackupCreateRead,
     BackupRead,
+    DatabaseIntegrityCheckRead,
     MaintenanceInfoRead,
     RestoreExecuteRead,
     RestoreExecuteRequest,
@@ -19,6 +20,7 @@ from backend.schemas.maintenance import (
 )
 from backend.services.maintenance_service import (
     build_diagnostics_package,
+    check_database_integrity,
     create_backup,
     create_restore_preview,
     create_update_preview,
@@ -35,6 +37,11 @@ router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 @router.get("/info", response_model=ApiResponse[MaintenanceInfoRead])
 def get_info(db: Session = Depends(get_db)) -> ApiResponse[MaintenanceInfoRead]:
     return ApiResponse(data=get_maintenance_info(db))
+
+
+@router.get("/database-check", response_model=ApiResponse[DatabaseIntegrityCheckRead])
+def get_database_check(db: Session = Depends(get_db)) -> ApiResponse[DatabaseIntegrityCheckRead]:
+    return ApiResponse(data=check_database_integrity(db), message="数据库检查已完成")
 
 
 @router.get("/backups", response_model=ApiResponse[list[BackupRead]])

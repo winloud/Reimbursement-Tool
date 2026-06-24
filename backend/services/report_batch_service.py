@@ -15,6 +15,7 @@ from backend.schemas.report import (
     ReportBatchPurgeResult,
     ReportBatchRestoreResult,
 )
+from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.pdf_generator import build_merged_report_pdf, build_pdf_filename
 from backend.services.report_service import purge_report, restore_deleted_report
 from backend.services.settings_service import get_or_create_settings
@@ -99,9 +100,8 @@ def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[byte
 
 def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> ReportBatchDeleteResult:
     selected_ids = unique_report_ids(report_ids)
-    deleted_count = 0
+    candidates: list[ExpenseReport] = []
     skipped: list[ReportBatchDeleteSkipped] = []
-    deleted_at = datetime.utcnow()
 
     for report_id in selected_ids:
         report = _active_report_by_id(db, report_id)
@@ -113,13 +113,42 @@ def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> Repor
                 ReportBatchDeleteSkipped(report_id=report_id, reason="只有草稿可以删除", status=report.status)
             )
             continue
-        report.deleted_at = deleted_at
-        for invoice in report.invoices:
-            invoice.deleted_at = deleted_at
-        deleted_count += 1
+        candidates.append(report)
 
-    db.commit()
-    return ReportBatchDeleteResult(deleted_count=deleted_count, skipped_count=len(skipped), skipped=skipped)
+    if candidates:
+        create_safety_snapshot(db, reason="pre_batch_delete")
+        deleted_at = datetime.utcnow()
+        for report in candidates:
+            report.deleted_at = deleted_at
+            for invoice in report.invoices:
+                invoice.deleted_at = deleted_at
+        db.commit()
+
+    return ReportBatchDeleteResult(deleted_count=len(candidates), skipped_count=len(skipped), skipped=skipped)
+
+
+def _purgeable_report_by_id(db: Session, report_id: int) -> ExpenseReport | None:
+    return db.scalar(select(ExpenseReport).where(ExpenseReport.id == report_id))
+
+
+def _purge_candidates(
+    db: Session,
+    report_ids: list[int],
+) -> tuple[list[int], list[ReportBatchDeleteSkipped]]:
+    purgeable_ids: list[int] = []
+    skipped: list[ReportBatchDeleteSkipped] = []
+    for report_id in unique_report_ids(report_ids):
+        report = _purgeable_report_by_id(db, report_id)
+        if report is None:
+            skipped.append(ReportBatchDeleteSkipped(report_id=report_id, reason="报销单不存在"))
+            continue
+        if report.status != "draft":
+            skipped.append(
+                ReportBatchDeleteSkipped(report_id=report_id, reason="只有草稿可以彻底删除", status=report.status)
+            )
+            continue
+        purgeable_ids.append(report_id)
+    return purgeable_ids, skipped
 
 
 def batch_restore_deleted_reports(db: Session, report_ids: list[int]) -> ReportBatchRestoreResult:
@@ -139,9 +168,12 @@ def batch_restore_deleted_reports(db: Session, report_ids: list[int]) -> ReportB
 def batch_purge_reports(db: Session, report_ids: list[int]) -> ReportBatchPurgeResult:
     purged_count = 0
     files_deleted_count = 0
-    skipped: list[ReportBatchDeleteSkipped] = []
+    purgeable_ids, skipped = _purge_candidates(db, report_ids)
 
-    for report_id in unique_report_ids(report_ids):
+    if purgeable_ids:
+        create_safety_snapshot(db, reason="pre_batch_purge")
+
+    for report_id in purgeable_ids:
         try:
             files_deleted_count += purge_report(db, report_id)
             purged_count += 1

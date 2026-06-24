@@ -14,9 +14,11 @@ import BackupIcon from "@mui/icons-material/Backup";
 import DescriptionIcon from "@mui/icons-material/Description";
 import DownloadIcon from "@mui/icons-material/Download";
 import RestoreIcon from "@mui/icons-material/Restore";
+import StorageIcon from "@mui/icons-material/Storage";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
+  checkMaintenanceDatabase,
   createMaintenanceBackup,
   downloadMaintenanceBackup,
   downloadMaintenanceDiagnostics,
@@ -28,6 +30,9 @@ import {
 } from "../api/client";
 import {
   browserRuntimeSummary,
+  databaseCheckSeverity,
+  databaseCheckSummary,
+  databaseIssueSummary,
   formatFileSize,
   latestBackup,
   qrEngineSummary,
@@ -88,6 +93,7 @@ export default function MaintenancePanel() {
   const [restorePreview, setRestorePreview] = useState(null);
   const [updateFile, setUpdateFile] = useState(null);
   const [updatePreview, setUpdatePreview] = useState(null);
+  const [databaseCheck, setDatabaseCheck] = useState(null);
 
   const backup = latestBackup(info?.backups);
 
@@ -150,6 +156,23 @@ export default function MaintenancePanel() {
       saveBlob(await downloadMaintenanceDiagnostics());
     } catch (err) {
       setError(getApiErrorMessage(err, "导出诊断信息失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleDatabaseCheck = async () => {
+    setBusy("database-check");
+    setError("");
+    try {
+      const res = await checkMaintenanceDatabase();
+      if (!res.success) {
+        setError(res.message || "数据库检查失败");
+        return;
+      }
+      setDatabaseCheck(res.data);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "数据库检查失败"));
     } finally {
       setBusy("");
     }
@@ -275,6 +298,14 @@ export default function MaintenancePanel() {
             <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
               <Button
                 variant="outlined"
+                startIcon={busy === "database-check" ? <CircularProgress size={16} /> : <StorageIcon />}
+                onClick={handleDatabaseCheck}
+                disabled={loading || Boolean(busy)}
+              >
+                检查数据库
+              </Button>
+              <Button
+                variant="outlined"
                 startIcon={busy === "diagnostics" ? <CircularProgress size={16} /> : <DescriptionIcon />}
                 onClick={handleDiagnostics}
                 disabled={loading || Boolean(busy)}
@@ -296,6 +327,20 @@ export default function MaintenancePanel() {
           {toast && (
             <Alert severity="success" onClose={() => setToast("")}>
               {toast}
+            </Alert>
+          )}
+          {databaseCheck && (
+            <Alert severity={databaseCheckSeverity(databaseCheck)}>
+              <Stack spacing={0.75}>
+                <Typography variant="body2" fontWeight={700}>
+                  {databaseCheckSummary(databaseCheck)}
+                </Typography>
+                {(databaseCheck.issues || []).slice(0, 5).map((issue) => (
+                  <Typography key={`${issue.category}-${issue.code}`} variant="body2">
+                    {databaseIssueSummary(issue)}
+                  </Typography>
+                ))}
+              </Stack>
             </Alert>
           )}
 

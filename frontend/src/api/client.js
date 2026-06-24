@@ -93,6 +93,11 @@ export const createMaintenanceBackup = async () => {
   return response.data;
 };
 
+export const checkMaintenanceDatabase = async () => {
+  const response = await apiClient.get("/api/maintenance/database-check", { timeout: 120000 });
+  return response.data;
+};
+
 export const downloadMaintenanceBackup = async (backupId) => {
   try {
     const response = await apiClient.get(`/api/maintenance/backups/${encodeURIComponent(backupId)}/download`, {

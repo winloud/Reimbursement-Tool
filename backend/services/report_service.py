@@ -20,12 +20,18 @@ from backend.schemas.report import (
     ReportUpdate,
     TripWrite,
 )
+from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.settings_service import get_or_create_settings
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"printed"},
     "printed": {"draft", "reimbursed"},
     "reimbursed": set(),
+}
+REPORT_STATUS_ORDER = {
+    "draft": 0,
+    "printed": 1,
+    "reimbursed": 2,
 }
 
 FUEL_SUBSIDY_CATEGORY = "fuel_subsidy"
@@ -737,6 +743,8 @@ def purge_report(db: Session, report_id: int) -> int:
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     validate_status_transition(report.status, target_status)
+    if REPORT_STATUS_ORDER.get(target_status, 0) < REPORT_STATUS_ORDER.get(report.status, 0):
+        create_safety_snapshot(db, reason="pre_status_rollback")
     report.status = target_status
     db.commit()
     db.refresh(report)

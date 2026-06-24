@@ -75,6 +75,38 @@ def read_database_value(path: Path) -> str:
         connection.close()
 
 
+def write_app_database_with_integrity_issues(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE expense_reports (
+                id INTEGER PRIMARY KEY,
+                report_uid TEXT,
+                status TEXT,
+                deleted_at DATETIME
+            );
+            CREATE TABLE invoices (
+                id INTEGER PRIMARY KEY,
+                invoice_uid TEXT,
+                report_id INTEGER,
+                trip_id INTEGER,
+                expense_category TEXT,
+                file_path TEXT,
+                deleted_at DATETIME
+            );
+            INSERT INTO expense_reports (id, report_uid, status, deleted_at)
+            VALUES (1, 'report-1', 'archived', NULL);
+            INSERT INTO invoices (id, invoice_uid, report_id, trip_id, expense_category, file_path, deleted_at)
+            VALUES (1, 'invoice-1', 1, NULL, 'accommodation', 'uploads/1/missing.pdf', NULL);
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def upload_file_from_bytes(payload: bytes, filename: str = "backup.zip") -> UploadFile:
     return UploadFile(file=BytesIO(payload), filename=filename)
 
@@ -188,6 +220,22 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.qr_engine.selected_engine == "zxing"
     assert info.browser_runtime.webview2_available is True
     assert info.browser_runtime.chromium_name == "Google Chrome"
+
+
+def test_database_integrity_check_reports_business_and_attachment_issues(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_app_database_with_integrity_issues(paths["database"])
+
+    result = maintenance_service.check_database_integrity()
+
+    codes = {issue.code for issue in result.issues}
+    assert result.status == "error"
+    assert result.sqlite_integrity == "ok"
+    assert result.tables["expense_reports"] == 1
+    assert "invalid_report_status" in codes
+    assert "missing_attachment_file" in codes
 
 
 def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(

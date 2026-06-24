@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -36,6 +38,28 @@ class DiagnosticLogFileRead(BaseModel):
     exists: bool = False
     size_bytes: int = 0
     modified_at: str | None = None
+
+
+class DatabaseIntegrityIssueRead(BaseModel):
+    severity: Literal["warning", "error"]
+    category: str
+    code: str
+    message: str
+    count: int = 0
+    details: list[str] = Field(default_factory=list)
+
+
+class DatabaseIntegrityCheckRead(BaseModel):
+    status: Literal["ok", "warning", "error"]
+    checked_at: str
+    elapsed_ms: int
+    database_path: str
+    database_exists: bool
+    database_size_bytes: int = 0
+    sqlite_integrity: str | None = None
+    foreign_key_issues: int = 0
+    tables: dict[str, int] = Field(default_factory=dict)
+    issues: list[DatabaseIntegrityIssueRead] = Field(default_factory=list)
 
 
 class MaintenanceInfoRead(BaseModel):
