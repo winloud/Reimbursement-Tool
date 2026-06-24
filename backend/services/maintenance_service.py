@@ -290,6 +290,40 @@ def _settings_payload(db: Session | None = None) -> dict:
     }
 
 
+def _json_config_file_payload(path: Path) -> dict:
+    payload: dict = {
+        "path": path.as_posix(),
+        "exists": path.is_file(),
+    }
+    if not path.is_file():
+        return payload
+    try:
+        stat = path.stat()
+        payload.update(
+            {
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "content": json.loads(path.read_text(encoding="utf-8-sig")),
+            }
+        )
+    except json.JSONDecodeError as exc:
+        payload["error"] = f"invalid json: {exc}"
+    except OSError as exc:
+        payload["error"] = str(exc)
+    return payload
+
+
+def _runtime_config_payload() -> dict:
+    return {
+        "portable_install": _is_portable_install(),
+        "files": {
+            CURRENT_VERSION_FILE: _json_config_file_payload(APP_ROOT / CURRENT_VERSION_FILE),
+            PORTABLE_RELEASE_MANIFEST_NAME: _json_config_file_payload(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME),
+            "window-state.json": _json_config_file_payload(APP_ROOT / "window-state.json"),
+        },
+    }
+
+
 def _selected_qr_engine(db: Session | None = None) -> str:
     if db is None:
         return INVOICE_QR_ENGINE_ZXING
@@ -1253,6 +1287,66 @@ def _environment_payload() -> dict:
     }
 
 
+def _diagnostic_bool(value: bool | None) -> str:
+    if value is None:
+        return "-"
+    return "是" if value else "否"
+
+
+def _diagnostics_summary_text(diagnostics: dict) -> bytes:
+    paths = diagnostics.get("paths") or {}
+    state = diagnostics.get("state") or {}
+    database_check = diagnostics.get("database_check") or {}
+    qr_engine = diagnostics.get("qr_engine") or {}
+    browser = diagnostics.get("browser_runtime") or {}
+    log_file = diagnostics.get("log_file") or {}
+    log_size = int(log_file.get("size_bytes") or 0)
+    log_truncated = bool(log_size > LOG_TAIL_BYTES)
+    log_size_suffix = f"，{log_size} bytes" if log_file.get("exists") else ""
+    log_truncated_suffix = "，诊断包仅包含尾部日志" if log_truncated else ""
+    opencv_version = qr_engine.get("opencv_package_version")
+    opencv_version_suffix = f"，版本 {opencv_version}" if opencv_version else ""
+    chromium_path = browser.get("chromium_path")
+    chromium_path_suffix = f"，{chromium_path}" if chromium_path else ""
+    lines = [
+        "报销管理诊断摘要",
+        "",
+        f"生成时间: {diagnostics.get('generated_at') or '-'}",
+        f"程序版本: {diagnostics.get('app_version') or '-'}",
+        f"当前版本: {state.get('current_version') or '-'}",
+        f"便携安装: {_diagnostic_bool(state.get('portable_install'))}",
+        f"安装根目录: {paths.get('app_root') or '-'}",
+        f"当前版本目录: {state.get('current_version_dir') or '-'}",
+        f"数据目录: {paths.get('data_dir') or '-'}",
+        f"数据库路径: {paths.get('database_path') or '-'}",
+        f"日志路径: {log_file.get('path') or paths.get('logs_dir') or '-'}",
+        f"日志状态: {'已生成' if log_file.get('exists') else '未生成'}"
+        f"{log_size_suffix}"
+        f"{log_truncated_suffix}",
+        "",
+        "运行能力",
+        f"QR 引擎: {qr_engine.get('selected_engine_label') or qr_engine.get('selected_engine') or '-'}",
+        f"OpenCV runtime: {_diagnostic_bool(qr_engine.get('opencv_runtime_installed'))}"
+        f"{opencv_version_suffix}",
+        f"OpenCV 模型完整: {_diagnostic_bool(qr_engine.get('opencv_model_files_complete'))}",
+        f"浏览器/WebView2: {browser.get('preferred_runtime') or '-'}",
+        f"WebView2 可用: {_diagnostic_bool(browser.get('webview2_available'))}",
+        f"Chromium: {browser.get('chromium_name') or '-'}"
+        f"{chromium_path_suffix}",
+        "",
+        "数据库检查",
+        f"状态: {database_check.get('status') or '-'}",
+        f"SQLite integrity_check: {database_check.get('sqlite_integrity') or '-'}",
+        f"外键问题数: {database_check.get('foreign_key_issues') or 0}",
+        f"业务问题数: {len(database_check.get('issues') or [])}",
+        "",
+        "诊断包内容",
+        "已包含: diagnostics.json、summary.txt、config/settings.json、config/runtime.json、env/environment.json、logs/app.log（如存在）。",
+        "不包含: data/expense.db、uploads/ 附件、备份 ZIP。",
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
 def _diagnostics_payload(db: Session | None = None) -> dict:
     info = get_maintenance_info(db)
     settings = _settings_payload(db)
@@ -1281,6 +1375,7 @@ def _diagnostics_payload(db: Session | None = None) -> dict:
         "browser_runtime": info.browser_runtime.model_dump() if info.browser_runtime else None,
         "log_file": info.log_file.model_dump() if info.log_file else None,
         "settings": settings,
+        "runtime_config": _runtime_config_payload(),
         "environment": _environment_payload(),
         "backups": [backup.model_dump() for backup in info.backups[:20]],
     }
@@ -1296,13 +1391,16 @@ def build_diagnostics_json(db: Session | None = None) -> tuple[bytes, str]:
 def build_diagnostics_package(db: Session | None = None) -> tuple[bytes, str]:
     diagnostics = _diagnostics_payload(db)
     settings = diagnostics.get("settings") or {"available": False}
+    runtime_config = diagnostics.get("runtime_config") or {}
     environment = diagnostics.get("environment") or {}
     files: list[dict] = []
     payload = BytesIO()
     log_tail = _read_log_tail()
     with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
         files.append(_zip_bytes_entry(archive, _write_json_bytes(diagnostics), "diagnostics.json"))
+        files.append(_zip_bytes_entry(archive, _diagnostics_summary_text(diagnostics), "summary.txt"))
         files.append(_zip_bytes_entry(archive, _write_json_bytes(settings), "config/settings.json"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(runtime_config), "config/runtime.json"))
         files.append(_zip_bytes_entry(archive, _write_json_bytes(environment), "env/environment.json"))
         if log_tail:
             files.append(_zip_bytes_entry(archive, log_tail, "logs/app.log"))

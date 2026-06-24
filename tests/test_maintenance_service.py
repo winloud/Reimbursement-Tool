@@ -249,6 +249,14 @@ def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
     write_database(paths["database"], "private data")
     (paths["uploads"] / "1").mkdir(parents=True)
     (paths["uploads"] / "1" / "invoice.pdf").write_bytes(b"private invoice")
+    (paths["app_root"] / "current-version.json").write_text(
+        json.dumps({"current_version": "1.2.0-preview-20260624-001"}),
+        encoding="utf-8",
+    )
+    (paths["app_root"] / "portable-release.json").write_text(
+        json.dumps({"app_version": "1.2.0-preview-20260624-001"}),
+        encoding="utf-8",
+    )
     paths["logs"].mkdir(parents=True)
     (paths["logs"] / "app.log").write_text("diagnostic log", encoding="utf-8")
 
@@ -259,7 +267,9 @@ def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
         names = set(archive.namelist())
         assert "manifest.json" in names
         assert "diagnostics.json" in names
+        assert "summary.txt" in names
         assert "config/settings.json" in names
+        assert "config/runtime.json" in names
         assert "env/environment.json" in names
         assert "logs/app.log" in names
         assert "data/expense.db" not in names
@@ -267,6 +277,16 @@ def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
         diagnostics = json.loads(archive.read("diagnostics.json").decode("utf-8"))
         assert diagnostics["qr_engine"]["opencv_runtime_installed"] is True
         assert diagnostics["browser_runtime"]["preferred_runtime"] == "unavailable"
+        assert diagnostics["runtime_config"]["files"]["current-version.json"]["content"]["current_version"] == (
+            "1.2.0-preview-20260624-001"
+        )
+        runtime_config = json.loads(archive.read("config/runtime.json").decode("utf-8"))
+        assert runtime_config["files"]["portable-release.json"]["content"]["app_version"] == (
+            "1.2.0-preview-20260624-001"
+        )
+        summary = archive.read("summary.txt").decode("utf-8")
+        assert "诊断包内容" in summary
+        assert "不包含: data/expense.db、uploads/ 附件、备份 ZIP。" in summary
         assert json.loads(archive.read("config/settings.json").decode("utf-8"))["available"] is False
 
 

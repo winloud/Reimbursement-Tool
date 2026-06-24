@@ -57,7 +57,7 @@
 ### 重要改动
 - 新增 `backend/services/maintenance_service.py`、`backend/routers/maintenance.py` 和维护相关 schema。
 - 新增完整备份 ZIP 格式：`backup-manifest.json`、`data/expense.db`、`uploads/`、可选 `vendor/` 和最近日志摘要。
-- 扩展设置页“诊断信息”和诊断包导出：展示当前版本、数据目录、QR 引擎、浏览器/WebView2 状态和日志路径；导出 ZIP 包含 `diagnostics.json`、配置摘要、环境信息和日志尾部，不包含数据库或附件。
+- 扩展设置页“诊断信息”和诊断包导出：展示当前版本、数据目录、QR 引擎、浏览器/WebView2 状态和日志路径；导出 ZIP 包含 `diagnostics.json`、`summary.txt`、配置摘要、运行配置摘要、环境信息和日志尾部，不包含数据库或附件。
 - 恢复执行前自动创建 `pre_restore_*.zip`，并在恢复数据库后运行现有 SQLite 迁移。
 - 新增 `frontend/src/pages/MaintenancePanel.jsx`，在个性化设置页提供备份、恢复和诊断导出入口。
 - 新增 `scripts/upgrade_zip_release.ps1`，并由 `scripts/build_release.ps1` 复制到发布 ZIP 根目录。
@@ -132,6 +132,11 @@
 - [x] 数据安全前端构建：`npm.cmd run build` 成功；仍有既有 chunk size warning。
 - [x] 数据安全后端语法检查：使用 Codex bundled Python 3.12 执行 `python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py backend\services\report_batch_service.py backend\services\report_service.py backend\services\data_transfer_service.py tests\test_maintenance_service.py tests\test_report_batch.py tests\test_report_trash.py tests\test_status_machine.py tests\test_phase5_2.py` 通过。
 - [x] 数据安全后端 pytest：用户在交互式 PowerShell 中执行 `.\.release-venv\Scripts\python.exe -m pytest tests\test_maintenance_service.py tests\test_report_batch.py tests\test_report_trash.py tests\test_status_machine.py tests\test_phase5_2.py`，42 passed，5 warnings（既有 SWIG deprecation warnings）。
+- [x] 诊断包摘要增强后端语法检查：`python -m py_compile backend\services\maintenance_service.py tests\test_maintenance_service.py` 通过。
+- [x] 诊断包摘要增强后端定向测试：`python -m pytest tests\test_maintenance_service.py`，10 passed。
+- [x] 诊断包摘要增强前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，6 passed。
+- [x] 诊断包摘要增强前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 诊断包摘要增强 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
+- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。

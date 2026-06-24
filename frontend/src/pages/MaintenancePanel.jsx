@@ -355,6 +355,9 @@ export default function MaintenancePanel() {
                 <Typography variant="body2" fontWeight={800}>
                   诊断信息
                 </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  诊断包包含日志、配置和环境摘要，不包含数据库或附件
+                </Typography>
               </Box>
               <Box
                 sx={{
