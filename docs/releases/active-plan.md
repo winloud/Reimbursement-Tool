@@ -9,6 +9,8 @@
 - [x] 缩短正式发布体感耗时，减少本地和 GitHub Actions 重复打包。
 - [x] 增加发布预检脚本，把版本号、文档冻结、release notes、测试和 diff 检查收束成一个命令。
 - [x] 为 GitHub 正式发布和 preview artifact workflow 增加 pip cache。
+- [x] 正式发布 workflow 复用既有 OpenCV runtime Release 资产，只有 runtime 版本变化或缺少匹配资产时才重建。
+- [x] 升级 GitHub Actions checkout/setup/upload-artifact action 主版本，消除旧 Node.js runtime 弃用提示。
 - [x] 更新 release-governance skill，沉淀“单一权威打包路径”的通用原则。
 
 ## 范围
@@ -16,10 +18,11 @@
 - 新增 `scripts/prepare_release.ps1`，用于正式发布前预检；默认不生成正式 ZIP，由 GitHub tag workflow 生成正式资产。
 - 新增 `docs/release-process.md`，记录快速发布路径、本地正式 ZIP 何时需要、v1.2.0 耗时拆解和后续可选优化。
 - 更新 `.github/workflows/publish-release.yml` 和 `.github/workflows/build-preview.yml`，为 Python 依赖安装启用 pip cache。
+- 更新 `.github/workflows/publish-release.yml`，从既有 GitHub Release 复用匹配版本的 OpenCV runtime asset；找不到时回退到重新构建。
+- 升级 `.github/workflows/publish-release.yml` 和 `.github/workflows/build-preview.yml` 中的 GitHub Actions 主版本。
 - 更新 `CHANGELOG.md` 的 Unreleased 发布流程变化。
 
 本次不做：
-- 暂不改变 OpenCV runtime 发布资产策略；是否复用旧 runtime 需要单独确认。
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
 
 ## 版本号判断
@@ -34,11 +37,15 @@
 ### 重要改动
 - 新增发布预检脚本和发布流程文档。
 - GitHub 正式发布和 preview artifact workflow 增加 pip cache。
+- GitHub 正式发布 workflow 优先复用已有 OpenCV runtime asset；action 版本升级到当前可用新主版本。
 - release-governance skill 增加快速发布路径说明。
 
 ### 验证记录
 - [x] 发布预检脚本语法检查：PowerShell `scriptblock` 解析通过。
 - [x] 发布预检脚本完整验证：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare_release.ps1 -Version 1.2.0 -ReleaseDate 20260625` 成功；后端 `210 passed`、前端 `48 passed`，并校验 v1.2.0 版本元数据、CHANGELOG、README、冻结计划、release notes 抽取和 `git diff --check`。
+- [x] workflow YAML 解析检查：Python `yaml.safe_load` 可解析 `.github/workflows/publish-release.yml` 和 `.github/workflows/build-preview.yml`。
+- [x] OpenCV runtime 复用路径验证：本地模拟正式发布 workflow 的恢复逻辑，可从 GitHub Release `v1.2.0` 下载并识别 `opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`，大小约 60.75 MB。
+- [x] 发布预检脚本轻量复验：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare_release.ps1 -Version 1.2.0 -ReleaseDate 20260625 -SkipTests` 成功。
 - [x] diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 
 ### 已同步到 CHANGELOG

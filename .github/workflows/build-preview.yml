@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve preview metadata
         id: preview
@@ -102,7 +102,7 @@ jobs:
           "artifact_name=$artifactBaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
           cache: pip
@@ -111,7 +111,7 @@ jobs:
             backend/requirements-packaging.txt
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -186,7 +186,7 @@ jobs:
           "artifact_name=$env:ARTIFACT_BASE_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.prepare.outputs.artifact_name }}
           path: ${{ steps.prepare.outputs.artifact_path }}

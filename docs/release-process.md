@@ -54,5 +54,5 @@ v1.2.0 的 GitHub Release workflow 用时约 3m16s：
 
 ## 后续可选优化
 
-- OpenCV runtime 很少变化，可评估复用既有 Release 资产，只有 runtime 版本变化时才重建。
-- GitHub Actions 的 setup action 若继续提示 Node.js 运行时弃用，可升级到新的 action 主版本。
+- 正式发布 workflow 已复用既有 OpenCV runtime 资产；只有找不到匹配 `opencv-contrib-python-headless` 版本的资产时才重建。
+- GitHub Actions 的 checkout/setup/upload-artifact action 已升级到当前可用的新主版本，避免继续使用旧 Node.js 运行时。
