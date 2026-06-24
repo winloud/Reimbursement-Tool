@@ -398,3 +398,37 @@ def test_execute_update_refuses_existing_version_directory(monkeypatch: pytest.M
         maintenance_service.execute_update(preview.preview_id, confirm_update=True)
 
     assert exc_info.value.status_code == 409
+
+
+def test_request_application_restart_schedules_launcher(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    (paths["app_root"] / "versions").mkdir()
+    launcher = paths["app_root"] / "报销管理.exe"
+    launcher.write_bytes(b"launcher")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+    monkeypatch.setattr(maintenance_service.sys, "platform", "win32")
+    monkeypatch.setenv("REIMBURSEMENT_DESKTOP_MODE", "1")
+    scheduled: list[Path] = []
+
+    monkeypatch.setattr(maintenance_service, "_schedule_application_restart", lambda path: scheduled.append(path))
+
+    result = maintenance_service.request_application_restart()
+
+    assert result.restart_scheduled is True
+    assert result.launcher_path == launcher.as_posix()
+    assert scheduled == [launcher]
+
+
+def test_request_application_restart_rejects_non_desktop_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    (paths["app_root"] / "versions").mkdir()
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+    monkeypatch.setattr(maintenance_service.sys, "platform", "win32")
+    monkeypatch.delenv("REIMBURSEMENT_DESKTOP_MODE", raising=False)
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.request_application_restart()
+
+    assert exc_info.value.status_code == 400

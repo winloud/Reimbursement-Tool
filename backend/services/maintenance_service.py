@@ -5,8 +5,11 @@ import os
 import platform
 import shutil
 import sqlite3
+import subprocess
 import sys
 import tempfile
+import threading
+import time
 import zipfile
 from datetime import datetime
 from hashlib import sha256
@@ -29,6 +32,7 @@ from backend.schemas.maintenance import (
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
     MaintenanceInfoRead,
+    RestartRead,
     RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestorePreviewRead,
@@ -1365,6 +1369,29 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
         restart_required=True,
         version_dir=(APP_ROOT / VERSIONS_DIR_NAME / version).as_posix(),
     )
+
+
+def _schedule_application_restart(launcher_path: Path, delay_seconds: float = 0.8) -> None:
+    def restart_after_response() -> None:
+        time.sleep(delay_seconds)
+        try:
+            subprocess.Popen([str(launcher_path)], cwd=str(APP_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return
+        os._exit(0)
+
+    thread = threading.Thread(target=restart_after_response, name="maintenance-restart", daemon=True)
+    thread.start()
+
+
+def request_application_restart() -> RestartRead:
+    if not _desktop_file_dialog_enabled() or not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行方式不支持程序内重启")
+    launcher_path = APP_ROOT / APP_EXE_NAME
+    if not launcher_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到程序启动器，无法重启")
+    _schedule_application_restart(launcher_path)
+    return RestartRead(restart_scheduled=True, launcher_path=launcher_path.as_posix())
 
 
 def _environment_payload() -> dict:

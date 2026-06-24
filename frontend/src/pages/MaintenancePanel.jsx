@@ -13,6 +13,7 @@ import {
 import BackupIcon from "@mui/icons-material/Backup";
 import DescriptionIcon from "@mui/icons-material/Description";
 import DownloadIcon from "@mui/icons-material/Download";
+import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import RestoreIcon from "@mui/icons-material/Restore";
 import StorageIcon from "@mui/icons-material/Storage";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
@@ -28,6 +29,7 @@ import {
   previewMaintenanceUpdate,
   previewMaintenanceRestore,
   previewMaintenanceRestoreFromBackupDialog,
+  restartMaintenanceApp,
 } from "../api/client";
 import {
   browserRuntimeSummary,
@@ -99,6 +101,7 @@ export default function MaintenancePanel() {
   const [restorePreview, setRestorePreview] = useState(null);
   const [updateFile, setUpdateFile] = useState(null);
   const [updatePreview, setUpdatePreview] = useState(null);
+  const [updateResult, setUpdateResult] = useState(null);
   const [databaseCheck, setDatabaseCheck] = useState(null);
 
   const backup = latestBackup(info?.backups);
@@ -272,6 +275,7 @@ export default function MaintenancePanel() {
     if (!file) return;
     setUpdateFile(file);
     setUpdatePreview(null);
+    setUpdateResult(null);
     setBusy("update-preview");
     setError("");
     try {
@@ -303,12 +307,33 @@ export default function MaintenancePanel() {
         setError(res.message || "安装更新失败");
         return;
       }
-      setToast(`更新已安装：${res.data?.app_version || ""}。关闭程序后从报销管理根目录重新启动。`);
+      setToast(`更新已安装：${res.data?.app_version || ""}。点击重启程序后生效。`);
+      setUpdateResult(res.data);
       setUpdateFile(null);
       setUpdatePreview(null);
       await loadInfo();
     } catch (err) {
       setError(getApiErrorMessage(err, "安装更新失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
+  const handleRestartApp = async () => {
+    const confirmed = window.confirm("将关闭当前程序并启动已安装的新版本。确认重启？");
+    if (!confirmed) return;
+    setBusy("restart");
+    setError("");
+    try {
+      const res = await restartMaintenanceApp();
+      if (!res.success) {
+        setError(res.message || "重启失败");
+        return;
+      }
+      setToast("正在重启程序...");
+      window.setTimeout(() => window.close(), 500);
+    } catch (err) {
+      setError(getApiErrorMessage(err, "重启失败"));
     } finally {
       setBusy("");
     }
@@ -484,11 +509,37 @@ export default function MaintenancePanel() {
                   </Typography>
                 )}
                 {updatePreview && <Alert severity="info">更新预览：{updatePreviewSummary(updatePreview)}</Alert>}
+                {updateResult?.restart_required && (
+                  <Alert
+                    severity="success"
+                    action={
+                      <Button
+                        color="inherit"
+                        size="small"
+                        startIcon={busy === "restart" ? <CircularProgress size={16} color="inherit" /> : <RestartAltIcon />}
+                        onClick={handleRestartApp}
+                        disabled={Boolean(busy)}
+                      >
+                        重启程序
+                      </Button>
+                    }
+                  >
+                    更新已安装：{updateResult.app_version}
+                  </Alert>
+                )}
               </Stack>
 
               <Divider />
 
               <Stack spacing={1.25}>
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={800}>
+                    备份恢复
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    选择备份 ZIP，恢复前会自动创建当前数据备份
+                  </Typography>
+                </Box>
                 <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
                   <input ref={fileInputRef} type="file" accept=".zip,application/zip" hidden onChange={handleRestoreFileChange} />
                   <Button

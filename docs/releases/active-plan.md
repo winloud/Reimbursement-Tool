@@ -80,6 +80,7 @@
 - 桌面本地模式新增备份 ZIP 原生选择器：从数据维护页选择备份恢复时，优先打开 Windows 文件选择窗口并默认定位到应用备份目录；非桌面环境或原生选择器不可用时退回浏览器文件选择。
 - 报销单管理列表新增“出差开始日期 / 出差结束日期 / 报销日期”前三个业务列；行程起止日期由现有行程年月日推导后随列表 API 返回。
 - 草稿报销单 PDF 预览、单张下载和批量下载统一先刷新 `report_date` 为当天，再生成预览图片、PDF 内容和文件名；单张/批量下载随后标记为已打印。已打印或已报销记录不再自动改动 `report_date`；刷新导出日期不触发补贴天数或金额重算，失败时回滚本次日期变更。报销单管理列表和编辑页预览成功后会重新拉取数据，避免页面仍显示旧报销日期。
+- 数据维护页为“备份恢复”补充独立标题和说明；程序更新安装完成后显示“重启程序”按钮，桌面便携模式下会启动根目录 launcher 并退出当前进程。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -155,6 +156,12 @@
 - [x] 报销单导出日期和列表列顺序后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] v1.2.0 preview-20260624-002 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 002 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-002.zip`，大小约 45.01 MB。
 - [x] v1.2.0 preview-20260624-002 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260624-002\报销管理.exe` 和最新前端 `dist\index.html`；manifest `app_version` 与 current-version `current_version` 均为 `1.2.0-preview-20260624-002`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 数据维护备份标题和更新后重启按钮后端语法检查：`python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py tests\test_maintenance_service.py` 通过。
+- [x] 数据维护备份标题和更新后重启按钮后端定向测试：`python -m pytest tests\test_maintenance_service.py`，14 passed。
+- [x] 数据维护备份标题和更新后重启按钮前端工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 数据维护备份标题和更新后重启按钮前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] v1.2.0 preview-20260624-003 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 003 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-003.zip`，大小约 45.01 MB。
+- [x] v1.2.0 preview-20260624-003 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260624-003\报销管理.exe` 和最新前端 `dist\index.html`；manifest `app_version` 与 current-version `current_version` 均为 `1.2.0-preview-20260624-003`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护独立页面、备份选择器默认打开备份目录、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。
+- 已在 Unreleased 记录数据维护独立页面、备份选择器默认打开备份目录、备份恢复标题说明、更新完成后重启按钮、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。

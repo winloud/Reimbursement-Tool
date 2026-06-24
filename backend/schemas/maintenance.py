@@ -117,6 +117,11 @@ class RestoreExecuteRead(BaseModel):
     vendor_restored: bool = False
 
 
+class RestartRead(BaseModel):
+    restart_scheduled: bool
+    launcher_path: str
+
+
 class UpdatePreviewRead(BaseModel):
     preview_id: str
     app_version: str
