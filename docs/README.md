@@ -9,6 +9,7 @@
 - 当前开发计划：releases/active-plan.md
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
+- 发布流程：release-process.md
 
 ## 版本文档
 - releases/

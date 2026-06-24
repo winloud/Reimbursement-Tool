@@ -4,6 +4,15 @@
 
 ## Unreleased
 
+### Added
+
+- 新增 `scripts/prepare_release.ps1` 发布预检脚本，用于在不重复本地正式打包的情况下校验版本号、CHANGELOG、README、冻结计划、release notes、测试和 diff。
+- 新增 `docs/release-process.md`，记录以 GitHub tag workflow 产物为准的快速发布路径。
+
+### Changed
+
+- GitHub 正式发布和 preview artifact workflow 启用 Python pip cache，减少后端与打包依赖重复下载时间。
+
 ## v1.2.0 - 2026-06-25
 
 ### Added
