@@ -1,6 +1,6 @@
 # ZIP 本地安装、升级和备份指南
 
-> 本文档记录当前开发版的 ZIP 本地升级方案。正式发布时，再将对应内容同步到根目录 `README.md` 的发布说明。
+本文档记录 ZIP 发布包的本地安装、升级、备份恢复和诊断导出方式。
 
 ## 首次安装
 
@@ -18,10 +18,10 @@
 
 1. 关闭旧版 `报销管理.exe`。
 2. 解压新版 ZIP 到一个新目录。
-3. 在新版 ZIP 根目录打开 PowerShell，执行：
+3. 打开 PowerShell，执行：
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File .\upgrade_zip_release.ps1 -OldAppDir "D:\旧版\报销管理" -NewAppDir "D:\新版\报销管理"
+powershell -ExecutionPolicy Bypass -File "D:\新版\报销管理\upgrade_zip_release.ps1" -OldAppDir "D:\旧版\报销管理" -NewAppDir "D:\新版\报销管理"
 ```
 
 脚本会先创建升级备份 ZIP，再把旧目录中的 `data\`、`uploads\`、`vendor\` 和 `window-state.json` 复制到新版 `报销管理\` 根目录。脚本不会删除旧目录，也不会覆盖新版目录中已有的运行态数据。
@@ -45,7 +45,7 @@ window-state.json
 2. 点击“选择更新 ZIP”，选择新版 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 3. 确认预览版本号后点击“安装更新”。
 4. 程序会先创建 `pre_update_*.zip` 完整备份，再把新版本安装到 `versions\<version>\` 并切换 `current-version.json`。
-5. 关闭程序，重新双击根目录 `报销管理\报销管理.exe`。
+5. 点击“重启程序”，或关闭程序后重新双击根目录 `报销管理\报销管理.exe`。
 
 程序内更新不会删除旧版本目录。更新包会声明数据结构兼容范围；如果当前数据库结构版本不在目标版本支持范围内，或目标版本缺少兼容性信息，程序会禁止自动安装。
 
