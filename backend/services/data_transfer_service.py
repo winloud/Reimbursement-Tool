@@ -29,6 +29,7 @@ from backend.schemas.data_transfer import (
     ImportSummaryRead,
 )
 from backend.services.invoice_service import build_invoice_storage_path, calculate_file_hash
+from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
 SCHEMA_VERSION = 1
@@ -469,11 +470,14 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
     if payload.strategy == "overwrite" and preview.requires_reimbursed_confirm and not payload.confirm_reimbursed_overwrite:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="覆盖已报销记录需要二次确认")
 
+    snapshot_backup = None
+    if payload.strategy == "overwrite" and preview.summary.reports_conflict > 0:
+        snapshot_backup = create_safety_snapshot(db, reason="pre_import_overwrite")
     backup_dir = _backup_before_import(db, manifest)
     staging_dir = STAGING_ROOT / payload.preview_id / "attachments"
     staging_dir.mkdir(parents=True, exist_ok=True)
     pending_files: list[tuple[Path, Path]] = []
-    result = ImportExecuteRead(backup_path=backup_dir.as_posix())
+    result = ImportExecuteRead(backup_path=snapshot_backup.path if snapshot_backup else backup_dir.as_posix())
 
     manifest_reports = manifest.get("reports", [])
     archive = zipfile.ZipFile(package_path)

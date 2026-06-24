@@ -94,6 +94,10 @@ def test_release_script_can_build_optional_opencv_runtime_package():
     assert "reimbursement_launcher.spec" in script
     assert "portable-release.json" in script
     assert '"versions\\$PackageVersion"' in script
+    assert "$DataSchemaVersion = 1" in script
+    assert "data_schema_version = $DataSchemaVersion" in script
+    assert "min_supported_data_schema_version = $MinSupportedDataSchemaVersion" in script
+    assert "max_supported_data_schema_version = $MaxSupportedDataSchemaVersion" in script
     assert "scripts\\upgrade_zip_release.ps1" in script
     assert '"browser-profile", "vendor"' in script
     assert "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip" in script

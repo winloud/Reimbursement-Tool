@@ -38,3 +38,15 @@ class ExpenseReport(Base):
     @property
     def active_invoices(self):
         return [invoice for invoice in self.invoices if invoice.deleted_at is None]
+
+    @property
+    def trip_start_date(self) -> date | None:
+        from backend.services.report_service import report_trip_date_bounds
+
+        return report_trip_date_bounds(self)[0]
+
+    @property
+    def trip_end_date(self) -> date | None:
+        from backend.services.report_service import report_trip_date_bounds
+
+        return report_trip_date_bounds(self)[1]

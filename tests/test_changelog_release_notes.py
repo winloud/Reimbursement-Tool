@@ -69,6 +69,9 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
     assert "actions/artifacts?per_page=100" in workflow
     assert "-PreviewBuild" in workflow
     assert "-PreviewSerial" in workflow
+    assert "Expand-Archive -LiteralPath $previewZip.FullName" in workflow
+    assert "Expanded preview artifact payload is missing portable-release.json." in workflow
+    assert "artifact_path=release/preview-artifact-payload/*" in workflow
     assert "actions/upload-artifact@v4" in workflow
     assert "retention-days: 14" in workflow
     assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow

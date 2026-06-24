@@ -3,6 +3,7 @@ from uuid import uuid4
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import DeclarativeBase
 
+from backend.data_schema import DATA_SCHEMA_VERSION
 from backend.runtime_paths import DATA_DIR, DATABASE_PATH, PROJECT_ROOT
 
 DATABASE_URL = f"sqlite:///{DATABASE_PATH.as_posix()}"
@@ -64,6 +65,7 @@ def migrate_sqlite_schema() -> None:
             expense_item_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
             if "reimbursable_amount" not in expense_item_columns:
                 connection.execute(text("ALTER TABLE expense_items ADD COLUMN reimbursable_amount NUMERIC(18, 2)"))
+        connection.execute(text(f"PRAGMA user_version = {DATA_SCHEMA_VERSION}"))
 
 
 def backfill_unique_uid(connection, table_name: str, column_name: str) -> None:

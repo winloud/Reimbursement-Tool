@@ -6,7 +6,7 @@ from fastapi import HTTPException
 
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportUpdate, TripWrite
+from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportRead, ReportUpdate, TripWrite
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     ReportFilters,
@@ -118,6 +118,50 @@ def test_list_reports_filters_by_trip_date_overlap(db):
 
     assert total == 1
     assert [item.id for item in items] == [may_report.id]
+
+
+def test_report_read_includes_trip_date_bounds(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 10),
+            purpose="多段出差",
+            trips=[
+                TripWrite(sort_order=1, depart_month=6, depart_day=2, arrive_month=6, arrive_day=3),
+                TripWrite(sort_order=2, depart_month=6, depart_day=5, arrive_month=6, arrive_day=7),
+            ],
+        ),
+    )
+
+    read_model = ReportRead.model_validate(report)
+
+    assert read_model.trip_start_date == date(2026, 6, 2)
+    assert read_model.trip_end_date == date(2026, 6, 7)
+
+
+def test_list_reports_defaults_to_trip_start_date_desc(db):
+    early_trip = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 30),
+            purpose="较早出差",
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=2, arrive_month=5, arrive_day=3)],
+        ),
+    )
+    no_trip = create_report(db, ReportCreate(report_date=date(2026, 7, 1), purpose="无行程"))
+    late_trip = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 1),
+            purpose="较晚出差",
+            trips=[TripWrite(sort_order=1, depart_month=6, depart_day=20, arrive_month=6, arrive_day=21)],
+        ),
+    )
+
+    items, total = list_reports(db, page=1, page_size=10)
+
+    assert total == 3
+    assert [item.id for item in items] == [late_trip.id, early_trip.id, no_trip.id]
 
 
 def test_list_reports_filters_previous_year_december_trip_from_january_report(db):

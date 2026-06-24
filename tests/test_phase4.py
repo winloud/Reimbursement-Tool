@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -9,7 +10,7 @@ from reportlab.pdfgen import canvas
 
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
-from backend.routers.reports import get_report_pdf
+from backend.routers.reports import get_report_pdf, get_report_pdf_preview
 from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportUpdate, TripWrite
 from backend.services.amount_converter import amount_to_chinese_upper
 from backend.services.pdf_generator import (
@@ -276,15 +277,112 @@ def test_merged_pdf_respects_disabled_vat_special_double_print(monkeypatch, tmp_
     assert len(PdfReader(BytesIO(pdf_bytes)).pages) == 3
 
 
-def test_download_route_marks_draft_report_printed(monkeypatch, tmp_path, db):
-    configure_pdf_paths(monkeypatch, tmp_path)
+def test_download_route_marks_draft_report_printed_and_updates_report_date(monkeypatch, db):
     report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    captured = {}
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    def build_pdf(report_arg, _fill_font_key, _double_print_vat_special_invoices):
+        captured["report_date"] = report_arg.report_date
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
+    monkeypatch.setattr("backend.routers.reports.build_merged_report_pdf", build_pdf)
 
     response = get_report_pdf(report.id, db)
 
     db.refresh(report)
     assert response.media_type == "application/pdf"
     assert report.status == "printed"
+    assert report.report_date == date(2026, 6, 24)
+    assert captured["report_date"] == date(2026, 6, 24)
+    assert "2026-06-24" in response.headers["Content-Disposition"]
+
+
+def test_download_route_preserves_printed_report_date(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    report.status = "printed"
+    db.commit()
+    db.refresh(report)
+    captured = {}
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    def build_pdf(report_arg, _fill_font_key, _double_print_vat_special_invoices):
+        captured["report_date"] = report_arg.report_date
+        return b"%PDF-1.4\n%%EOF"
+
+    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
+    monkeypatch.setattr("backend.routers.reports.build_merged_report_pdf", build_pdf)
+
+    response = get_report_pdf(report.id, db)
+
+    db.refresh(report)
+    assert response.media_type == "application/pdf"
+    assert report.status == "printed"
+    assert report.report_date == date(2026, 6, 4)
+    assert captured["report_date"] == date(2026, 6, 4)
+    assert "2026-06-04" in response.headers["Content-Disposition"]
+
+
+def test_preview_route_updates_report_date_before_render(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    captured = {}
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    def render_pages(report_arg, _fill_font_key):
+        captured["report_date"] = report_arg.report_date
+        return [{"page": 1, "image_url": "data:image/png;base64,abc"}]
+
+    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
+    monkeypatch.setattr("backend.routers.reports.render_report_preview_pages", render_pages)
+
+    response = get_report_pdf_preview(report.id, db)
+
+    db.refresh(report)
+    assert response.data.pages[0].page == 1
+    assert report.status == "draft"
+    assert report.report_date == date(2026, 6, 24)
+    assert captured["report_date"] == date(2026, 6, 24)
+
+
+def test_preview_route_preserves_printed_report_date(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    report.status = "printed"
+    db.commit()
+    db.refresh(report)
+    captured = {}
+
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    def render_pages(report_arg, _fill_font_key):
+        captured["report_date"] = report_arg.report_date
+        return [{"page": 1, "image_url": "data:image/png;base64,abc"}]
+
+    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
+    monkeypatch.setattr("backend.routers.reports.render_report_preview_pages", render_pages)
+
+    response = get_report_pdf_preview(report.id, db)
+
+    db.refresh(report)
+    assert response.data.pages[0].page == 1
+    assert report.status == "printed"
+    assert report.report_date == date(2026, 6, 4)
+    assert captured["report_date"] == date(2026, 6, 4)
 
 
 def test_download_route_uses_vat_special_double_print_setting(monkeypatch, db):

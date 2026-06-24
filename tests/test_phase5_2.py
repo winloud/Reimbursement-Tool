@@ -175,6 +175,52 @@ def test_import_as_new_regenerates_conflicting_uids_and_writes_backup(db, monkey
     assert (project_root / "backend" / imported_invoice.file_path).exists()
 
 
+def test_import_overwrite_creates_safety_snapshot_before_replacing_conflict(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="原始"))
+    attach_invoice(db, project_root, report, content=b"original")
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    snapshot_path = tmp_path / "pre_import_overwrite.zip"
+    snapshot_calls = []
+
+    def fake_snapshot(_db, reason):
+        snapshot_calls.append(reason)
+        snapshot_path.write_bytes(b"snapshot")
+        return SimpleNamespace(path=snapshot_path.as_posix())
+
+    monkeypatch.setattr(data_transfer_service, "create_safety_snapshot", fake_snapshot)
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+
+    result = execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="overwrite"))
+
+    db.refresh(report)
+    assert result.reports_overwritten == 1
+    assert result.backup_path == snapshot_path.as_posix()
+    assert snapshot_calls == ["pre_import_overwrite"]
+    assert report.purpose == "原始"
+
+
+def test_import_overwrite_aborts_when_safety_snapshot_fails(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="原始"))
+    invoice = attach_invoice(db, project_root, report, content=b"original")
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+
+    def fail_snapshot(_db, reason):
+        raise HTTPException(status_code=500, detail=f"{reason} failed")
+
+    monkeypatch.setattr(data_transfer_service, "create_safety_snapshot", fail_snapshot)
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+
+    with pytest.raises(HTTPException):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="overwrite"))
+
+    db.refresh(report)
+    db.refresh(invoice)
+    assert report.purpose == "原始"
+    assert invoice.deleted_at is None
+
+
 def test_import_preview_ignores_soft_deleted_uid_conflicts(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="删除后导入"))

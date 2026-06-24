@@ -20,12 +20,18 @@ from backend.schemas.report import (
     ReportUpdate,
     TripWrite,
 )
+from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.settings_service import get_or_create_settings
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"printed"},
     "printed": {"draft", "reimbursed"},
     "reimbursed": set(),
+}
+REPORT_STATUS_ORDER = {
+    "draft": 0,
+    "printed": 1,
+    "reimbursed": 2,
 }
 
 FUEL_SUBSIDY_CATEGORY = "fuel_subsidy"
@@ -486,6 +492,30 @@ def trip_date_range(report: ExpenseReport, trip: Trip) -> tuple[date, date]:
     return trip_range.depart, trip_range.arrive
 
 
+def report_trip_date_bounds(report: ExpenseReport) -> tuple[date | None, date | None]:
+    if not report.trips:
+        return None, None
+
+    report_reference = report.report_date or date.today()
+    trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    if not trip_ranges:
+        return None, None
+    return min(item.depart for item in trip_ranges), max(item.arrive for item in trip_ranges)
+
+
+def mark_report_pdf_exported(
+    report: ExpenseReport,
+    exported_on: date | None = None,
+    *,
+    mark_printed: bool = False,
+) -> None:
+    if report.status != "draft":
+        return
+    report.report_date = exported_on or date.today()
+    if mark_printed:
+        report.status = "printed"
+
+
 def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
     if trip_start is None and trip_end is None:
         return True
@@ -592,6 +622,22 @@ def list_report_category_options(db: Session) -> list[dict[str, str]]:
     return options
 
 
+def _date_sort_value(value: date | None) -> int:
+    return value.toordinal() if value else -1
+
+
+def _datetime_sort_value(value: datetime | None) -> float:
+    return value.timestamp() if value else -1
+
+
+def _report_trip_start_desc_key(report: ExpenseReport) -> tuple[int, int, float]:
+    return (
+        _date_sort_value(report.trip_start_date),
+        _date_sort_value(report.report_date),
+        _datetime_sort_value(report.created_at),
+    )
+
+
 def list_reports(
     db: Session,
     page: int = 1,
@@ -627,6 +673,8 @@ def list_reports(
         for report in db.scalars(statement).all()
         if report_matches_filters(report, filters, include_deleted_invoices=deleted_only)
     ]
+    if not deleted_only:
+        all_items.sort(key=_report_trip_start_desc_key, reverse=True)
     total = len(all_items)
     start = (page - 1) * page_size
     return all_items[start : start + page_size], total
@@ -737,6 +785,8 @@ def purge_report(db: Session, report_id: int) -> int:
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     validate_status_transition(report.status, target_status)
+    if REPORT_STATUS_ORDER.get(target_status, 0) < REPORT_STATUS_ORDER.get(report.status, 0):
+        create_safety_snapshot(db, reason="pre_status_rollback")
     report.status = target_status
     db.commit()
     db.refresh(report)

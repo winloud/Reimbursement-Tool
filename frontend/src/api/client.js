@@ -93,6 +93,11 @@ export const createMaintenanceBackup = async () => {
   return response.data;
 };
 
+export const checkMaintenanceDatabase = async () => {
+  const response = await apiClient.get("/api/maintenance/database-check", { timeout: 120000 });
+  return response.data;
+};
+
 export const downloadMaintenanceBackup = async (backupId) => {
   try {
     const response = await apiClient.get(`/api/maintenance/backups/${encodeURIComponent(backupId)}/download`, {
@@ -107,12 +112,29 @@ export const downloadMaintenanceBackup = async (backupId) => {
   }
 };
 
+export const deleteMaintenanceBackup = async (backupId) => {
+  const response = await apiClient.delete(`/api/maintenance/backups/${encodeURIComponent(backupId)}`, {
+    data: { confirm_delete: true },
+  });
+  return response.data;
+};
+
+export const cleanupMaintenanceBackups = async () => {
+  const response = await apiClient.post("/api/maintenance/backups/cleanup", { confirm_cleanup: true });
+  return response.data;
+};
+
 export const previewMaintenanceRestore = async (file) => {
   const formData = new FormData();
   formData.append("file", file);
   const response = await apiClient.post("/api/maintenance/restore/preview", formData, {
     headers: { "Content-Type": "multipart/form-data" },
   });
+  return response.data;
+};
+
+export const previewMaintenanceRestoreFromBackupDialog = async () => {
+  const response = await apiClient.post("/api/maintenance/restore/dialog-preview", null, { timeout: 0 });
   return response.data;
 };
 
@@ -136,6 +158,29 @@ export const executeMaintenanceUpdate = async (payload) => {
   return response.data;
 };
 
+export const switchMaintenanceVersion = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
+  return response.data;
+};
+
+export const deleteMaintenanceVersion = async (version) => {
+  const response = await apiClient.delete(`/api/maintenance/versions/${encodeURIComponent(version)}`, {
+    data: { confirm_delete: true },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const cleanupMaintenanceVersions = async () => {
+  const response = await apiClient.post("/api/maintenance/versions/cleanup", { confirm_cleanup: true }, { timeout: 120000 });
+  return response.data;
+};
+
+export const restartMaintenanceApp = async () => {
+  const response = await apiClient.post("/api/maintenance/restart", null, { timeout: 5000 });
+  return response.data;
+};
+
 export const downloadMaintenanceDiagnostics = async () => {
   try {
     const response = await apiClient.get("/api/maintenance/diagnostics", {
@@ -143,7 +188,7 @@ export const downloadMaintenanceDiagnostics = async () => {
     });
     return {
       blob: response.data,
-      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".json"),
+      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
     };
   } catch (err) {
     return normalizeBlobError(err);

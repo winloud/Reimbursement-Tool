@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 
 import desktop_dependencies
@@ -109,6 +110,31 @@ def test_chromium_app_window_reuses_stable_profile_and_removes_legacy_profiles(m
     assert (tmp_path / "browser-profile").is_dir()
     assert not legacy_profile.exists()
     assert unrelated_dir.exists()
+
+
+def test_chromium_app_window_publishes_browser_pid_during_run(monkeypatch, tmp_path):
+    captured = {}
+
+    class FakeProcess:
+        pid = 4321
+        returncode = 0
+
+    def fake_popen(_args, **_kwargs):
+        return FakeProcess()
+
+    def fake_wait(_process):
+        captured["browser_pid"] = os.environ.get(desktop_app.DESKTOP_BROWSER_PID_ENV)
+
+    monkeypatch.setattr(desktop_app, "APP_ROOT", tmp_path)
+    monkeypatch.setattr(desktop_app, "LOG_DIR", tmp_path / "logs")
+    monkeypatch.setattr(desktop_app, "find_chromium_browser", lambda: ("Google Chrome", tmp_path / "chrome.exe"))
+    monkeypatch.setattr(desktop_app.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(desktop_app, "wait_for_chromium_process", fake_wait)
+
+    desktop_app.run_chromium_app_window("http://127.0.0.1:34567")
+
+    assert captured["browser_pid"] == "4321"
+    assert os.environ.get(desktop_app.DESKTOP_BROWSER_PID_ENV) is None
 
 
 def test_chromium_process_polling_captures_window_state_until_exit(monkeypatch):

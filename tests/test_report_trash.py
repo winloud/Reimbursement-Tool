@@ -9,6 +9,7 @@ from sqlalchemy import select
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.schemas.report import ReportCreate
+from backend.services import report_batch_service
 from backend.services import report_service
 from backend.services.report_batch_service import batch_purge_reports, batch_restore_deleted_reports
 from backend.services.report_service import (
@@ -143,6 +144,12 @@ def test_purge_rejects_unsafe_attachment_path(monkeypatch, tmp_path, db):
 
 
 def test_batch_restore_and_purge_return_counts(monkeypatch, tmp_path, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
     project_root = configure_upload_paths(monkeypatch, tmp_path)
     restore_target = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="批量恢复"))
     purge_target = create_report(db, ReportCreate(report_date=date(2026, 6, 2), purpose="批量彻底删除"))
@@ -162,3 +169,22 @@ def test_batch_restore_and_purge_return_counts(monkeypatch, tmp_path, db):
     assert purge_result.files_deleted_count == 1
     assert db.get(ExpenseReport, restore_target.id).deleted_at is None
     assert db.get(ExpenseReport, purge_target.id) is None
+    assert snapshot_reasons == ["pre_batch_purge"]
+
+
+def test_batch_purge_aborts_when_snapshot_fails(monkeypatch, tmp_path, db):
+    project_root = configure_upload_paths(monkeypatch, tmp_path)
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 2), purpose="批量彻底删除失败"))
+    invoice = attach_invoice(db, project_root, report)
+    attachment_path = project_root / "backend" / invoice.file_path
+
+    def fail_snapshot(_db, reason):
+        raise HTTPException(status_code=500, detail=f"{reason} failed")
+
+    monkeypatch.setattr(report_batch_service, "create_safety_snapshot", fail_snapshot)
+
+    with pytest.raises(HTTPException):
+        batch_purge_reports(db, [report.id])
+
+    assert db.get(ExpenseReport, report.id) is not None
+    assert attachment_path.exists()
