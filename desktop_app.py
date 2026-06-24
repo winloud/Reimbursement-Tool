@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -316,6 +317,7 @@ def run_desktop_window(base_url: str) -> None:
 
 
 def run_desktop_app() -> None:
+    os.environ["REIMBURSEMENT_DESKTOP_MODE"] = "1"
     configure_logging()
     ensure_runtime_dependencies()
     logging.info(

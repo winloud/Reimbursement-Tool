@@ -203,6 +203,48 @@ def test_execute_restore_creates_pre_restore_backup_and_restores_data(monkeypatc
     assert fake_db.migrate_calls == 1
 
 
+def test_restore_dialog_preview_uses_backup_dir_as_initial_path(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(maintenance_service.sys, "platform", "win32")
+    monkeypatch.setenv("REIMBURSEMENT_DESKTOP_MODE", "1")
+    write_database(paths["database"], "backup")
+    backup = maintenance_service.create_backup(reason="manual")
+    captured: dict[str, Path | str] = {}
+
+    def fake_file_dialog(initial_dir: Path, title: str) -> Path:
+        captured["initial_dir"] = initial_dir
+        captured["title"] = title
+        return Path(backup.path)
+
+    monkeypatch.setattr(maintenance_service, "_open_windows_zip_file_dialog", fake_file_dialog)
+
+    result = maintenance_service.create_restore_preview_from_backup_dialog()
+
+    assert result.selected is True
+    assert result.filename == backup.filename
+    assert result.preview is not None
+    assert result.preview.database_included is True
+    assert captured["initial_dir"] == paths["backups"]
+    assert captured["title"] == "选择备份 ZIP"
+
+
+def test_restore_dialog_preview_returns_unselected_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    configure_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(maintenance_service.sys, "platform", "win32")
+    monkeypatch.setenv("REIMBURSEMENT_DESKTOP_MODE", "1")
+    monkeypatch.setattr(maintenance_service, "_open_windows_zip_file_dialog", lambda _initial_dir, _title: None)
+
+    result = maintenance_service.create_restore_preview_from_backup_dialog()
+
+    assert result.selected is False
+    assert result.filename is None
+    assert result.preview is None
+
+
 def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
     monkeypatch.setattr(maintenance_service, "is_webview2_available", lambda: True)

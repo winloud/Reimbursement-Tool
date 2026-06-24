@@ -121,6 +121,11 @@ export const previewMaintenanceRestore = async (file) => {
   return response.data;
 };
 
+export const previewMaintenanceRestoreFromBackupDialog = async () => {
+  const response = await apiClient.post("/api/maintenance/restore/dialog-preview", null, { timeout: 0 });
+  return response.data;
+};
+
 export const executeMaintenanceRestore = async (payload) => {
   const response = await apiClient.post("/api/maintenance/restore/execute", payload);
   return response.data;

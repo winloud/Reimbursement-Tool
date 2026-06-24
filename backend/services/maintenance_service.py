@@ -29,6 +29,7 @@ from backend.schemas.maintenance import (
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
     MaintenanceInfoRead,
+    RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestorePreviewRead,
     UpdateExecuteRead,
@@ -953,6 +954,102 @@ def get_backup_file(backup_id: str) -> Path:
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="备份不存在")
     return path
+
+
+def _desktop_file_dialog_enabled() -> bool:
+    return sys.platform == "win32" and (
+        os.environ.get("REIMBURSEMENT_DESKTOP_MODE") == "1" or bool(getattr(sys, "frozen", False))
+    )
+
+
+def _open_windows_zip_file_dialog(initial_dir: Path, title: str) -> Path | None:
+    if sys.platform != "win32":
+        raise RuntimeError("Windows file dialog is not available on this platform")
+
+    import ctypes
+    from ctypes import wintypes
+
+    class OpenFileNameW(ctypes.Structure):
+        _fields_ = [
+            ("lStructSize", wintypes.DWORD),
+            ("hwndOwner", wintypes.HWND),
+            ("hInstance", wintypes.HINSTANCE),
+            ("lpstrFilter", wintypes.LPCWSTR),
+            ("lpstrCustomFilter", wintypes.LPWSTR),
+            ("nMaxCustFilter", wintypes.DWORD),
+            ("nFilterIndex", wintypes.DWORD),
+            ("lpstrFile", wintypes.LPWSTR),
+            ("nMaxFile", wintypes.DWORD),
+            ("lpstrFileTitle", wintypes.LPWSTR),
+            ("nMaxFileTitle", wintypes.DWORD),
+            ("lpstrInitialDir", wintypes.LPCWSTR),
+            ("lpstrTitle", wintypes.LPCWSTR),
+            ("Flags", wintypes.DWORD),
+            ("nFileOffset", wintypes.WORD),
+            ("nFileExtension", wintypes.WORD),
+            ("lpstrDefExt", wintypes.LPCWSTR),
+            ("lCustData", wintypes.LPARAM),
+            ("lpfnHook", ctypes.c_void_p),
+            ("lpTemplateName", wintypes.LPCWSTR),
+            ("pvReserved", ctypes.c_void_p),
+            ("dwReserved", wintypes.DWORD),
+            ("FlagsEx", wintypes.DWORD),
+        ]
+
+    file_buffer = ctypes.create_unicode_buffer(32768)
+    file_filter = "ZIP 文件 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0\0"
+    ofn = OpenFileNameW()
+    ofn.lStructSize = ctypes.sizeof(OpenFileNameW)
+    ofn.lpstrFilter = file_filter
+    ofn.nFilterIndex = 1
+    ofn.lpstrFile = file_buffer
+    ofn.nMaxFile = len(file_buffer)
+    ofn.lpstrInitialDir = initial_dir.as_posix()
+    ofn.lpstrTitle = title
+    ofn.lpstrDefExt = "zip"
+    ofn.Flags = 0x00000008 | 0x00000800 | 0x00001000 | 0x00080000
+
+    comdlg32 = ctypes.windll.comdlg32
+    comdlg32.GetOpenFileNameW.argtypes = [ctypes.POINTER(OpenFileNameW)]
+    comdlg32.GetOpenFileNameW.restype = wintypes.BOOL
+    comdlg32.CommDlgExtendedError.restype = wintypes.DWORD
+    if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+        return Path(file_buffer.value)
+
+    error_code = int(comdlg32.CommDlgExtendedError())
+    if error_code == 0:
+        return None
+    raise RuntimeError(f"Windows file dialog failed: {error_code}")
+
+
+def _open_backup_zip_file_dialog() -> Path | None:
+    if not _desktop_file_dialog_enabled():
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="本地文件选择器仅在桌面版可用")
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    return _open_windows_zip_file_dialog(BACKUP_ROOT, "选择备份 ZIP")
+
+
+def create_restore_preview_from_path(package_source_path: Path) -> RestorePreviewRead:
+    if not package_source_path.exists() or not package_source_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="备份文件不存在")
+
+    preview_id = uuid4().hex
+    preview_dir = RESTORE_STAGING_ROOT / preview_id
+    preview_dir.mkdir(parents=True, exist_ok=False)
+    package_path = preview_dir / "backup.zip"
+    shutil.copy2(package_source_path, package_path)
+
+    manifest, archive = _load_valid_backup(package_path)
+    archive.close()
+    return _preview_from_manifest(preview_id, package_path, manifest)
+
+
+def create_restore_preview_from_backup_dialog() -> RestoreDialogPreviewRead:
+    selected_path = _open_backup_zip_file_dialog()
+    if selected_path is None:
+        return RestoreDialogPreviewRead(selected=False)
+    preview = create_restore_preview_from_path(selected_path)
+    return RestoreDialogPreviewRead(selected=True, filename=selected_path.name, preview=preview)
 
 
 def create_restore_preview(upload_file: UploadFile) -> RestorePreviewRead:

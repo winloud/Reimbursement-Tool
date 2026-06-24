@@ -11,6 +11,7 @@ from backend.schemas.maintenance import (
     BackupRead,
     DatabaseIntegrityCheckRead,
     MaintenanceInfoRead,
+    RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestoreExecuteRequest,
     RestorePreviewRead,
@@ -23,6 +24,7 @@ from backend.services.maintenance_service import (
     check_database_integrity,
     create_backup,
     create_restore_preview,
+    create_restore_preview_from_backup_dialog,
     create_update_preview,
     execute_restore,
     execute_update,
@@ -63,6 +65,13 @@ def download_backup(backup_id: str) -> FileResponse:
 @router.post("/restore/preview", response_model=ApiResponse[RestorePreviewRead])
 def post_restore_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[RestorePreviewRead]:
     return ApiResponse(data=create_restore_preview(file), message="恢复预览已生成")
+
+
+@router.post("/restore/dialog-preview", response_model=ApiResponse[RestoreDialogPreviewRead])
+def post_restore_dialog_preview() -> ApiResponse[RestoreDialogPreviewRead]:
+    result = create_restore_preview_from_backup_dialog()
+    message = "恢复预览已生成" if result.selected else "已取消选择备份"
+    return ApiResponse(data=result, message=message)
 
 
 @router.post("/restore/execute", response_model=ApiResponse[RestoreExecuteRead])

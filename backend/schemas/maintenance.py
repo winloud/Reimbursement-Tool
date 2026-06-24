@@ -98,6 +98,12 @@ class RestorePreviewRead(BaseModel):
     vendor_files: int = 0
 
 
+class RestoreDialogPreviewRead(BaseModel):
+    selected: bool = False
+    filename: str | None = None
+    preview: RestorePreviewRead | None = None
+
+
 class RestoreExecuteRequest(BaseModel):
     preview_id: str
     confirm_restore: bool = False

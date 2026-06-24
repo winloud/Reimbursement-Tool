@@ -27,6 +27,7 @@ import {
   getMaintenanceInfo,
   previewMaintenanceUpdate,
   previewMaintenanceRestore,
+  previewMaintenanceRestoreFromBackupDialog,
 } from "../api/client";
 import {
   browserRuntimeSummary,
@@ -56,6 +57,11 @@ const cardContentSx = {
 
 const getApiErrorMessage = (err, fallback) =>
   err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
+
+const shouldFallbackToBrowserFilePicker = (err) => {
+  const status = err.response?.status;
+  return !status || status >= 500 || [404, 405].includes(status);
+};
 
 const saveBlob = ({ blob, filename }) => {
   const url = URL.createObjectURL(blob);
@@ -178,8 +184,34 @@ export default function MaintenancePanel() {
     }
   };
 
-  const handleChooseRestoreFile = () => {
+  const openBrowserRestoreFilePicker = () => {
     fileInputRef.current?.click();
+  };
+
+  const handleChooseRestoreFile = async () => {
+    setBusy("preview");
+    setError("");
+    try {
+      const res = await previewMaintenanceRestoreFromBackupDialog();
+      if (!res.success) {
+        setError(res.message || "恢复预览失败");
+        return;
+      }
+      if (!res.data?.selected) {
+        return;
+      }
+      setRestoreFile({ name: res.data.filename || "backup.zip" });
+      setRestorePreview(res.data.preview);
+    } catch (err) {
+      if (shouldFallbackToBrowserFilePicker(err)) {
+        setBusy("");
+        openBrowserRestoreFilePicker();
+        return;
+      }
+      setError(getApiErrorMessage(err, "恢复预览失败"));
+    } finally {
+      setBusy("");
+    }
   };
 
   const handleChooseUpdateFile = () => {

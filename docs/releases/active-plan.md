@@ -77,6 +77,7 @@
 - 新增数据库完整性检查：覆盖 SQLite 物理完整性、外键一致性、重复 UID、无效状态、孤儿记录、软删除不一致、发票与行程所属报销单不一致、未知费用类别和发票附件缺失/越界。
 - 数据维护页面新增“检查数据库”入口，并展示检查状态、表数量、问题数量和前几条问题摘要；诊断包附带数据库检查摘要。
 - 新增 `create_safety_snapshot()` 自动快照守门：批量软删除、批量彻底删除、导入覆盖和 `printed -> draft` 状态回退前先尝试创建完整备份；快照失败则中止原操作。
+- 桌面本地模式新增备份 ZIP 原生选择器：从数据维护页选择备份恢复时，优先打开 Windows 文件选择窗口并默认定位到应用备份目录；非桌面环境或原生选择器不可用时退回浏览器文件选择。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -140,6 +141,11 @@
 - [x] 数据维护独立页面前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
 - [x] 数据维护独立页面前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] 数据维护独立页面云端 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28102911199` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260624-001`，大小约 45.39 MB，保留至 2026-07-08。
+- [x] 备份选择器默认路径后端语法检查：`python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py desktop_app.py tests\test_maintenance_service.py` 通过。
+- [x] 备份选择器默认路径后端定向测试：`python -m pytest tests\test_maintenance_service.py`，12 passed。
+- [x] 备份选择器默认路径前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 备份选择器默认路径前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 备份选择器默认路径 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护独立页面、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
+- 已在 Unreleased 记录数据维护独立页面、备份选择器默认打开备份目录、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
