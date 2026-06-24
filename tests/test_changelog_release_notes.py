@@ -49,7 +49,7 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "gh release create" in workflow
     assert "release-notes.md" in workflow
     assert "-BuildOpenCvRuntime" in workflow
-    assert "-ReleaseDate $env:RELEASE_DATE" in workflow
+    assert '"-ReleaseDate", $env:RELEASE_DATE' in workflow
     assert "China Standard Time" in workflow
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
@@ -72,7 +72,7 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
     assert "Expand-Archive -LiteralPath $previewZip.FullName" in workflow
     assert "Expanded preview artifact payload is missing portable-release.json." in workflow
     assert "artifact_path=release/preview-artifact-payload/*" in workflow
-    assert "actions/upload-artifact@v4" in workflow
+    assert "actions/upload-artifact@v7" in workflow
     assert "retention-days: 14" in workflow
     assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow
     assert "gh release create" not in workflow

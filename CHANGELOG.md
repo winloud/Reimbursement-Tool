@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## v1.2.1 - 2026-06-25
+
 ### Added
 
 - 新增 `scripts/prepare_release.ps1` 发布预检脚本，用于在不重复本地正式打包的情况下校验版本号、CHANGELOG、README、冻结计划、release notes、测试和 diff。
