@@ -52,6 +52,16 @@ v1.2.0 的 GitHub Release workflow 用时约 3m16s：
 
 总体发布体感较长主要来自本地重复测试、重复构建正式 ZIP、等待远端 workflow，以及发布后补验证记录。后续发布默认走“本地预检 + 远端打包”的快速路径。
 
+v1.2.1 的 GitHub Release workflow run `28121701414` 成功，但没有变快，run 总耗时 `266s`，job 用时 `4m21s`：
+
+- 前端依赖安装 `30s`，略快于 v1.2.0 的 `34s`。
+- 后端测试依赖安装 `73s`，慢于 v1.2.0 的 `27s`；本次 pip cache 首次未命中，run 结束后才写入缓存。
+- 测试 `17s`，慢于 v1.2.0 的 `9s`。
+- OpenCV runtime 成功从 v1.2.0 Release 复用，新增恢复步骤 `13s`，主构建从 `84s` 降到 `78s`。
+- 发布资产 `8s`，与 v1.2.0 的 `7s` 基本一致。
+
+结论：runtime 复用已生效，但本次收益被首次 cache miss 和后端依赖安装波动抵消；下一次发布需要继续观察 pip/npm cache 命中后的真实耗时。
+
 ## 后续可选优化
 
 - 正式发布 workflow 已复用既有 OpenCV runtime 资产；只有找不到匹配 `opencv-contrib-python-headless` 版本的资产时才重建。
