@@ -19,6 +19,8 @@ from backend.schemas.maintenance import (
     UpdateExecuteRead,
     UpdateExecuteRequest,
     UpdatePreviewRead,
+    VersionSwitchRead,
+    VersionSwitchRequest,
 )
 from backend.services.maintenance_service import (
     build_diagnostics_package,
@@ -33,6 +35,7 @@ from backend.services.maintenance_service import (
     get_maintenance_info,
     list_backups,
     request_application_restart,
+    switch_installed_version,
 )
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
@@ -89,6 +92,11 @@ def post_update_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[Upda
 @router.post("/updates/execute", response_model=ApiResponse[UpdateExecuteRead])
 def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExecuteRead]:
     return ApiResponse(data=execute_update(payload.preview_id, payload.confirm_update), message="更新已安装，重启后生效")
+
+
+@router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])
+def post_version_switch(payload: VersionSwitchRequest) -> ApiResponse[VersionSwitchRead]:
+    return ApiResponse(data=switch_installed_version(payload.version, payload.confirm_switch), message="版本已切换，重启后生效")
 
 
 @router.post("/restart", response_model=ApiResponse[RestartRead])

@@ -55,13 +55,14 @@ def configure_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[s
     return paths
 
 
-def write_database(path: Path, value: str) -> None:
+def write_database(path: Path, value: str, data_schema_version: int = maintenance_service.DATA_SCHEMA_VERSION) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     connection = sqlite3.connect(path)
     try:
         connection.execute("CREATE TABLE IF NOT EXISTS sample (value TEXT)")
         connection.execute("DELETE FROM sample")
         connection.execute("INSERT INTO sample (value) VALUES (?)", (value,))
+        connection.execute(f"PRAGMA user_version = {data_schema_version}")
         connection.commit()
     finally:
         connection.close()
@@ -111,7 +112,41 @@ def upload_file_from_bytes(payload: bytes, filename: str = "backup.zip") -> Uplo
     return UploadFile(file=BytesIO(payload), filename=filename)
 
 
-def make_portable_release_zip(version: str = "1.2.0") -> bytes:
+def write_version_manifest(
+    app_root: Path,
+    version: str,
+    *,
+    data_schema_version: int = maintenance_service.DATA_SCHEMA_VERSION,
+    min_supported_data_schema_version: int = maintenance_service.MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+    max_supported_data_schema_version: int = maintenance_service.MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+) -> None:
+    version_dir = app_root / "versions" / version
+    version_dir.mkdir(parents=True, exist_ok=True)
+    (version_dir / "portable-release.json").write_text(
+        json.dumps(
+            {
+                "schema_version": maintenance_service.UPDATE_SCHEMA_VERSION,
+                "package_type": "reimbursement_portable_release",
+                "app_version": version,
+                "app_dir": "报销管理",
+                "data_schema_version": data_schema_version,
+                "min_supported_data_schema_version": min_supported_data_schema_version,
+                "max_supported_data_schema_version": max_supported_data_schema_version,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def make_portable_release_zip(
+    version: str = "1.2.0",
+    *,
+    include_data_compatibility: bool = True,
+    data_schema_version: int = maintenance_service.DATA_SCHEMA_VERSION,
+    min_supported_data_schema_version: int = maintenance_service.MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+    max_supported_data_schema_version: int = maintenance_service.MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+) -> bytes:
     payload = BytesIO()
     manifest = {
         "schema_version": maintenance_service.UPDATE_SCHEMA_VERSION,
@@ -121,6 +156,21 @@ def make_portable_release_zip(version: str = "1.2.0") -> bytes:
         "executable_path": f"报销管理/versions/{version}/报销管理.exe",
     }
     current = {"current_version": version}
+    if include_data_compatibility:
+        manifest.update(
+            {
+                "data_schema_version": data_schema_version,
+                "min_supported_data_schema_version": min_supported_data_schema_version,
+                "max_supported_data_schema_version": max_supported_data_schema_version,
+            }
+        )
+        current.update(
+            {
+                "data_schema_version": data_schema_version,
+                "min_supported_data_schema_version": min_supported_data_schema_version,
+                "max_supported_data_schema_version": max_supported_data_schema_version,
+            }
+        )
     with zipfile.ZipFile(payload, mode="w") as archive:
         archive.writestr("portable-release.json", json.dumps(manifest, ensure_ascii=False))
         archive.writestr("报销管理/portable-release.json", json.dumps(manifest, ensure_ascii=False))
@@ -129,6 +179,8 @@ def make_portable_release_zip(version: str = "1.2.0") -> bytes:
         archive.writestr("报销管理/zip-upgrade-guide.md", "guide")
         archive.writestr(f"报销管理/versions/{version}/", b"")
         archive.writestr(f"报销管理/versions/{version}/报销管理.exe", b"app exe")
+        if include_data_compatibility:
+            archive.writestr(f"报销管理/versions/{version}/portable-release.json", json.dumps(manifest, ensure_ascii=False))
         archive.writestr(f"报销管理/versions/{version}/_internal/frontend/dist/index.html", b"html")
     return payload.getvalue()
 
@@ -252,6 +304,11 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     monkeypatch.setattr(maintenance_service, "get_installed_opencv_runtime", lambda: None)
     monkeypatch.setattr(maintenance_service, "wechat_model_paths", lambda: {})
     write_database(paths["database"], "backup")
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
     backup = maintenance_service.create_backup(reason="manual")
 
     info = maintenance_service.get_maintenance_info()
@@ -259,9 +316,12 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.database_exists is True
     assert info.database_path == paths["database"].as_posix()
     assert info.backups[0].backup_id == backup.backup_id
+    assert {version.version for version in info.installed_versions} == {"1.1.1", "1.2.0"}
+    assert [version for version in info.installed_versions if version.current][0].version == "1.2.0"
     assert info.qr_engine.selected_engine == "zxing"
     assert info.browser_runtime.webview2_available is True
     assert info.browser_runtime.chromium_name == "Google Chrome"
+    assert all(version.data_compatibility is not None for version in info.installed_versions)
 
 
 def test_database_integrity_check_reports_business_and_attachment_issues(
@@ -340,6 +400,24 @@ def test_update_preview_validates_portable_release_package(monkeypatch: pytest.M
     assert preview.app_version == "1.2.0"
     assert preview.package_format == "reimbursement_portable_release"
     assert preview.executable_path == "versions/1.2.0/报销管理.exe"
+    assert preview.data_compatibility.status == "compatible"
+
+
+def test_update_preview_marks_missing_data_compatibility_as_unknown(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    configure_runtime(monkeypatch, tmp_path)
+    write_database(tmp_path / "app" / "data" / "expense.db", "current")
+
+    preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(
+            make_portable_release_zip("1.2.0", include_data_compatibility=False),
+            "release.zip",
+        )
+    )
+
+    assert preview.data_compatibility.status == "unknown"
+    assert "缺少数据兼容性信息" in preview.data_compatibility.message
 
 
 def test_update_preview_rejects_malicious_zip_path(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -381,10 +459,49 @@ def test_execute_update_installs_new_version_and_creates_pre_update_backup(monke
     assert result.previous_version == "1.1.1"
     assert result.pre_update_backup.filename.startswith("pre_update_")
     assert (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").read_bytes() == b"app exe"
+    assert (paths["app_root"] / "versions" / "1.2.0" / "portable-release.json").is_file()
     assert (paths["app_root"] / "报销管理.exe").read_bytes() == b"launcher"
     assert (paths["app_root"] / "zip-upgrade-guide.md").read_text(encoding="utf-8") == "guide"
     current = json.loads((paths["app_root"] / "current-version.json").read_text(encoding="utf-8"))
     assert current["current_version"] == "1.2.0"
+    assert current["data_schema_version"] == maintenance_service.DATA_SCHEMA_VERSION
+
+
+def test_execute_update_refuses_unknown_data_compatibility(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_database(paths["database"], "current")
+    paths["app_root"].mkdir(parents=True, exist_ok=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.1.1"}', encoding="utf-8")
+    preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0", include_data_compatibility=False), "release.zip")
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.execute_update(preview.preview_id, confirm_update=True)
+
+    assert exc_info.value.status_code == 400
+    assert "缺少数据兼容性信息" in exc_info.value.detail
+
+
+def test_execute_update_refuses_incompatible_data_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_database(paths["database"], "current", data_schema_version=2)
+    paths["app_root"].mkdir(parents=True, exist_ok=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.1.1"}', encoding="utf-8")
+    preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(
+            make_portable_release_zip("1.2.0", data_schema_version=1, min_supported_data_schema_version=1, max_supported_data_schema_version=1),
+            "release.zip",
+        )
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.execute_update(preview.preview_id, confirm_update=True)
+
+    assert exc_info.value.status_code == 400
+    assert "不在 1.2.0 支持范围" in exc_info.value.detail
 
 
 def test_execute_update_refuses_existing_version_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -398,6 +515,89 @@ def test_execute_update_refuses_existing_version_directory(monkeypatch: pytest.M
         maintenance_service.execute_update(preview.preview_id, confirm_update=True)
 
     assert exc_info.value.status_code == 409
+
+
+def test_switch_installed_version_updates_current_version_and_creates_backup(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_database(paths["database"], "current")
+    paths["app_root"].mkdir(parents=True, exist_ok=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")
+    write_version_manifest(paths["app_root"], "1.1.1")
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    result = maintenance_service.switch_installed_version("1.1.1", confirm_switch=True)
+
+    assert result.switched is True
+    assert result.app_version == "1.1.1"
+    assert result.previous_version == "1.2.0"
+    assert result.pre_switch_backup.filename.startswith("pre_version_switch_")
+    current = json.loads((paths["app_root"] / "current-version.json").read_text(encoding="utf-8"))
+    assert current["current_version"] == "1.1.1"
+    assert current["previous_version"] == "1.2.0"
+    assert current["data_schema_version"] == maintenance_service.DATA_SCHEMA_VERSION
+    assert "switched_at" in current
+
+
+def test_switch_installed_version_refuses_unknown_data_compatibility(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_database(paths["database"], "current")
+    paths["app_root"].mkdir(parents=True, exist_ok=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.switch_installed_version("1.1.1", confirm_switch=True)
+
+    assert exc_info.value.status_code == 400
+    assert "缺少数据兼容性信息" in exc_info.value.detail
+
+
+def test_switch_installed_version_refuses_incompatible_data_schema(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_database(paths["database"], "current", data_schema_version=2)
+    paths["app_root"].mkdir(parents=True, exist_ok=True)
+    (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")
+    write_version_manifest(
+        paths["app_root"],
+        "1.1.1",
+        data_schema_version=1,
+        min_supported_data_schema_version=1,
+        max_supported_data_schema_version=1,
+    )
+    (paths["app_root"] / "versions" / "1.2.0").mkdir(parents=True)
+    (paths["app_root"] / "versions" / "1.2.0" / "报销管理.exe").write_bytes(b"new exe")
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.switch_installed_version("1.1.1", confirm_switch=True)
+
+    assert exc_info.value.status_code == 400
+    assert "不在 1.1.1 支持范围" in exc_info.value.detail
+
+
+def test_switch_installed_version_rejects_missing_version(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    paths["app_root"].mkdir(parents=True)
+    (paths["app_root"] / "versions").mkdir()
+    (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.switch_installed_version("1.1.1", confirm_switch=True)
+
+    assert exc_info.value.status_code == 404
 
 
 def test_request_application_restart_schedules_launcher(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -418,6 +618,69 @@ def test_request_application_restart_schedules_launcher(monkeypatch: pytest.Monk
     assert result.restart_scheduled is True
     assert result.launcher_path == launcher.as_posix()
     assert scheduled == [launcher]
+
+
+def test_schedule_application_restart_closes_old_window_before_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    calls = []
+    captured_thread = {}
+    launcher = tmp_path / "报销管理.exe"
+    launcher.write_bytes(b"launcher")
+
+    class ImmediateThread:
+        def __init__(self, target, name, daemon):
+            self.target = target
+            captured_thread["name"] = name
+            captured_thread["daemon"] = daemon
+
+        def start(self):
+            self.target()
+
+    def fake_popen(args, **kwargs):
+        calls.append(("popen", args, kwargs))
+        return object()
+
+    def fake_exit(code):
+        calls.append(("exit", code))
+        raise SystemExit(code)
+
+    monkeypatch.setattr(maintenance_service.threading, "Thread", ImmediateThread)
+    monkeypatch.setattr(maintenance_service.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
+    monkeypatch.setattr(maintenance_service, "_close_desktop_browser_window", lambda: calls.append("close_window") or True)
+    monkeypatch.setattr(maintenance_service.subprocess, "Popen", fake_popen)
+    monkeypatch.setattr(maintenance_service.os, "_exit", fake_exit)
+
+    with pytest.raises(SystemExit):
+        maintenance_service._schedule_application_restart(launcher, delay_seconds=0.1)
+
+    assert captured_thread == {"name": "maintenance-restart", "daemon": False}
+    assert calls[0] == ("sleep", 0.1)
+    assert calls[1] == "close_window"
+    assert calls[2][0] == "popen"
+    assert calls[2][1] == [str(launcher)]
+    assert calls[3] == ("exit", 0)
+
+
+def test_close_desktop_browser_window_uses_recorded_pid(monkeypatch: pytest.MonkeyPatch):
+    calls = []
+    monkeypatch.setenv(maintenance_service.DESKTOP_BROWSER_PID_ENV, "4321")
+    monkeypatch.setattr(
+        maintenance_service,
+        "_post_close_to_process_windows",
+        lambda pid: calls.append(("post", pid)) or 1,
+    )
+    monkeypatch.setattr(
+        maintenance_service,
+        "_wait_for_process_exit",
+        lambda pid, seconds: calls.append(("wait", pid, seconds)) or True,
+    )
+    monkeypatch.setattr(
+        maintenance_service,
+        "_terminate_process_tree",
+        lambda pid: calls.append(("terminate", pid)) or True,
+    )
+
+    assert maintenance_service._close_desktop_browser_window() is True
+    assert calls == [("post", 4321), ("wait", 4321, 4.0)]
 
 
 def test_request_application_restart_rejects_non_desktop_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

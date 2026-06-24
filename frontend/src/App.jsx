@@ -28,8 +28,8 @@ import SettingsPage from "./pages/SettingsPage";
 const NAV_ITEMS = [
   { label: "总览看板", to: "/", icon: <DashboardIcon fontSize="small" /> },
   { label: "报销单管理", to: "/reports", icon: <ReceiptLongIcon fontSize="small" /> },
-  { label: "数据维护", to: "/maintenance", icon: <StorageIcon fontSize="small" /> },
   { label: "个性化设置", to: "/settings", icon: <SettingsIcon fontSize="small" /> },
+  { label: "数据维护", to: "/maintenance", icon: <StorageIcon fontSize="small" /> },
 ];
 
 const APP_CONTENT_MAX_WIDTH = 1440;

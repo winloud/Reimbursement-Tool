@@ -23,14 +23,21 @@ from sqlalchemy.orm import Session
 
 from backend.app_metadata import APP_VERSION
 from backend.database import connection as db_connection
+from backend.data_schema import (
+    DATA_SCHEMA_VERSION,
+    MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+    MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+)
 from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
 from backend.schemas.maintenance import (
     BackupRead,
+    DataCompatibilityRead,
     DatabaseIntegrityCheckRead,
     DatabaseIntegrityIssueRead,
     DiagnosticBrowserRuntimeRead,
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
+    InstalledVersionRead,
     MaintenanceInfoRead,
     RestartRead,
     RestoreDialogPreviewRead,
@@ -38,6 +45,7 @@ from backend.schemas.maintenance import (
     RestorePreviewRead,
     UpdateExecuteRead,
     UpdatePreviewRead,
+    VersionSwitchRead,
 )
 from backend.services.invoice_qr_runtime import (
     INVOICE_QR_ENGINE_OPENCV_WECHAT,
@@ -67,6 +75,7 @@ APP_DIR_NAME = "报销管理"
 APP_EXE_NAME = "报销管理.exe"
 CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
+DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 LOG_TAIL_BYTES = 200 * 1024
 VALID_REPORT_STATUSES = {"draft", "printed", "reimbursed"}
 VALID_EXPENSE_CATEGORIES = {
@@ -137,6 +146,150 @@ def _current_installed_version() -> str | None:
     if isinstance(version, str) and version:
         return version
     return APP_VERSION
+
+
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _manifest_int(manifest: dict | None, key: str) -> int | None:
+    if not manifest:
+        return None
+    value = manifest.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _current_data_schema_version() -> int | None:
+    if not DATABASE_PATH.exists():
+        return DATA_SCHEMA_VERSION
+    try:
+        connection = sqlite3.connect(DATABASE_PATH)
+        try:
+            row = connection.execute("PRAGMA user_version").fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    version = row[0]
+    if isinstance(version, int) and version > 0:
+        return version
+    return None
+
+
+def _current_app_manifest(version: str | None = None) -> dict:
+    return {
+        "app_version": version or APP_VERSION,
+        "data_schema_version": DATA_SCHEMA_VERSION,
+        "min_supported_data_schema_version": MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+        "max_supported_data_schema_version": MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+    }
+
+
+def _version_manifest(version: str, version_dir: Path | None = None) -> dict | None:
+    candidates: list[Path] = []
+    if version_dir is not None:
+        candidates.append(version_dir / PORTABLE_RELEASE_MANIFEST_NAME)
+    candidates.append(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME)
+
+    for candidate in candidates:
+        manifest = _read_json_file(candidate)
+        if not manifest:
+            continue
+        manifest_version = manifest.get("app_version")
+        if not manifest_version or manifest_version == version:
+            return manifest
+
+    if version == APP_VERSION and version == _current_installed_version():
+        return _current_app_manifest(version)
+    return None
+
+
+def _data_compatibility(manifest: dict | None, target_version: str | None = None) -> DataCompatibilityRead:
+    current_version = _current_data_schema_version()
+    target_schema_version = _manifest_int(manifest, "data_schema_version")
+    min_supported = _manifest_int(manifest, "min_supported_data_schema_version")
+    max_supported = _manifest_int(manifest, "max_supported_data_schema_version")
+    display_version = target_version or (manifest.get("app_version") if manifest else None) or "目标版本"
+
+    if current_version is None:
+        return DataCompatibilityRead(
+            status="unknown",
+            current_data_schema_version=None,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message="当前数据库缺少数据结构版本信息，已禁止自动安装或切换以避免数据风险。",
+        )
+
+    if target_schema_version is None or min_supported is None or max_supported is None:
+        return DataCompatibilityRead(
+            status="unknown",
+            current_data_schema_version=current_version,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message=f"{display_version} 缺少数据兼容性信息，已禁止自动安装或切换以避免旧程序打开新数据。",
+        )
+
+    if min_supported <= current_version <= max_supported:
+        return DataCompatibilityRead(
+            status="compatible",
+            current_data_schema_version=current_version,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message=f"当前数据结构 v{current_version} 在 {display_version} 支持范围 v{min_supported}-v{max_supported} 内。",
+        )
+
+    return DataCompatibilityRead(
+        status="incompatible",
+        current_data_schema_version=current_version,
+        target_data_schema_version=target_schema_version,
+        min_supported_data_schema_version=min_supported,
+        max_supported_data_schema_version=max_supported,
+        message=(
+            f"当前数据结构 v{current_version} 不在 {display_version} 支持范围 "
+            f"v{min_supported}-v{max_supported} 内，已禁止自动安装或切换。"
+        ),
+    )
+
+
+def _require_data_compatible(compatibility: DataCompatibilityRead) -> None:
+    if compatibility.status != "compatible":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=compatibility.message)
+
+
+def _write_current_version(
+    version: str,
+    previous_version: str | None,
+    timestamp_key: str = "updated_at",
+    manifest: dict | None = None,
+) -> None:
+    current_payload = {
+        "current_version": version,
+        "previous_version": previous_version,
+        timestamp_key: _utc_now().isoformat(),
+    }
+    version_manifest = manifest or _current_app_manifest(version)
+    for key in ("data_schema_version", "min_supported_data_schema_version", "max_supported_data_schema_version"):
+        value = _manifest_int(version_manifest, key)
+        if value is not None:
+            current_payload[key] = value
+    temp_current = APP_ROOT / f"{CURRENT_VERSION_FILE}.tmp"
+    temp_current.write_text(json.dumps(current_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_current.replace(APP_ROOT / CURRENT_VERSION_FILE)
 
 
 def _path_inside(root: Path, *parts: str) -> Path:
@@ -853,6 +1006,39 @@ def check_database_integrity(db: Session | None = None) -> DatabaseIntegrityChec
     )
 
 
+def list_installed_versions(current_version: str | None = None) -> list[InstalledVersionRead]:
+    versions_root = APP_ROOT / VERSIONS_DIR_NAME
+    if not versions_root.is_dir():
+        return []
+
+    current = current_version if current_version is not None else _current_installed_version()
+    versions: list[InstalledVersionRead] = []
+    for version_dir in versions_root.iterdir():
+        if not version_dir.is_dir():
+            continue
+        version = version_dir.name
+        executable_path = version_dir / APP_EXE_NAME
+        try:
+            modified_at = datetime.fromtimestamp(version_dir.stat().st_mtime).isoformat()
+        except OSError:
+            modified_at = None
+        manifest = _version_manifest(version, version_dir)
+        versions.append(
+            InstalledVersionRead(
+                version=version,
+                version_dir=version_dir.as_posix(),
+                executable_path=executable_path.as_posix(),
+                executable_exists=executable_path.is_file(),
+                current=version == current,
+                modified_at=modified_at,
+                data_compatibility=_data_compatibility(manifest, version),
+            )
+        )
+
+    versions.sort(key=lambda item: (not item.current, item.modified_at or "", item.version), reverse=False)
+    return versions
+
+
 def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
     current_version = _current_installed_version()
     current_version_dir = None
@@ -865,6 +1051,7 @@ def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
         current_version=current_version,
         current_version_dir=current_version_dir,
         launcher_path=(APP_ROOT / APP_EXE_NAME).as_posix(),
+        installed_versions=list_installed_versions(current_version),
         data_dir=DATA_DIR.as_posix(),
         database_path=DATABASE_PATH.as_posix(),
         uploads_dir=UPLOAD_ROOT.as_posix(),
@@ -1255,6 +1442,7 @@ def _preview_update_from_manifest(preview_id: str, package_path: Path, manifest:
         size_bytes=package_path.stat().st_size,
         version_dir=f"{VERSIONS_DIR_NAME}/{version}",
         executable_path=f"{VERSIONS_DIR_NAME}/{version}/{APP_EXE_NAME}",
+        data_compatibility=_data_compatibility(manifest, version),
     )
 
 
@@ -1323,7 +1511,9 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
     previous_version = _current_installed_version()
     target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / version
     if target_version_dir.exists():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"版本目录已存在：{target_version_dir}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"版本目录已存在：{target_version_dir}。请使用已安装版本切换。")
+    data_compatibility = _data_compatibility(manifest, version)
+    _require_data_compatible(data_compatibility)
 
     work_root = UPDATE_STAGING_ROOT / _safe_preview_id(preview_id) / "work"
     extracted_root = work_root / "extracted"
@@ -1341,20 +1531,17 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
         pre_update_backup = create_backup(reason="pre_update")
         (APP_ROOT / VERSIONS_DIR_NAME).mkdir(parents=True, exist_ok=True)
         shutil.move(str(extracted_version_dir), str(target_version_dir))
+        (target_version_dir / PORTABLE_RELEASE_MANIFEST_NAME).write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         for name in (APP_EXE_NAME, PORTABLE_RELEASE_MANIFEST_NAME, "README.md", "zip-upgrade-guide.md", "upgrade_zip_release.ps1"):
             source = extracted_root / name
             if source.exists() and source.is_file():
                 shutil.copy2(source, APP_ROOT / name)
 
-        current_payload = {
-            "current_version": version,
-            "previous_version": previous_version,
-            "updated_at": _utc_now().isoformat(),
-        }
-        temp_current = APP_ROOT / f"{CURRENT_VERSION_FILE}.tmp"
-        temp_current.write_text(json.dumps(current_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_current.replace(APP_ROOT / CURRENT_VERSION_FILE)
+        _write_current_version(version, previous_version, timestamp_key="updated_at", manifest=manifest)
     finally:
         try:
             shutil.rmtree(work_root)
@@ -1368,19 +1555,149 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
         pre_update_backup=pre_update_backup,
         restart_required=True,
         version_dir=(APP_ROOT / VERSIONS_DIR_NAME / version).as_posix(),
+        data_compatibility=data_compatibility,
     )
+
+
+def switch_installed_version(version: str, confirm_switch: bool) -> VersionSwitchRead:
+    if not confirm_switch:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="切换版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能切换版本")
+
+    target_version = _safe_version(version)
+    previous_version = _current_installed_version()
+    target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / target_version
+    target_exe = target_version_dir / APP_EXE_NAME
+    if not target_version_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
+    if not target_exe.is_file():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"版本目录缺少可执行程序：{target_exe}")
+    if previous_version == target_version:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="目标版本已经是当前版本")
+    manifest = _version_manifest(target_version, target_version_dir)
+    data_compatibility = _data_compatibility(manifest, target_version)
+    _require_data_compatible(data_compatibility)
+
+    pre_switch_backup = create_backup(reason="pre_version_switch")
+    _write_current_version(target_version, previous_version, timestamp_key="switched_at", manifest=manifest)
+    return VersionSwitchRead(
+        switched=True,
+        app_version=target_version,
+        previous_version=previous_version,
+        pre_switch_backup=pre_switch_backup,
+        restart_required=True,
+        version_dir=target_version_dir.as_posix(),
+        data_compatibility=data_compatibility,
+    )
+
+
+def _read_desktop_browser_pid() -> int | None:
+    value = os.environ.get(DESKTOP_BROWSER_PID_ENV)
+    if not value:
+        return None
+    try:
+        pid = int(value)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _post_close_to_process_windows(pid: int) -> int:
+    if sys.platform != "win32":
+        return 0
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:
+        return 0
+
+    user32 = ctypes.windll.user32
+    wm_close = 0x0010
+    closed_count = 0
+
+    def enum_handler(hwnd, _lparam):
+        nonlocal closed_count
+        if not user32.IsWindowVisible(hwnd):
+            return True
+
+        process_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if int(process_id.value) != pid:
+            return True
+
+        user32.PostMessageW(hwnd, wm_close, 0, 0)
+        closed_count += 1
+        return True
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(enum_handler)
+    user32.EnumWindows(callback, 0)
+    return closed_count
+
+
+def _wait_for_process_exit(pid: int, timeout_seconds: float) -> bool:
+    if sys.platform != "win32":
+        return False
+
+    try:
+        import ctypes
+    except ImportError:
+        return False
+
+    kernel32 = ctypes.windll.kernel32
+    synchronize = 0x00100000
+    wait_object_0 = 0x00000000
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        return False
+    try:
+        result = kernel32.WaitForSingleObject(handle, int(timeout_seconds * 1000))
+        return result == wait_object_0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _terminate_process_tree(pid: int, timeout_seconds: float = 3.0) -> bool:
+    if sys.platform != "win32":
+        return False
+
+    try:
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _close_desktop_browser_window(wait_seconds: float = 4.0) -> bool:
+    pid = _read_desktop_browser_pid()
+    if pid is None:
+        return False
+
+    posted_count = _post_close_to_process_windows(pid)
+    if posted_count and _wait_for_process_exit(pid, wait_seconds):
+        return True
+
+    return _terminate_process_tree(pid)
 
 
 def _schedule_application_restart(launcher_path: Path, delay_seconds: float = 0.8) -> None:
     def restart_after_response() -> None:
         time.sleep(delay_seconds)
+        _close_desktop_browser_window()
         try:
             subprocess.Popen([str(launcher_path)], cwd=str(APP_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except OSError:
             return
         os._exit(0)
 
-    thread = threading.Thread(target=restart_after_response, name="maintenance-restart", daemon=True)
+    thread = threading.Thread(target=restart_after_response, name="maintenance-restart", daemon=False)
     thread.start()
 
 

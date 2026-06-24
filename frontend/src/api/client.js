@@ -146,6 +146,11 @@ export const executeMaintenanceUpdate = async (payload) => {
   return response.data;
 };
 
+export const switchMaintenanceVersion = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
+  return response.data;
+};
+
 export const restartMaintenanceApp = async () => {
   const response = await apiClient.post("/api/maintenance/restart", null, { timeout: 5000 });
   return response.data;

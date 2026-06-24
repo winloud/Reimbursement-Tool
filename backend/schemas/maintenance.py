@@ -40,6 +40,25 @@ class DiagnosticLogFileRead(BaseModel):
     modified_at: str | None = None
 
 
+class DataCompatibilityRead(BaseModel):
+    status: Literal["compatible", "incompatible", "unknown"]
+    current_data_schema_version: int | None = None
+    target_data_schema_version: int | None = None
+    min_supported_data_schema_version: int | None = None
+    max_supported_data_schema_version: int | None = None
+    message: str
+
+
+class InstalledVersionRead(BaseModel):
+    version: str
+    version_dir: str
+    executable_path: str
+    executable_exists: bool = False
+    current: bool = False
+    modified_at: str | None = None
+    data_compatibility: DataCompatibilityRead | None = None
+
+
 class DatabaseIntegrityIssueRead(BaseModel):
     severity: Literal["warning", "error"]
     category: str
@@ -69,6 +88,7 @@ class MaintenanceInfoRead(BaseModel):
     current_version: str | None = None
     current_version_dir: str | None = None
     launcher_path: str | None = None
+    installed_versions: list[InstalledVersionRead] = Field(default_factory=list)
     data_dir: str
     database_path: str
     uploads_dir: str
@@ -84,6 +104,25 @@ class MaintenanceInfoRead(BaseModel):
 
 class BackupCreateRead(BaseModel):
     backup: BackupRead
+
+
+class BackupDeleteRequest(BaseModel):
+    confirm_delete: bool = False
+
+
+class BackupDeleteRead(BaseModel):
+    deleted: bool
+    backup_id: str
+    deleted_path: str
+
+
+class BackupCleanupRequest(BaseModel):
+    confirm_cleanup: bool = False
+
+
+class BackupCleanupRead(BaseModel):
+    deleted_backups: list[BackupDeleteRead] = Field(default_factory=list)
+    kept_backup_id: str | None = None
 
 
 class RestorePreviewRead(BaseModel):
@@ -122,6 +161,39 @@ class RestartRead(BaseModel):
     launcher_path: str
 
 
+class VersionSwitchRequest(BaseModel):
+    version: str
+    confirm_switch: bool = False
+
+
+class VersionSwitchRead(BaseModel):
+    switched: bool
+    app_version: str
+    previous_version: str | None = None
+    pre_switch_backup: BackupRead | None = None
+    restart_required: bool = True
+    version_dir: str
+    data_compatibility: DataCompatibilityRead
+
+
+class VersionDeleteRequest(BaseModel):
+    confirm_delete: bool = False
+
+
+class VersionDeleteRead(BaseModel):
+    deleted: bool
+    version: str
+    deleted_path: str
+
+
+class VersionCleanupRequest(BaseModel):
+    confirm_cleanup: bool = False
+
+
+class VersionCleanupRead(BaseModel):
+    deleted_versions: list[VersionDeleteRead] = Field(default_factory=list)
+
+
 class UpdatePreviewRead(BaseModel):
     preview_id: str
     app_version: str
@@ -130,6 +202,7 @@ class UpdatePreviewRead(BaseModel):
     size_bytes: int = 0
     version_dir: str
     executable_path: str
+    data_compatibility: DataCompatibilityRead
 
 
 class UpdateExecuteRequest(BaseModel):
@@ -144,3 +217,4 @@ class UpdateExecuteRead(BaseModel):
     pre_update_backup: BackupRead
     restart_required: bool = True
     version_dir: str
+    data_compatibility: DataCompatibilityRead

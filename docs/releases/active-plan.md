@@ -19,6 +19,7 @@
 - [x] 新增 GitHub Actions 手动 preview artifact 构建入口，不创建 GitHub Release。
 - [x] 增加数据库完整性检查。
 - [x] 批量删除、导入覆盖、状态回退前自动创建安全快照。
+- [x] 为程序内更新和已安装版本切换增加数据结构兼容性门禁。
 
 ## 范围
 本次做：
@@ -38,6 +39,7 @@
 - 新增 `.github/workflows/build-preview.yml`，支持零输入手动触发；默认从 active-plan 读取目标版本、按中国时区取日期、按已有 artifact 自动递增三位预览流水号，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
 - 新增 `/api/maintenance/database-check`，检查 SQLite `integrity_check`、`foreign_key_check`、报销业务一致性和发票附件状态，并在数据维护页面展示摘要。
 - 批量软删除、批量彻底删除、导入覆盖和报销单状态回退前创建完整备份快照；快照失败时中止原操作，避免无保护地执行危险变更。
+- 程序内更新和已安装版本切换读取发布 manifest 中的数据结构兼容范围，当前数据库结构未知、目标版本缺少兼容性信息或当前数据库结构超出目标支持范围时禁止自动安装/切换。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -81,6 +83,11 @@
 - 报销单管理列表新增“出差开始日期 / 出差结束日期 / 报销日期”前三个业务列；行程起止日期由现有行程年月日推导后随列表 API 返回。
 - 草稿报销单 PDF 预览、单张下载和批量下载统一先刷新 `report_date` 为当天，再生成预览图片、PDF 内容和文件名；单张/批量下载随后标记为已打印。已打印或已报销记录不再自动改动 `report_date`；刷新导出日期不触发补贴天数或金额重算，失败时回滚本次日期变更。报销单管理列表和编辑页预览成功后会重新拉取数据，避免页面仍显示旧报销日期。
 - 数据维护页为“备份恢复”补充独立标题和说明；程序更新安装完成后显示“重启程序”按钮，桌面便携模式下会启动根目录 launcher 并退出当前进程。
+- 修复桌面便携模式重启时旧 Chrome/Edge app-mode 窗口未关闭的问题：桌面启动时记录当前浏览器 PID，重启接口先关闭旧应用窗口并等待退出，再启动根目录 launcher。
+- 侧边栏导航将“数据维护”移到末尾，使日常报销录入和设置入口保持优先。
+- 数据维护页改为“备份与恢复 / 程序更新 / 诊断与检查”三块任务区；按用户反馈移除顶部 4 个摘要块、步骤式状态条和运行环境折叠，更新、恢复、诊断错误改为就近显示在对应区域。
+- 程序更新区新增已安装版本切换/回退：列出 `versions\` 下已有版本，切换前创建 `pre_version_switch_*.zip` 完整备份，只更新根目录 `current-version.json`，重启后由 launcher 启动目标版本；已存在版本目录的更新 ZIP 不再引导重复安装，而提示直接切换。
+- 新增数据结构兼容性门禁：SQLite 迁移后写入 `PRAGMA user_version`；发布包 `portable-release.json`、版本目录 manifest 和 `current-version.json` 记录 `data_schema_version`、`min_supported_data_schema_version`、`max_supported_data_schema_version`；维护接口在更新预览、安装和已安装版本切换时返回兼容性状态，执行阶段会拒绝未知或不兼容目标，避免旧程序打开新结构数据。
 
 ### 验证记录
 - [x] 前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，4 passed。
@@ -162,6 +169,35 @@
 - [x] 数据维护备份标题和更新后重启按钮前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] v1.2.0 preview-20260624-003 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 003 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-003.zip`，大小约 45.01 MB。
 - [x] v1.2.0 preview-20260624-003 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、launcher、`versions\1.2.0-preview-20260624-003\报销管理.exe` 和最新前端 `dist\index.html`；manifest `app_version` 与 current-version `current_version` 均为 `1.2.0-preview-20260624-003`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 桌面重启关闭旧窗口修复语法检查：`python -m py_compile backend\services\maintenance_service.py desktop_app.py tests\test_maintenance_service.py tests\test_desktop_dependencies.py` 通过。
+- [x] 桌面重启关闭旧窗口修复定向测试：`python -m pytest tests\test_maintenance_service.py tests\test_desktop_dependencies.py`，27 passed，7 warnings（既有 SWIG/FastAPI deprecation warnings）。
+- [x] v1.2.0 preview-20260624-005 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 005 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-005.zip`，大小约 45.01 MB。
+- [x] v1.2.0 preview-20260624-005 ZIP 内容校验：`portable-release.json` 的 `app_version` 与 `current-version.json` 的 `current_version` 均为 `1.2.0-preview-20260624-005`；包含 launcher、版本 EXE 和前端 `dist\index.html`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] v1.2.0 preview-20260624-006 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 006 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-006.zip`，大小约 45.01 MB。
+- [x] v1.2.0 preview-20260624-006 ZIP 内容校验：`portable-release.json` 的 `app_version` 与 `current-version.json` 的 `current_version` 均为 `1.2.0-preview-20260624-006`；包含 launcher、版本 EXE 和前端 `dist\index.html`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 侧边栏数据维护入口移到末尾后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 数据维护页结构优化后维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，6 passed。
+- [x] 数据维护页结构优化后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 数据维护页结构优化后全量前端工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 数据维护页结构优化后 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
+- [x] v1.2.0 preview-20260624-007 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 007 -ReleaseDate 20260624 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260624-007.zip`，大小约 45.01 MB。
+- [x] v1.2.0 preview-20260624-007 ZIP 内容校验：`portable-release.json` 的 `app_version` 与 `current-version.json` 的 `current_version` 均为 `1.2.0-preview-20260624-007`；包含 launcher、版本 EXE 和前端 `dist\index.html`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 数据维护页按反馈移除摘要块/步骤条/运行环境折叠后前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 数据维护页按反馈调整后全量前端工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] v1.2.0 preview-20260625-001 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 001 -ReleaseDate 20260625 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260625-001.zip`，大小约 45.01 MB。
+- [x] v1.2.0 preview-20260625-001 ZIP 内容校验：`portable-release.json` 的 `app_version` 与 `current-version.json` 的 `current_version` 均为 `1.2.0-preview-20260625-001`；包含 launcher、版本 EXE 和前端 `dist\index.html`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
+- [x] 已安装版本切换后端语法检查：`python -m py_compile backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py tests\test_maintenance_service.py` 通过。
+- [x] 已安装版本切换后端定向测试：`python -m pytest tests\test_maintenance_service.py`，18 passed。
+- [x] 已安装版本切换前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 已安装版本切换前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 数据结构兼容性门禁后端语法检查：`python -m py_compile backend\data_schema.py backend\database\connection.py backend\services\maintenance_service.py backend\routers\maintenance.py backend\schemas\maintenance.py tests\test_maintenance_service.py tests\test_phase6_release.py` 通过。
+- [x] 数据结构兼容性门禁后端定向测试：`python -m pytest tests\test_maintenance_service.py`，23 passed；`python -m pytest tests\test_phase6_release.py`，7 passed，7 warnings（既有 SWIG/FastAPI deprecation warnings）。
+- [x] 数据结构兼容性门禁后端全量回归：`python -m pytest`，204 passed，7 warnings（既有 SWIG/FastAPI deprecation warnings）。
+- [x] 数据结构兼容性门禁前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 数据结构兼容性门禁前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 数据结构兼容性门禁 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
+- [x] v1.2.0 preview-20260625-002 本地完整打包：`powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -PreviewBuild -Version 1.2.0 -PreviewSerial 002 -ReleaseDate 20260625 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release\报销管理-v1.2.0-preview-20260625-002.zip`，大小约 45.02 MB。
+- [x] v1.2.0 preview-20260625-002 ZIP 内容校验：包含 `portable-release.json`、`current-version.json`、版本目录 `portable-release.json`、launcher、版本 EXE 和前端 `dist\index.html`；三个版本配置文件均记录 `1.2.0-preview-20260625-002` 和数据结构兼容范围 `1-1`；未包含 `data/`、`uploads/`、`logs/`、`browser-profile/`、`vendor/`、`window-state.json`。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护独立页面、备份选择器默认打开备份目录、备份恢复标题说明、更新完成后重启按钮、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。
+- 已在 Unreleased 记录数据维护独立页面、侧边栏数据维护入口移到末尾、数据维护页结构优化、已安装版本切换/回退、数据结构兼容性门禁、备份选择器默认打开备份目录、备份恢复标题说明、更新完成后重启按钮、重启时关闭旧桌面窗口、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别、手动 preview artifact workflow、报销单管理列表列顺序调整，以及草稿 PDF 预览/下载按实际生成日期刷新报销日期且已打印后锁定报销日期。
