@@ -139,6 +139,7 @@
 - [x] 诊断包摘要增强 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
 - [x] 数据维护独立页面前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
 - [x] 数据维护独立页面前端构建：`npm run build` 成功；仍有既有 chunk size warning。
+- [x] 数据维护独立页面云端 preview artifact 构建：手动触发 `Build Preview Artifact`，ref `codex/reimbursement-tool`，run `28102911199` 成功，生成 artifact `reimbursement-tool-v1.2.0-preview-20260624-001`，大小约 45.39 MB，保留至 2026-07-08。
 
 ### 已同步到 CHANGELOG
 - 已在 Unreleased 记录数据维护独立页面、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
