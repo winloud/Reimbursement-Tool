@@ -289,7 +289,7 @@ export default function MaintenancePanel() {
           <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
             <Box>
               <Typography variant="subtitle1" fontWeight={900}>
-                数据维护
+                维护操作
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
                 本地 ZIP 升级、备份恢复和诊断信息

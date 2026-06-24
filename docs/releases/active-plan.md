@@ -9,7 +9,7 @@
 - [x] 保持现有 ZIP 发布方式，不引入 Windows 安装器。
 - [x] 增加本地 ZIP 升级辅助脚本，升级前创建完整备份并复制运行态目录。
 - [x] 增加程序内完整备份、恢复预览、恢复执行和诊断信息导出。
-- [x] 在个性化设置页新增“数据维护”入口。
+- [x] 新增独立“数据维护”页面，用于升级、备份恢复和诊断。
 - [x] 新增当前开发版 ZIP 安装、升级、备份恢复说明；正式发布时再同步 README。
 - [x] 桌面 EXE 记住用户调整后的窗口大小和位置。
 - [x] 将 ZIP 桌面发布调整为便携式安装根目录：根目录 launcher + `versions\<version>` 真实程序目录。
@@ -31,12 +31,12 @@
 - 预览打包命名规则调整为：未绑定目标版本时输出 `报销管理-preview-yyyymmdd-NNN.zip`；如果 active-plan 已定义目标版本 `vX.Y.Z`，输出 `报销管理-vX.Y.Z-preview-yyyymmdd-NNN.zip`；正式发布才输出 `报销管理-vX.Y.Z-yyyymmdd.zip`。
 - 新增 `/api/maintenance` 维护接口，用于备份、恢复、诊断和路径信息查询。
 - 新增 `/api/maintenance/updates/preview` 和 `/api/maintenance/updates/execute`，用于程序内预览并安装新版 ZIP。
-- 新增设置页“数据维护”面板。
+- 新增独立“数据维护”页面。
 - 新增 `docs/zip-upgrade-guide.md`，更新 docs 索引和 CHANGELOG；README 保持 v1.1.1 发布说明定位。
 - 桌面窗口状态写入 EXE 同级 `window-state.json`；保持 Google Chrome app-mode 优先策略，并在 Chrome/Edge app-mode 路径中读取和保存窗口大小位置，继续复用稳定 `browser-profile`。
 - 图片发票优先复用现有二维码识别路线，不引入 OCR runtime；PDF 发票从只识别第一页改为逐页识别，识别到多张发票时拆分为独立 PDF 附件并创建多条发票记录。
 - 新增 `.github/workflows/build-preview.yml`，支持零输入手动触发；默认从 active-plan 读取目标版本、按中国时区取日期、按已有 artifact 自动递增三位预览流水号，云端生成 preview ZIP 并作为 Actions artifact 保留 14 天。
-- 新增 `/api/maintenance/database-check`，检查 SQLite `integrity_check`、`foreign_key_check`、报销业务一致性和发票附件状态，并在数据维护面板展示摘要。
+- 新增 `/api/maintenance/database-check`，检查 SQLite `integrity_check`、`foreign_key_check`、报销业务一致性和发票附件状态，并在数据维护页面展示摘要。
 - 批量软删除、批量彻底删除、导入覆盖和报销单状态回退前创建完整备份快照；快照失败时中止原操作，避免无保护地执行危险变更。
 
 本次不做：
@@ -57,9 +57,9 @@
 ### 重要改动
 - 新增 `backend/services/maintenance_service.py`、`backend/routers/maintenance.py` 和维护相关 schema。
 - 新增完整备份 ZIP 格式：`backup-manifest.json`、`data/expense.db`、`uploads/`、可选 `vendor/` 和最近日志摘要。
-- 扩展设置页“诊断信息”和诊断包导出：展示当前版本、数据目录、QR 引擎、浏览器/WebView2 状态和日志路径；导出 ZIP 包含 `diagnostics.json`、`summary.txt`、配置摘要、运行配置摘要、环境信息和日志尾部，不包含数据库或附件。
+- 扩展数据维护页“诊断信息”和诊断包导出：展示当前版本、数据目录、QR 引擎、浏览器/WebView2 状态和日志路径；导出 ZIP 包含 `diagnostics.json`、`summary.txt`、配置摘要、运行配置摘要、环境信息和日志尾部，不包含数据库或附件。
 - 恢复执行前自动创建 `pre_restore_*.zip`，并在恢复数据库后运行现有 SQLite 迁移。
-- 新增 `frontend/src/pages/MaintenancePanel.jsx`，在个性化设置页提供备份、恢复和诊断导出入口。
+- 新增 `frontend/src/pages/MaintenancePage.jsx` 和 `frontend/src/pages/MaintenancePanel.jsx`，通过侧边栏独立入口提供升级、备份恢复和诊断导出入口。
 - 新增 `scripts/upgrade_zip_release.ps1`，并由 `scripts/build_release.ps1` 复制到发布 ZIP 根目录。
 - 新增 `docs/zip-upgrade-guide.md` 记录当前开发版 ZIP 本地安装、升级和备份恢复步骤；根目录 README 暂不写入未发布能力。
 - 新增桌面窗口大小和位置记忆；pywebview 路径通过事件保存 `window-state.json`，Chrome/Edge app-mode 路径启动时读取已有窗口状态，并在窗口运行期间捕捉当前大小位置写回 `window-state.json`。
@@ -75,7 +75,7 @@
 - 图片格式发票新增二维码解析能力；未识别到二维码时仍进入手动确认，不引入 OCR。
 - PDF 发票新增逐页解析能力；多页 PDF 中识别到多张发票时，上传一次会创建多条发票记录并进入逐张确认队列。
 - 新增数据库完整性检查：覆盖 SQLite 物理完整性、外键一致性、重复 UID、无效状态、孤儿记录、软删除不一致、发票与行程所属报销单不一致、未知费用类别和发票附件缺失/越界。
-- 数据维护面板新增“检查数据库”入口，并展示检查状态、表数量、问题数量和前几条问题摘要；诊断包附带数据库检查摘要。
+- 数据维护页面新增“检查数据库”入口，并展示检查状态、表数量、问题数量和前几条问题摘要；诊断包附带数据库检查摘要。
 - 新增 `create_safety_snapshot()` 自动快照守门：批量软删除、批量彻底删除、导入覆盖和 `printed -> draft` 状态回退前先尝试创建完整备份；快照失败则中止原操作。
 
 ### 验证记录
@@ -137,6 +137,8 @@
 - [x] 诊断包摘要增强前端维护工具测试：`node --test src/pages/maintenanceUtils.test.js`，6 passed。
 - [x] 诊断包摘要增强前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 - [x] 诊断包摘要增强 diff 检查：`git diff --check` 通过；仅有既有 CRLF 转换提示。
+- [x] 数据维护独立页面前端全量工具测试：`node --test src/**/*.test.js`，48 passed。
+- [x] 数据维护独立页面前端构建：`npm run build` 成功；仍有既有 chunk size warning。
 
 ### 已同步到 CHANGELOG
-- 已在 Unreleased 记录数据维护、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
+- 已在 Unreleased 记录数据维护独立页面、诊断信息与诊断包导出（含可读摘要和运行配置摘要）、数据库完整性检查、危险操作自动安全快照、ZIP 升级辅助脚本、当前开发版升级指南、桌面窗口记忆、便携根目录、程序内更新、发票上传前保存保护修复、图片发票二维码解析、多页 PDF 逐页识别和手动 preview artifact workflow。
