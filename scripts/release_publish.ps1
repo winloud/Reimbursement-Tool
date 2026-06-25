@@ -279,7 +279,7 @@ function Invoke-Preflight {
     Write-Host "==> Release preflight"
     & (Join-Path $PSScriptRoot "prepare_release.ps1") @params
     if (-not $?) {
-        throw "Release preflight failed with exit code $LASTEXITCODE."
+        throw "Release preflight failed."
     }
 }
 
