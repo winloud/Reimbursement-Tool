@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## v1.2.2 - 2026-06-25
+
 ### Added
 
 - 新增 `scripts/release_publish.ps1` 发布总控脚本，可自动准备版本文件、冻结发布计划、运行预检、创建 release commit/tag，并在 `-Publish` 时推送 tag、等待 GitHub Actions、校验资产、采集耗时并写回验证记录。
