@@ -15,6 +15,7 @@
 
 - 发布流程文档改为优先使用总控脚本，手工步骤保留为故障排查或脚本不可用时的 fallback。
 - GitHub Release workflow 在上传资产前对 runner 本地构建出的主 ZIP 做内容校验；总控脚本发布后默认只做 Release 资产元数据校验，避免因网络慢反复下载主 ZIP。
+- 正式发布流程明确为先合并并推送 `main`，再从 `main` 创建 release commit 和 tag；发布总控脚本在 `-Publish` 时默认阻止从非 `main` 分支发布。
 - 发布总控脚本等待 GitHub Actions 时只匹配本次 tag push 之后的新 run，避免重发既有 tag 时误抓历史 run。
 - 发布总控脚本和 GitHub Actions 本地 ZIP 校验改为用 PowerShell 返回状态而不是 `LASTEXITCODE` 判断 PowerShell 子脚本，避免空值误判失败。
 

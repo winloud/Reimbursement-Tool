@@ -89,6 +89,10 @@ def test_release_publish_script_covers_release_governance_flow():
 
     assert "Assert-CleanWorktree" in script
     assert "AllowUntracked" in script
+    assert 'ReleaseBranch = "main"' in script
+    assert "Assert-ReleaseBranch" in script
+    assert "Formal releases must be published from '$ReleaseBranch'" in script
+    assert "Assert-ReleaseBranch -Branch $branch" in script
     assert "Assert-ReleaseTagAvailable" in script
     assert "RepublishExistingTag" in script
     assert "Assert-ReleaseTagExistsForRepublish" in script
@@ -107,6 +111,17 @@ def test_release_publish_script_covers_release_governance_flow():
     assert "MetadataOnly = $true" in script
     assert "collect_release_metrics.ps1" in script
     assert "docs(release): record $TagName verification" in script
+
+
+def test_release_process_documents_main_first_release_flow():
+    document = (Path(__file__).resolve().parents[1] / "docs" / "release-process.md").read_text(encoding="utf-8")
+
+    assert "正式版本必须从主线发布" in document
+    assert "将开发分支合并到 `main`" in document
+    assert "git checkout main" in document
+    assert "git pull --ff-only origin main" in document
+    assert "git push origin main" in document
+    assert "git push origin <branch>" not in document
 
 
 def test_release_asset_validator_checks_portable_zip_contract():

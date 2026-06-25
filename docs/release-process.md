@@ -2,9 +2,27 @@
 
 本文档记录正式发布的快速路径。详细版本任务和验证记录仍写入 `docs/releases/active-plan.md` 或冻结后的 `docs/releases/vX.Y.Z-plan.md`。
 
+## 标准发布顺序
+
+多人协作时，正式版本必须从主线发布。开发分支可以做本地预检、preview artifact 或测试包，但不直接创建正式 tag。
+
+标准顺序：
+
+1. 在 `codex/*`、`feat/*` 或 `fix/*` 分支完成开发和测试。
+2. 将开发分支合并到 `main`。
+3. 推送 `main` 到远端，确认 `origin/main` 包含本次发布源码。
+4. 切到最新 `main` 后运行发布总控脚本。
+5. 总控脚本在 `main` 上创建 release commit 和 `vX.Y.Z` tag，推送 `main` 和 tag，由 GitHub Actions 构建 GitHub Release。
+
+```powershell
+git checkout main
+git pull --ff-only origin main
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish
+```
+
 ## 自动发布总控
 
-正式发布优先使用总控脚本，让脚本完成发布治理编排，AI 只负责确认输入、处理异常和解释结果：
+正式发布优先使用总控脚本，让脚本完成发布治理编排，AI 只负责确认输入、处理异常和解释结果。脚本默认要求 `-Publish` 在 `main` 上运行；如果当前分支不是 `main`，会在修改版本文件或创建 tag 前停止：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish
@@ -15,31 +33,34 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 - `-Version X.Y.Z`：必填，正式版本号。
 - `-ReleaseDate yyyymmdd`：可选；未传时按中国时区当天生成。
 - `-VersionType patch|minor|major|TBD`：可选，默认 `patch`，写入冻结发布计划。
-- `-Publish`：推送分支和 tag，等待 GitHub Actions，校验 Release 资产，采集耗时，写回冻结计划并提交验证记录。
+- `-Publish`：从发布分支推送 `main` 和 tag，等待 GitHub Actions，校验 Release 资产，采集耗时，写回冻结计划并提交验证记录。
 - `-RepublishExistingTag`：可选；只用于重发已存在的 GitHub Release。脚本会跳过 changelog/版本文件冻结，先运行预检，再移动并 force-push 同名 tag 触发 workflow。
 - `-AllowUntracked`：可选；只忽略未跟踪文件，已跟踪文件变更仍会阻断发布。用于本地存在草稿文件但不会进入 Git/tag 的场景。
 - `-CompareRunId <id>`：可选，用于发布后自动生成与基线 run 的耗时对比。
 - `-DownloadReleaseAssetForValidation`：可选；默认不下载 GitHub Release 主 ZIP，只检查资产元数据。只有需要发布后从公网下载主 ZIP 再深校验时才使用。
+- `-ReleaseBranch main`：可选，默认 `main`；仅当仓库主发布分支更名时才改。
 - `-SkipTests`：仅用于临时烟测或已经由其他可信流程完成测试的场景；正式发布默认不要使用。
 
 脚本自动执行：
 
-- 检查工作区和本地/远端 tag。
+- 检查工作区、发布分支和本地/远端 tag。
 - 将 `CHANGELOG.md` 的 `Unreleased` 冻结到 `## vX.Y.Z - YYYY-MM-DD`。
 - 更新 `README.md`、`backend/app_metadata.py`、`frontend/package.json` 和 `frontend/package-lock.json`。
 - 将 `docs/releases/active-plan.md` 冻结为 `docs/releases/vX.Y.Z-plan.md`，并重建新的 active plan。
 - 更新 docs 索引，运行 `scripts/prepare_release.ps1`。
 - 创建 `chore(release): publish vX.Y.Z` commit 和本地 tag。
 - GitHub Actions 在上传资产前调用 `scripts/validate_release_asset.ps1 -ZipPath ...`，对 runner 本地刚构建出的主 ZIP 做内容校验。
-- 带 `-Publish` 时推送分支/tag，等待 `Publish Release` workflow，默认以 metadata-only 方式检查 GitHub Release 资产是否存在且命名正确，采集耗时，写回冻结计划，再提交并推送 `docs(release): record vX.Y.Z verification`。
+- 带 `-Publish` 时推送 `main` 和 tag，等待 `Publish Release` workflow，默认以 metadata-only 方式检查 GitHub Release 资产是否存在且命名正确，采集耗时，写回冻结计划，再提交并推送 `docs(release): record vX.Y.Z verification`。
 
 重发既有版本时必须显式使用 `-RepublishExistingTag`，例如：
 
 ```powershell
+git checkout main
+git pull --ff-only origin main
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish -RepublishExistingTag -CompareRunId <baseline-run-id>
 ```
 
-该模式用于修正发布流程或重建同版本资产；它会更新同名 GitHub Release 资产和 notes，但不会把 `Unreleased` 再冻结到该版本。
+该模式用于修正发布流程或重建同版本资产；仍应从 `main` 执行。它会更新同名 GitHub Release 资产和 notes，但不会把 `Unreleased` 再冻结到该版本。
 
 ## 独立工具
 
@@ -90,7 +111,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare_release.ps1 
 git add CHANGELOG.md README.md backend/app_metadata.py frontend/package.json frontend/package-lock.json docs
 git commit -m "chore(release): publish vX.Y.Z"
 git tag -a vX.Y.Z -m "vX.Y.Z"
-git push origin <branch>
+git push origin main
 git push origin vX.Y.Z
 ```
 

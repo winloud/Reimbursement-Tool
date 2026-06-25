@@ -18,6 +18,7 @@
 - 新增 `scripts/collect_release_metrics.ps1`，读取 GitHub Actions run、计算 job/step 耗时，并可与基线 run 对比。
 - 更新 `.github/workflows/publish-release.yml`，在上传资产前对 runner 本地构建出的主 ZIP 做内容校验；总控脚本发布后默认只做 metadata-only 远端资产校验，避免重复下载主 ZIP。
 - 总控脚本新增 `-RepublishExistingTag` 和 `-AllowUntracked`，用于显式重发既有 Release，并允许未跟踪本地草稿文件不阻断已跟踪文件干净的发布。
+- 总控脚本新增发布分支门禁：正式 `-Publish` 默认只能从 `main` 执行，确保先合并并推送主线，再打正式 tag。
 - 总控脚本等待 GitHub Actions 时只匹配本次 tag push 之后的新 run，避免重发既有 tag 时误抓历史 run。
 - 总控脚本和发布 workflow 中对 PowerShell 子脚本的成功判断改为检查返回状态，避免 `LASTEXITCODE` 空值导致的假失败。
 - 更新 `docs/release-process.md` 和测试断言。
@@ -38,6 +39,7 @@
 ### 重要改动
 - 新增发布总控脚本和两个可独立复用的发布验证工具，目标是把发布治理从 AI 手工编排推进到脚本驱动。
 - 重发既有版本和本地存在未跟踪草稿文件的场景也纳入脚本参数，减少发布时的临场手工处理。
+- 订正正式发布顺序：开发分支只做开发和预检，正式版本从已推送的 `main` 创建 release commit 和 tag。
 
 ### 验证记录
 - [x] PowerShell 语法检查：`release_publish.ps1`、`validate_release_asset.ps1`、`collect_release_metrics.ps1` 均可由 PowerShell parser 解析。

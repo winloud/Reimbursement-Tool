@@ -8,6 +8,7 @@
     [switch]$SkipTests,
     [switch]$RunFrontendBuild,
     [switch]$DownloadReleaseAssetForValidation,
+    [string]$ReleaseBranch = "main",
     [long]$CompareRunId = 0
 )
 
@@ -291,6 +292,16 @@ function Get-CurrentBranch {
     return $branch
 }
 
+function Assert-ReleaseBranch {
+    param([Parameter(Mandatory = $true)][string]$Branch)
+    if ([string]::IsNullOrWhiteSpace($ReleaseBranch)) {
+        throw "ReleaseBranch cannot be empty."
+    }
+    if ($Branch -ne $ReleaseBranch) {
+        throw "Formal releases must be published from '$ReleaseBranch'. Merge your work into '$ReleaseBranch', push it, check out '$ReleaseBranch', then rerun release_publish.ps1. Current branch: '$Branch'."
+    }
+}
+
 function Wait-ReleaseRun {
     param(
         [Parameter(Mandatory = $true)][string]$BranchOrTag,
@@ -387,6 +398,9 @@ Write-Host "Preparing $TagName ($ReleaseDate)..."
 Assert-CleanWorktree
 
 $branch = Get-CurrentBranch
+if ($Publish) {
+    Assert-ReleaseBranch -Branch $branch
+}
 if ($RepublishExistingTag) {
     Assert-ReleaseTagExistsForRepublish
     Invoke-Preflight
