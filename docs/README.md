@@ -1,7 +1,7 @@
 # 报销单工具开发文档
 
 ## 当前状态
-- 当前稳定版：v1.1.1
+- 当前稳定版：v1.2.1
 - 当前开发版：TBD
 
 ## 核心文档
@@ -9,6 +9,7 @@
 - 当前开发计划：releases/active-plan.md
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
+- 发布流程：release-process.md
 
 ## 版本文档
 - releases/

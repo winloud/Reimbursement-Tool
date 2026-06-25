@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve version and release date
         shell: pwsh
@@ -30,12 +30,16 @@ jobs:
           "RELEASE_DATE=$releaseDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-packaging.txt
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -62,9 +66,94 @@ jobs:
       - name: Extract release notes from CHANGELOG
         run: python scripts/extract_changelog_section.py --version "${{ env.RELEASE_VERSION }}" --output release-notes.md
 
+      - name: Restore OpenCV runtime asset
+        id: opencv-runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $scriptText = Get-Content -Raw -LiteralPath "scripts\build_release.ps1"
+          if ($scriptText -notmatch '\[string\]\$OpenCvPackageVersion\s*=\s*"([^"]+)"') {
+            throw "Cannot resolve OpenCV package version from scripts\build_release.ps1."
+          }
+          $runtimeVersion = $Matches[1]
+          $runtimeName = "opencv-wechat-runtime-opencv-$runtimeVersion-win_amd64.zip"
+          New-Item -ItemType Directory -Path "release" -Force | Out-Null
+
+          $restored = $false
+          $sourceTag = ""
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=30" | ConvertFrom-Json
+          foreach ($release in @($releases)) {
+            if ($release.draft -or $release.prerelease) {
+              continue
+            }
+            $asset = @($release.assets) | Where-Object { $_.name -eq $runtimeName } | Select-Object -First 1
+            if (-not $asset) {
+              continue
+            }
+
+            gh release download $release.tag_name --pattern $runtimeName --dir release --clobber
+            if ($LASTEXITCODE -ne 0) {
+              Remove-Item -LiteralPath (Join-Path "release" $runtimeName) -Force -ErrorAction SilentlyContinue
+              Write-Warning "Failed to download $runtimeName from $($release.tag_name); will try another release or rebuild."
+              continue
+            }
+            $runtimePath = Join-Path "release" $runtimeName
+            if ((Test-Path -LiteralPath $runtimePath) -and (Get-Item -LiteralPath $runtimePath).Length -gt 0) {
+              $restored = $true
+              $sourceTag = $release.tag_name
+              break
+            }
+            Remove-Item -LiteralPath $runtimePath -Force -ErrorAction SilentlyContinue
+          }
+
+          "runtime_version=$runtimeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "runtime_name=$runtimeName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "restored=$($restored.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source_tag=$sourceTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          if ($restored) {
+            Write-Host "Reusing $runtimeName from release $sourceTag."
+          }
+          else {
+            Write-Host "No reusable $runtimeName asset found; it will be rebuilt."
+          }
+
       - name: Build release ZIPs
         shell: pwsh
-        run: .\scripts\build_release.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -BuildOpenCvRuntime
+        env:
+          OPENCV_RUNTIME_RESTORED: ${{ steps.opencv-runtime.outputs.restored }}
+          OPENCV_PACKAGE_VERSION: ${{ steps.opencv-runtime.outputs.runtime_version }}
+        run: |
+          $buildParams = @{
+            Version = $env:RELEASE_VERSION
+            ReleaseDate = $env:RELEASE_DATE
+          }
+          if ($env:OPENCV_RUNTIME_RESTORED -eq "true") {
+            Write-Host "Skipping OpenCV runtime rebuild; restored existing runtime asset."
+          }
+          else {
+            $buildParams.BuildOpenCvRuntime = $true
+            $buildParams.OpenCvPackageVersion = $env:OPENCV_PACKAGE_VERSION
+          }
+          & .\scripts\build_release.ps1 @buildParams
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release build failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Validate local release ZIP
+        shell: pwsh
+        run: |
+          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
+            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+            Select-Object -First 1
+          if (-not $mainZip) {
+            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          }
+          & .\scripts\validate_release_asset.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -ZipPath $mainZip.FullName -SkipOpenCvRuntimeCheck
+          if (-not $?) {
+            throw "Local release ZIP validation failed."
+          }
 
       - name: Prepare GitHub Release assets
         shell: pwsh

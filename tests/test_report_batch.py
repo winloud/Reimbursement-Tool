@@ -12,6 +12,7 @@ from reportlab.pdfgen import canvas
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
 from backend.schemas.report import ReportCreate
+from backend.services import report_batch_service
 from backend.services.report_batch_service import batch_soft_delete_draft_reports, build_batch_report_pdf_zip
 from backend.services.report_service import create_report, update_report_status
 
@@ -34,6 +35,12 @@ def configure_pdf_paths(monkeypatch, tmp_path: Path) -> None:
 
 def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印出差"))
     update_report_status(db, printed.id, "printed")
@@ -46,9 +53,13 @@ def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp
     assert filename.endswith(".zip")
     assert draft.status == "printed"
     assert printed.status == "printed"
+    assert draft.report_date == date(2026, 6, 24)
+    assert printed.report_date == date(2026, 6, 5)
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         names = archive.namelist()
         assert len(names) == 2
+        assert any(name.startswith("2026-06-24-草稿出差-") for name in names)
+        assert any(name.startswith("2026-06-05-已打印出差-") for name in names)
         for name in names:
             assert name.endswith(".pdf")
             assert len(PdfReader(BytesIO(archive.read(name))).pages) == 1
@@ -82,6 +93,12 @@ def test_batch_pdf_uses_vat_special_double_print_setting(monkeypatch, db):
 
 def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
+    class FixedDate(date):
+        @classmethod
+        def today(cls):
+            return cls(2026, 6, 24)
+
+    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     invalid = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="未确认发票"))
     db.add(
@@ -106,9 +123,17 @@ def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, d
     assert "未确认发票" in exc.value.detail["failures"][0]["reason"]
     assert draft.status == "draft"
     assert invalid.status == "draft"
+    assert draft.report_date == date(2026, 6, 4)
+    assert invalid.report_date == date(2026, 6, 5)
 
 
-def test_batch_delete_only_deletes_draft_reports(db):
+def test_batch_delete_only_deletes_draft_reports(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印"))
     reimbursed = create_report(db, ReportCreate(report_date=date(2026, 6, 6), purpose="已报销"))
@@ -127,3 +152,36 @@ def test_batch_delete_only_deletes_draft_reports(db):
     assert printed.deleted_at is None
     assert reimbursed.deleted_at is None
     assert {item.report_id for item in result.skipped} == {printed.id, reimbursed.id, 9999}
+    assert snapshot_reasons == ["pre_batch_delete"]
+
+
+def test_batch_delete_skips_snapshot_when_no_report_will_be_deleted(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
+    printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印"))
+    update_report_status(db, printed.id, "printed")
+
+    result = batch_soft_delete_draft_reports(db, [printed.id, 9999])
+
+    assert result.deleted_count == 0
+    assert result.skipped_count == 2
+    assert snapshot_reasons == []
+
+
+def test_batch_delete_aborts_when_snapshot_fails(monkeypatch, db):
+    draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿"))
+
+    def fail_snapshot(_db, reason):
+        raise HTTPException(status_code=500, detail=f"{reason} failed")
+
+    monkeypatch.setattr(report_batch_service, "create_safety_snapshot", fail_snapshot)
+
+    with pytest.raises(HTTPException):
+        batch_soft_delete_draft_reports(db, [draft.id])
+
+    db.refresh(draft)
+    assert draft.deleted_at is None

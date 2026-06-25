@@ -173,6 +173,8 @@ class InvoiceRead(BaseModel):
 
 class ReportRead(ReportBase):
     id: int
+    trip_start_date: date | None = None
+    trip_end_date: date | None = None
     status: ReportStatus
     created_at: datetime
     updated_at: datetime

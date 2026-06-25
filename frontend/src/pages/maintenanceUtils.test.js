@@ -1,7 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { formatFileSize, latestBackup, restorePreviewSummary, updatePreviewSummary } from "./maintenanceUtils.js";
+import {
+  browserRuntimeSummary,
+  databaseCheckSeverity,
+  databaseCheckSummary,
+  databaseIssueSummary,
+  formatFileSize,
+  latestBackup,
+  qrEngineSummary,
+  restorePreviewSummary,
+  updatePreviewSummary,
+  yesNo,
+} from "./maintenanceUtils.js";
 
 test("formatFileSize formats byte units", () => {
   assert.equal(formatFileSize(12), "12 B");
@@ -12,6 +23,18 @@ test("formatFileSize formats byte units", () => {
 test("latestBackup returns the first backup", () => {
   assert.equal(latestBackup([{ backup_id: "a" }, { backup_id: "b" }]).backup_id, "a");
   assert.equal(latestBackup([]), null);
+});
+
+test("database check summaries format status and issues", () => {
+  const check = {
+    status: "warning",
+    elapsed_ms: 12,
+    tables: { expense_reports: 1, invoices: 2 },
+    issues: [{ message: "存在缺失的发票附件文件", count: 2 }],
+  };
+  assert.equal(databaseCheckSeverity(check), "warning");
+  assert.equal(databaseCheckSummary(check), "数据库检查有警告，2 张表，1 个问题，耗时 12 ms");
+  assert.equal(databaseIssueSummary(check.issues[0]), "存在缺失的发票附件文件（2 项）");
 });
 
 test("restorePreviewSummary includes key restore contents", () => {
@@ -35,5 +58,26 @@ test("updatePreviewSummary includes version and package size", () => {
       size_bytes: 3 * 1024 * 1024,
     }),
     "版本 1.2.0，10 个文件，3.0 MB",
+  );
+});
+
+test("diagnostic summaries format runtime states", () => {
+  assert.equal(yesNo(true), "可用");
+  assert.equal(yesNo(false), "不可用");
+  assert.equal(
+    qrEngineSummary({
+      selected_engine: "opencv_wechat",
+      selected_engine_label: "OpenCV WeChatQRCode",
+      opencv_runtime_installed: true,
+    }),
+    "OpenCV WeChatQRCode，OpenCV runtime 已安装",
+  );
+  assert.equal(
+    browserRuntimeSummary({
+      preferred_runtime: "Google Chrome app-mode",
+      chromium_name: "Google Chrome",
+      webview2_available: true,
+    }),
+    "Google Chrome app-mode，Google Chrome，WebView2 可用",
   );
 });

@@ -20,6 +20,9 @@ $ReleaseVenv = Join-Path $Root ".release-venv"
 $Python = $BasePython
 $AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))
 $AppExeName = "$AppName.exe"
+$DataSchemaVersion = 1
+$MinSupportedDataSchemaVersion = 1
+$MaxSupportedDataSchemaVersion = $DataSchemaVersion
 $DistApp = Join-Path $Root "dist\$AppName"
 $LauncherExe = Join-Path $Root "dist\$AppName-launcher.exe"
 $ReleaseDir = Join-Path $Root "release"
@@ -352,12 +355,19 @@ $PortableManifest = [ordered]@{
     current_version_file = "$AppName/current-version.json"
     version_dir = "$AppName/versions/$PackageVersion"
     executable_path = "$AppName/versions/$PackageVersion/$AppExeName"
+    data_schema_version = $DataSchemaVersion
+    min_supported_data_schema_version = $MinSupportedDataSchemaVersion
+    max_supported_data_schema_version = $MaxSupportedDataSchemaVersion
 }
 $CurrentVersion = [ordered]@{
     current_version = $PackageVersion
     release_date = $ReleaseDate
+    data_schema_version = $DataSchemaVersion
+    min_supported_data_schema_version = $MinSupportedDataSchemaVersion
+    max_supported_data_schema_version = $MaxSupportedDataSchemaVersion
 }
 Write-JsonFile -Value $PortableManifest -Path (Join-Path $StageAppRoot "portable-release.json")
+Write-JsonFile -Value $PortableManifest -Path (Join-Path $StageVersionRoot "portable-release.json")
 Write-JsonFile -Value $CurrentVersion -Path (Join-Path $StageAppRoot "current-version.json")
 Compress-ArchiveWithRetry -SourcePath (Join-Path $StageRoot "*") -DestinationPath $ZipPath -AllowedRoot $ReleaseDir
 Remove-PathInside -Path $StageRoot -AllowedRoot $ReleaseDir

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import shutil
 import socket
 import subprocess
@@ -29,6 +30,7 @@ WINDOW_MAX_WIDTH = 10000
 WINDOW_MAX_HEIGHT = 10000
 WINDOW_POSITION_MIN = -32000
 WINDOW_POSITION_MAX = 32000
+DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 
 
 def configure_logging() -> None:
@@ -290,7 +292,14 @@ def run_chromium_app_window(base_url: str) -> None:
         args.insert(-1, f"--window-position={int(window_state['x'])},{int(window_state['y'])}")
     logging.info("starting chromium app-mode window name=%s path=%s profile=%s", browser_name, browser_path, profile_dir)
     process = subprocess.Popen(args, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    wait_for_chromium_process(process)
+    browser_pid = getattr(process, "pid", None)
+    if browser_pid:
+        os.environ[DESKTOP_BROWSER_PID_ENV] = str(browser_pid)
+    try:
+        wait_for_chromium_process(process)
+    finally:
+        if browser_pid and os.environ.get(DESKTOP_BROWSER_PID_ENV) == str(browser_pid):
+            os.environ.pop(DESKTOP_BROWSER_PID_ENV, None)
     logging.info("chromium app-mode window exited returncode=%s", process.returncode)
 
 
@@ -316,6 +325,7 @@ def run_desktop_window(base_url: str) -> None:
 
 
 def run_desktop_app() -> None:
+    os.environ["REIMBURSEMENT_DESKTOP_MODE"] = "1"
     configure_logging()
     ensure_runtime_dependencies()
     logging.info(

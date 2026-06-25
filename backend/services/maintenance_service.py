@@ -1,22 +1,71 @@
 from __future__ import annotations
 
 import json
+import os
+import platform
 import shutil
 import sqlite3
+import subprocess
+import sys
 import tempfile
+import threading
+import time
 import zipfile
 from datetime import datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
+from time import perf_counter
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
+from sqlalchemy.orm import Session
 
 from backend.app_metadata import APP_VERSION
 from backend.database import connection as db_connection
-from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT
-from backend.schemas.maintenance import BackupRead, MaintenanceInfoRead, RestoreExecuteRead, RestorePreviewRead, UpdateExecuteRead, UpdatePreviewRead
+from backend.data_schema import (
+    DATA_SCHEMA_VERSION,
+    MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+    MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+)
+from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
+from backend.schemas.maintenance import (
+    BackupCleanupRead,
+    BackupRead,
+    BackupDeleteRead,
+    DataCompatibilityRead,
+    DatabaseIntegrityCheckRead,
+    DatabaseIntegrityIssueRead,
+    DiagnosticBrowserRuntimeRead,
+    DiagnosticLogFileRead,
+    DiagnosticQrEngineRead,
+    InstalledVersionRead,
+    MaintenanceInfoRead,
+    RestartRead,
+    RestoreDialogPreviewRead,
+    RestoreExecuteRead,
+    RestorePreviewRead,
+    UpdateExecuteRead,
+    UpdatePreviewRead,
+    VersionCleanupRead,
+    VersionDeleteRead,
+    VersionSwitchRead,
+)
+from backend.services.invoice_qr_runtime import (
+    INVOICE_QR_ENGINE_OPENCV_WECHAT,
+    INVOICE_QR_ENGINE_ZXING,
+    OPENCV_RUNTIME_DIR,
+    get_installed_opencv_runtime,
+    normalize_invoice_qr_engine,
+    wechat_model_paths,
+)
+from backend.services.settings_service import get_or_create_settings
+
+try:
+    from desktop_dependencies import find_chromium_browser, is_webview2_available
+except Exception:  # pragma: no cover - desktop helpers may be unavailable on some hosts
+    find_chromium_browser = None
+    is_webview2_available = None
 
 BACKUP_SCHEMA_VERSION = 1
 UPDATE_SCHEMA_VERSION = 1
@@ -30,7 +79,19 @@ APP_DIR_NAME = "报销管理"
 APP_EXE_NAME = "报销管理.exe"
 CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
+DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 LOG_TAIL_BYTES = 200 * 1024
+VALID_REPORT_STATUSES = {"draft", "printed", "reimbursed"}
+VALID_EXPENSE_CATEGORIES = {
+    "transport_fare",
+    "luggage",
+    "city_transport",
+    "accommodation",
+    "postal",
+    "no_sleeper_subsidy",
+    "toll",
+    "fuel_subsidy",
+}
 
 
 def _utc_now() -> datetime:
@@ -89,6 +150,150 @@ def _current_installed_version() -> str | None:
     if isinstance(version, str) and version:
         return version
     return APP_VERSION
+
+
+def _read_json_file(path: Path) -> dict | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8-sig"))
+    except (OSError, json.JSONDecodeError, UnicodeDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _manifest_int(manifest: dict | None, key: str) -> int | None:
+    if not manifest:
+        return None
+    value = manifest.get(key)
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        return int(value)
+    return None
+
+
+def _current_data_schema_version() -> int | None:
+    if not DATABASE_PATH.exists():
+        return DATA_SCHEMA_VERSION
+    try:
+        connection = sqlite3.connect(DATABASE_PATH)
+        try:
+            row = connection.execute("PRAGMA user_version").fetchone()
+        finally:
+            connection.close()
+    except sqlite3.Error:
+        return None
+    if not row:
+        return None
+    version = row[0]
+    if isinstance(version, int) and version > 0:
+        return version
+    return None
+
+
+def _current_app_manifest(version: str | None = None) -> dict:
+    return {
+        "app_version": version or APP_VERSION,
+        "data_schema_version": DATA_SCHEMA_VERSION,
+        "min_supported_data_schema_version": MIN_SUPPORTED_DATA_SCHEMA_VERSION,
+        "max_supported_data_schema_version": MAX_SUPPORTED_DATA_SCHEMA_VERSION,
+    }
+
+
+def _version_manifest(version: str, version_dir: Path | None = None) -> dict | None:
+    candidates: list[Path] = []
+    if version_dir is not None:
+        candidates.append(version_dir / PORTABLE_RELEASE_MANIFEST_NAME)
+    candidates.append(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME)
+
+    for candidate in candidates:
+        manifest = _read_json_file(candidate)
+        if not manifest:
+            continue
+        manifest_version = manifest.get("app_version")
+        if not manifest_version or manifest_version == version:
+            return manifest
+
+    if version == APP_VERSION and version == _current_installed_version():
+        return _current_app_manifest(version)
+    return None
+
+
+def _data_compatibility(manifest: dict | None, target_version: str | None = None) -> DataCompatibilityRead:
+    current_version = _current_data_schema_version()
+    target_schema_version = _manifest_int(manifest, "data_schema_version")
+    min_supported = _manifest_int(manifest, "min_supported_data_schema_version")
+    max_supported = _manifest_int(manifest, "max_supported_data_schema_version")
+    display_version = target_version or (manifest.get("app_version") if manifest else None) or "目标版本"
+
+    if current_version is None:
+        return DataCompatibilityRead(
+            status="unknown",
+            current_data_schema_version=None,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message="当前数据库缺少数据结构版本信息，已禁止自动安装或切换以避免数据风险。",
+        )
+
+    if target_schema_version is None or min_supported is None or max_supported is None:
+        return DataCompatibilityRead(
+            status="unknown",
+            current_data_schema_version=current_version,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message=f"{display_version} 缺少数据兼容性信息，已禁止自动安装或切换以避免旧程序打开新数据。",
+        )
+
+    if min_supported <= current_version <= max_supported:
+        return DataCompatibilityRead(
+            status="compatible",
+            current_data_schema_version=current_version,
+            target_data_schema_version=target_schema_version,
+            min_supported_data_schema_version=min_supported,
+            max_supported_data_schema_version=max_supported,
+            message=f"当前数据结构 v{current_version} 在 {display_version} 支持范围 v{min_supported}-v{max_supported} 内。",
+        )
+
+    return DataCompatibilityRead(
+        status="incompatible",
+        current_data_schema_version=current_version,
+        target_data_schema_version=target_schema_version,
+        min_supported_data_schema_version=min_supported,
+        max_supported_data_schema_version=max_supported,
+        message=(
+            f"当前数据结构 v{current_version} 不在 {display_version} 支持范围 "
+            f"v{min_supported}-v{max_supported} 内，已禁止自动安装或切换。"
+        ),
+    )
+
+
+def _require_data_compatible(compatibility: DataCompatibilityRead) -> None:
+    if compatibility.status != "compatible":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=compatibility.message)
+
+
+def _write_current_version(
+    version: str,
+    previous_version: str | None,
+    timestamp_key: str = "updated_at",
+    manifest: dict | None = None,
+) -> None:
+    current_payload = {
+        "current_version": version,
+        "previous_version": previous_version,
+        timestamp_key: _utc_now().isoformat(),
+    }
+    version_manifest = manifest or _current_app_manifest(version)
+    for key in ("data_schema_version", "min_supported_data_schema_version", "max_supported_data_schema_version"):
+        value = _manifest_int(version_manifest, key)
+        if value is not None:
+            current_payload[key] = value
+    temp_current = APP_ROOT / f"{CURRENT_VERSION_FILE}.tmp"
+    temp_current.write_text(json.dumps(current_payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    temp_current.replace(APP_ROOT / CURRENT_VERSION_FILE)
 
 
 def _path_inside(root: Path, *parts: str) -> Path:
@@ -230,7 +435,675 @@ def list_backups() -> list[BackupRead]:
     return sorted(backups, key=lambda item: item.created_at, reverse=True)
 
 
-def get_maintenance_info() -> MaintenanceInfoRead:
+def delete_backup(backup_id: str, confirm_delete: bool) -> BackupDeleteRead:
+    if not confirm_delete:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除备份需要二次确认")
+    path = get_backup_file(backup_id)
+    deleted_path = path.as_posix()
+    try:
+        path.unlink()
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除备份失败：{exc}") from exc
+    return BackupDeleteRead(deleted=True, backup_id=path.name, deleted_path=deleted_path)
+
+
+def cleanup_old_backups(confirm_cleanup: bool) -> BackupCleanupRead:
+    if not confirm_cleanup:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理旧备份需要二次确认")
+    backups = list_backups()
+    kept_backup_id = backups[0].backup_id if backups else None
+    deleted_backups = [delete_backup(backup.backup_id, confirm_delete=True) for backup in backups[1:]]
+    return BackupCleanupRead(deleted_backups=deleted_backups, kept_backup_id=kept_backup_id)
+
+
+def _settings_payload(db: Session | None = None) -> dict:
+    if db is None:
+        return {"available": False, "reason": "database session unavailable"}
+    settings = get_or_create_settings(db)
+    return {
+        "available": True,
+        "department": settings.department,
+        "employee_name": settings.employee_name,
+        "daily_subsidy": str(settings.daily_subsidy),
+        "pdf_fill_font_key": settings.pdf_fill_font_key,
+        "double_print_vat_special_invoices": settings.double_print_vat_special_invoices,
+        "invoice_qr_engine": settings.invoice_qr_engine,
+        "autosave_delay_seconds": settings.autosave_delay_seconds,
+        "updated_at": settings.updated_at.isoformat() if settings.updated_at else None,
+    }
+
+
+def _json_config_file_payload(path: Path) -> dict:
+    payload: dict = {
+        "path": path.as_posix(),
+        "exists": path.is_file(),
+    }
+    if not path.is_file():
+        return payload
+    try:
+        stat = path.stat()
+        payload.update(
+            {
+                "size_bytes": stat.st_size,
+                "modified_at": datetime.fromtimestamp(stat.st_mtime).isoformat(),
+                "content": json.loads(path.read_text(encoding="utf-8-sig")),
+            }
+        )
+    except json.JSONDecodeError as exc:
+        payload["error"] = f"invalid json: {exc}"
+    except OSError as exc:
+        payload["error"] = str(exc)
+    return payload
+
+
+def _runtime_config_payload() -> dict:
+    return {
+        "portable_install": _is_portable_install(),
+        "files": {
+            CURRENT_VERSION_FILE: _json_config_file_payload(APP_ROOT / CURRENT_VERSION_FILE),
+            PORTABLE_RELEASE_MANIFEST_NAME: _json_config_file_payload(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME),
+            "window-state.json": _json_config_file_payload(APP_ROOT / "window-state.json"),
+        },
+    }
+
+
+def _selected_qr_engine(db: Session | None = None) -> str:
+    if db is None:
+        return INVOICE_QR_ENGINE_ZXING
+    settings = get_or_create_settings(db)
+    return normalize_invoice_qr_engine(settings.invoice_qr_engine)
+
+
+def _qr_engine_label(engine: str) -> str:
+    if engine == INVOICE_QR_ENGINE_OPENCV_WECHAT:
+        return "OpenCV WeChatQRCode"
+    return "zxing-cpp"
+
+
+def get_qr_engine_diagnostics(db: Session | None = None) -> DiagnosticQrEngineRead:
+    selected_engine = _selected_qr_engine(db)
+    runtime_manifest = get_installed_opencv_runtime()
+    model_paths = wechat_model_paths()
+    missing_models = [relative for relative, path in model_paths.items() if not path.exists()]
+    return DiagnosticQrEngineRead(
+        selected_engine=selected_engine,
+        selected_engine_label=_qr_engine_label(selected_engine),
+        opencv_runtime_installed=runtime_manifest is not None,
+        opencv_package_version=runtime_manifest.get("opencv_package_version") if runtime_manifest else None,
+        opencv_runtime_dir=OPENCV_RUNTIME_DIR.as_posix(),
+        opencv_model_files_complete=runtime_manifest is not None and not missing_models,
+        opencv_model_files_missing=missing_models,
+    )
+
+
+def get_browser_runtime_diagnostics() -> DiagnosticBrowserRuntimeRead:
+    error = None
+    webview2_available = False
+    chromium = None
+    try:
+        if is_webview2_available is not None:
+            webview2_available = bool(is_webview2_available())
+        if find_chromium_browser is not None:
+            chromium = find_chromium_browser()
+    except Exception as exc:
+        error = str(exc)
+
+    chromium_name = chromium[0] if chromium else None
+    chromium_path = chromium[1].as_posix() if chromium else None
+    if chromium_name == "Google Chrome":
+        preferred_runtime = "Google Chrome app-mode"
+    elif webview2_available:
+        preferred_runtime = "Microsoft Edge WebView2"
+    elif chromium_name:
+        preferred_runtime = f"{chromium_name} app-mode"
+    else:
+        preferred_runtime = "unavailable"
+
+    return DiagnosticBrowserRuntimeRead(
+        webview2_available=webview2_available,
+        chromium_available=chromium is not None,
+        chromium_name=chromium_name,
+        chromium_path=chromium_path,
+        preferred_runtime=preferred_runtime,
+        error=error,
+    )
+
+
+def get_log_file_diagnostics() -> DiagnosticLogFileRead:
+    log_path = LOG_DIR / "app.log"
+    if not log_path.exists() or not log_path.is_file():
+        return DiagnosticLogFileRead(path=log_path.as_posix(), exists=False)
+    stat = log_path.stat()
+    return DiagnosticLogFileRead(
+        path=log_path.as_posix(),
+        exists=True,
+        size_bytes=stat.st_size,
+        modified_at=datetime.fromtimestamp(stat.st_mtime).isoformat(),
+    )
+
+
+def _database_issue(
+    severity: str,
+    category: str,
+    code: str,
+    message: str,
+    *,
+    count: int = 0,
+    details: list[str] | None = None,
+) -> DatabaseIntegrityIssueRead:
+    return DatabaseIntegrityIssueRead(
+        severity=severity,
+        category=category,
+        code=code,
+        message=message,
+        count=count,
+        details=details or [],
+    )
+
+
+def _database_check_status(issues: list[DatabaseIntegrityIssueRead]) -> str:
+    if any(issue.severity == "error" for issue in issues):
+        return "error"
+    if issues:
+        return "warning"
+    return "ok"
+
+
+def _quote_identifier(value: str) -> str:
+    return f'"{value.replace(chr(34), chr(34) + chr(34))}"'
+
+
+def _open_readonly_database() -> sqlite3.Connection:
+    connection = sqlite3.connect(f"{DATABASE_PATH.resolve().as_uri()}?mode=ro", uri=True)
+    connection.row_factory = sqlite3.Row
+    return connection
+
+
+def _table_names(connection: sqlite3.Connection) -> set[str]:
+    return {
+        row["name"]
+        for row in connection.execute(
+            "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+        ).fetchall()
+    }
+
+
+def _table_counts(connection: sqlite3.Connection, tables: set[str]) -> dict[str, int]:
+    counts: dict[str, int] = {}
+    for table in sorted(tables):
+        counts[table] = int(connection.execute(f"SELECT COUNT(*) FROM {_quote_identifier(table)}").fetchone()[0])
+    return counts
+
+
+def _rows_issue(
+    issues: list[DatabaseIntegrityIssueRead],
+    rows: list[sqlite3.Row],
+    *,
+    severity: str,
+    category: str,
+    code: str,
+    message: str,
+    detail_builder,
+) -> None:
+    if not rows:
+        return
+    issues.append(
+        _database_issue(
+            severity,
+            category,
+            code,
+            message,
+            count=len(rows),
+            details=[detail_builder(row) for row in rows[:20]],
+        )
+    )
+
+
+def _append_duplicate_uid_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    if "expense_reports" in tables:
+        rows = connection.execute(
+            """
+            SELECT report_uid, COUNT(*) AS duplicate_count
+            FROM expense_reports
+            WHERE report_uid IS NOT NULL AND TRIM(report_uid) <> ''
+            GROUP BY report_uid
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="duplicate_report_uid",
+            message="存在重复报销单 UID",
+            detail_builder=lambda row: f"{row['report_uid']} ({row['duplicate_count']} 条)",
+        )
+    if "invoices" in tables:
+        rows = connection.execute(
+            """
+            SELECT invoice_uid, COUNT(*) AS duplicate_count
+            FROM invoices
+            WHERE invoice_uid IS NOT NULL AND TRIM(invoice_uid) <> ''
+            GROUP BY invoice_uid
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="duplicate_invoice_uid",
+            message="存在重复发票 UID",
+            detail_builder=lambda row: f"{row['invoice_uid']} ({row['duplicate_count']} 条)",
+        )
+
+
+def _append_business_integrity_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    _append_duplicate_uid_checks(connection, tables, issues)
+
+    if "expense_reports" in tables:
+        rows = connection.execute(
+            "SELECT id, status FROM expense_reports WHERE status NOT IN ('draft', 'printed', 'reimbursed')"
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="invalid_report_status",
+            message="存在无效报销单状态",
+            detail_builder=lambda row: f"report_id={row['id']}, status={row['status']}",
+        )
+
+    if {"trips", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT trips.id, trips.report_id
+            FROM trips
+            LEFT JOIN expense_reports ON expense_reports.id = trips.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_trip",
+            message="存在无所属报销单的行程",
+            detail_builder=lambda row: f"trip_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"expense_items", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT expense_items.id, expense_items.report_id
+            FROM expense_items
+            LEFT JOIN expense_reports ON expense_reports.id = expense_items.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_expense_item",
+            message="存在无所属报销单的费用项",
+            detail_builder=lambda row: f"expense_item_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"invoices", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id
+            FROM invoices
+            LEFT JOIN expense_reports ON expense_reports.id = invoices.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_invoice",
+            message="存在无所属报销单的发票",
+            detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
+        )
+
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id
+            FROM invoices
+            JOIN expense_reports ON expense_reports.id = invoices.report_id
+            WHERE expense_reports.deleted_at IS NOT NULL AND invoices.deleted_at IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="active_invoice_in_deleted_report",
+            message="已删除报销单下仍存在未删除发票",
+            detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
+        )
+
+    if {"invoices", "trips"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT invoices.id, invoices.report_id, invoices.trip_id, trips.report_id AS trip_report_id
+            FROM invoices
+            JOIN trips ON trips.id = invoices.trip_id
+            WHERE invoices.trip_id IS NOT NULL AND invoices.report_id != trips.report_id
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="invoice_trip_report_mismatch",
+            message="发票关联的行程不属于同一报销单",
+            detail_builder=lambda row: (
+                f"invoice_id={row['id']}, report_id={row['report_id']}, "
+                f"trip_id={row['trip_id']}, trip_report_id={row['trip_report_id']}"
+            ),
+        )
+
+    if "invoices" in tables:
+        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_EXPENSE_CATEGORIES))
+        rows = connection.execute(
+            f"""
+            SELECT id, expense_category
+            FROM invoices
+            WHERE expense_category NOT IN ({category_list})
+              AND expense_category NOT LIKE 'custom:%'
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="warning",
+            category="business",
+            code="unknown_invoice_category",
+            message="存在未知发票费用类别",
+            detail_builder=lambda row: f"invoice_id={row['id']}, category={row['expense_category']}",
+        )
+
+    if "expense_items" in tables:
+        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_EXPENSE_CATEGORIES))
+        rows = connection.execute(
+            f"""
+            SELECT id, category
+            FROM expense_items
+            WHERE category NOT IN ({category_list})
+              AND category NOT LIKE 'custom:%'
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="warning",
+            category="business",
+            code="unknown_expense_category",
+            message="存在未知费用项类别",
+            detail_builder=lambda row: f"expense_item_id={row['id']}, category={row['category']}",
+        )
+
+
+def _append_attachment_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    if "invoices" not in tables:
+        return
+    rows = connection.execute(
+        """
+        SELECT id, file_path
+        FROM invoices
+        WHERE deleted_at IS NULL AND file_path IS NOT NULL AND TRIM(file_path) <> ''
+        """
+    ).fetchall()
+    upload_root = UPLOAD_ROOT.resolve()
+    unsafe: list[str] = []
+    missing: list[str] = []
+    for row in rows:
+        file_path = str(row["file_path"])
+        try:
+            resolved = uploaded_path(file_path, UPLOAD_ROOT).resolve()
+        except OSError as exc:
+            unsafe.append(f"invoice_id={row['id']}, path={file_path}, error={exc}")
+            continue
+        if resolved != upload_root and not resolved.is_relative_to(upload_root):
+            unsafe.append(f"invoice_id={row['id']}, path={file_path}")
+            continue
+        if not resolved.exists():
+            missing.append(f"invoice_id={row['id']}, path={file_path}")
+
+    if unsafe:
+        issues.append(
+            _database_issue(
+                "error",
+                "attachments",
+                "unsafe_attachment_path",
+                "存在越界或不可解析的发票附件路径",
+                count=len(unsafe),
+                details=unsafe[:20],
+            )
+        )
+    if missing:
+        issues.append(
+            _database_issue(
+                "warning",
+                "attachments",
+                "missing_attachment_file",
+                "存在缺失的发票附件文件",
+                count=len(missing),
+                details=missing[:20],
+            )
+        )
+
+
+def check_database_integrity(db: Session | None = None) -> DatabaseIntegrityCheckRead:
+    del db
+    started = perf_counter()
+    checked_at = _utc_now().isoformat()
+    database_exists = DATABASE_PATH.exists()
+    database_size = DATABASE_PATH.stat().st_size if database_exists else 0
+    issues: list[DatabaseIntegrityIssueRead] = []
+    tables: dict[str, int] = {}
+    sqlite_integrity = None
+    foreign_key_issues = 0
+
+    if not database_exists:
+        issues.append(
+            _database_issue(
+                "error",
+                "database",
+                "database_missing",
+                "数据库文件不存在",
+                count=1,
+                details=[DATABASE_PATH.as_posix()],
+            )
+        )
+        return DatabaseIntegrityCheckRead(
+            status="error",
+            checked_at=checked_at,
+            elapsed_ms=round((perf_counter() - started) * 1000),
+            database_path=DATABASE_PATH.as_posix(),
+            database_exists=False,
+            database_size_bytes=0,
+            sqlite_integrity=None,
+            foreign_key_issues=0,
+            tables={},
+            issues=issues,
+        )
+
+    try:
+        connection = _open_readonly_database()
+    except sqlite3.Error as exc:
+        issues.append(
+            _database_issue(
+                "error",
+                "database",
+                "database_open_failed",
+                "数据库无法以只读方式打开",
+                count=1,
+                details=[str(exc)],
+            )
+        )
+        return DatabaseIntegrityCheckRead(
+            status="error",
+            checked_at=checked_at,
+            elapsed_ms=round((perf_counter() - started) * 1000),
+            database_path=DATABASE_PATH.as_posix(),
+            database_exists=True,
+            database_size_bytes=database_size,
+            sqlite_integrity=None,
+            foreign_key_issues=0,
+            tables={},
+            issues=issues,
+        )
+
+    try:
+        integrity_rows = [row[0] for row in connection.execute("PRAGMA integrity_check").fetchall()]
+        sqlite_integrity = "ok" if integrity_rows == ["ok"] else "; ".join(str(item) for item in integrity_rows)
+        if sqlite_integrity != "ok":
+            issues.append(
+                _database_issue(
+                    "error",
+                    "sqlite",
+                    "integrity_check_failed",
+                    "SQLite 物理完整性检查失败",
+                    count=len(integrity_rows),
+                    details=[str(item) for item in integrity_rows[:20]],
+                )
+            )
+
+        foreign_rows = connection.execute("PRAGMA foreign_key_check").fetchall()
+        foreign_key_issues = len(foreign_rows)
+        if foreign_rows:
+            issues.append(
+                _database_issue(
+                    "error",
+                    "sqlite",
+                    "foreign_key_check_failed",
+                    "SQLite 外键一致性检查失败",
+                    count=len(foreign_rows),
+                    details=[
+                        f"table={row[0]}, rowid={row[1]}, parent={row[2]}, fkid={row[3]}"
+                        for row in foreign_rows[:20]
+                    ],
+                )
+            )
+
+        table_set = _table_names(connection)
+        tables = _table_counts(connection, table_set)
+        _append_business_integrity_checks(connection, table_set, issues)
+        _append_attachment_checks(connection, table_set, issues)
+    finally:
+        connection.close()
+
+    return DatabaseIntegrityCheckRead(
+        status=_database_check_status(issues),
+        checked_at=checked_at,
+        elapsed_ms=round((perf_counter() - started) * 1000),
+        database_path=DATABASE_PATH.as_posix(),
+        database_exists=True,
+        database_size_bytes=database_size,
+        sqlite_integrity=sqlite_integrity,
+        foreign_key_issues=foreign_key_issues,
+        tables=tables,
+        issues=issues,
+    )
+
+
+def list_installed_versions(current_version: str | None = None) -> list[InstalledVersionRead]:
+    versions_root = APP_ROOT / VERSIONS_DIR_NAME
+    if not versions_root.is_dir():
+        return []
+
+    current = current_version if current_version is not None else _current_installed_version()
+    versions: list[InstalledVersionRead] = []
+    for version_dir in versions_root.iterdir():
+        if not version_dir.is_dir():
+            continue
+        version = version_dir.name
+        executable_path = version_dir / APP_EXE_NAME
+        try:
+            modified_at = datetime.fromtimestamp(version_dir.stat().st_mtime).isoformat()
+        except OSError:
+            modified_at = None
+        manifest = _version_manifest(version, version_dir)
+        versions.append(
+            InstalledVersionRead(
+                version=version,
+                version_dir=version_dir.as_posix(),
+                executable_path=executable_path.as_posix(),
+                executable_exists=executable_path.is_file(),
+                current=version == current,
+                modified_at=modified_at,
+                data_compatibility=_data_compatibility(manifest, version),
+            )
+        )
+
+    versions.sort(key=lambda item: (not item.current, item.modified_at or "", item.version), reverse=False)
+    return versions
+
+
+def delete_installed_version(version: str, confirm_delete: bool) -> VersionDeleteRead:
+    if not confirm_delete:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能删除版本")
+
+    target_version = _safe_version(version)
+    current_version = _current_installed_version()
+    if target_version == current_version:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除当前正在使用的版本")
+
+    versions_root = APP_ROOT / VERSIONS_DIR_NAME
+    target_version_dir = _path_inside(versions_root, target_version)
+    if not target_version_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
+
+    deleted_path = target_version_dir.as_posix()
+    try:
+        shutil.rmtree(target_version_dir)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除版本失败：{exc}") from exc
+    return VersionDeleteRead(deleted=True, version=target_version, deleted_path=deleted_path)
+
+
+def cleanup_old_installed_versions(confirm_cleanup: bool) -> VersionCleanupRead:
+    if not confirm_cleanup:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理旧版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能清理版本")
+
+    current_version = _current_installed_version()
+    deleted_versions = [
+        delete_installed_version(version.version, confirm_delete=True)
+        for version in list_installed_versions(current_version)
+        if not version.current
+    ]
+    return VersionCleanupRead(deleted_versions=deleted_versions)
+
+
+def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
     current_version = _current_installed_version()
     current_version_dir = None
     if current_version:
@@ -242,6 +1115,7 @@ def get_maintenance_info() -> MaintenanceInfoRead:
         current_version=current_version,
         current_version_dir=current_version_dir,
         launcher_path=(APP_ROOT / APP_EXE_NAME).as_posix(),
+        installed_versions=list_installed_versions(current_version),
         data_dir=DATA_DIR.as_posix(),
         database_path=DATABASE_PATH.as_posix(),
         uploads_dir=UPLOAD_ROOT.as_posix(),
@@ -250,6 +1124,9 @@ def get_maintenance_info() -> MaintenanceInfoRead:
         database_exists=DATABASE_PATH.exists(),
         uploads_exists=UPLOAD_ROOT.exists(),
         backups=list_backups(),
+        qr_engine=get_qr_engine_diagnostics(db),
+        browser_runtime=get_browser_runtime_diagnostics(),
+        log_file=get_log_file_diagnostics(),
     )
 
 
@@ -300,11 +1177,134 @@ def create_backup(reason: str = "manual") -> BackupRead:
     return _backup_read(backup_path)
 
 
+def _session_database_path(db: Session) -> Path | None:
+    try:
+        database = db.get_bind().url.database
+    except Exception:
+        return None
+    if not database or database == ":memory:":
+        return None
+    return Path(database).resolve()
+
+
+def _session_uses_runtime_database(db: Session) -> bool:
+    session_path = _session_database_path(db)
+    if session_path is None:
+        return False
+    runtime_path = DATABASE_PATH.resolve()
+    try:
+        return session_path.samefile(runtime_path)
+    except OSError:
+        return session_path == runtime_path
+
+
+def create_safety_snapshot(db: Session, reason: str) -> BackupRead | None:
+    if not _session_uses_runtime_database(db):
+        return None
+    return create_backup(reason=reason)
+
+
 def get_backup_file(backup_id: str) -> Path:
     path = _backup_path(backup_id)
     if not path.exists() or not path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="备份不存在")
     return path
+
+
+def _desktop_file_dialog_enabled() -> bool:
+    return sys.platform == "win32" and (
+        os.environ.get("REIMBURSEMENT_DESKTOP_MODE") == "1" or bool(getattr(sys, "frozen", False))
+    )
+
+
+def _open_windows_zip_file_dialog(initial_dir: Path, title: str) -> Path | None:
+    if sys.platform != "win32":
+        raise RuntimeError("Windows file dialog is not available on this platform")
+
+    import ctypes
+    from ctypes import wintypes
+
+    class OpenFileNameW(ctypes.Structure):
+        _fields_ = [
+            ("lStructSize", wintypes.DWORD),
+            ("hwndOwner", wintypes.HWND),
+            ("hInstance", wintypes.HINSTANCE),
+            ("lpstrFilter", wintypes.LPCWSTR),
+            ("lpstrCustomFilter", wintypes.LPWSTR),
+            ("nMaxCustFilter", wintypes.DWORD),
+            ("nFilterIndex", wintypes.DWORD),
+            ("lpstrFile", wintypes.LPWSTR),
+            ("nMaxFile", wintypes.DWORD),
+            ("lpstrFileTitle", wintypes.LPWSTR),
+            ("nMaxFileTitle", wintypes.DWORD),
+            ("lpstrInitialDir", wintypes.LPCWSTR),
+            ("lpstrTitle", wintypes.LPCWSTR),
+            ("Flags", wintypes.DWORD),
+            ("nFileOffset", wintypes.WORD),
+            ("nFileExtension", wintypes.WORD),
+            ("lpstrDefExt", wintypes.LPCWSTR),
+            ("lCustData", wintypes.LPARAM),
+            ("lpfnHook", ctypes.c_void_p),
+            ("lpTemplateName", wintypes.LPCWSTR),
+            ("pvReserved", ctypes.c_void_p),
+            ("dwReserved", wintypes.DWORD),
+            ("FlagsEx", wintypes.DWORD),
+        ]
+
+    file_buffer = ctypes.create_unicode_buffer(32768)
+    file_filter = "ZIP 文件 (*.zip)\0*.zip\0所有文件 (*.*)\0*.*\0\0"
+    ofn = OpenFileNameW()
+    ofn.lStructSize = ctypes.sizeof(OpenFileNameW)
+    ofn.lpstrFilter = file_filter
+    ofn.nFilterIndex = 1
+    ofn.lpstrFile = file_buffer
+    ofn.nMaxFile = len(file_buffer)
+    ofn.lpstrInitialDir = initial_dir.as_posix()
+    ofn.lpstrTitle = title
+    ofn.lpstrDefExt = "zip"
+    ofn.Flags = 0x00000008 | 0x00000800 | 0x00001000 | 0x00080000
+
+    comdlg32 = ctypes.windll.comdlg32
+    comdlg32.GetOpenFileNameW.argtypes = [ctypes.POINTER(OpenFileNameW)]
+    comdlg32.GetOpenFileNameW.restype = wintypes.BOOL
+    comdlg32.CommDlgExtendedError.restype = wintypes.DWORD
+    if comdlg32.GetOpenFileNameW(ctypes.byref(ofn)):
+        return Path(file_buffer.value)
+
+    error_code = int(comdlg32.CommDlgExtendedError())
+    if error_code == 0:
+        return None
+    raise RuntimeError(f"Windows file dialog failed: {error_code}")
+
+
+def _open_backup_zip_file_dialog() -> Path | None:
+    if not _desktop_file_dialog_enabled():
+        raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail="本地文件选择器仅在桌面版可用")
+    BACKUP_ROOT.mkdir(parents=True, exist_ok=True)
+    return _open_windows_zip_file_dialog(BACKUP_ROOT, "选择备份 ZIP")
+
+
+def create_restore_preview_from_path(package_source_path: Path) -> RestorePreviewRead:
+    if not package_source_path.exists() or not package_source_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="备份文件不存在")
+
+    preview_id = uuid4().hex
+    preview_dir = RESTORE_STAGING_ROOT / preview_id
+    preview_dir.mkdir(parents=True, exist_ok=False)
+    package_path = preview_dir / "backup.zip"
+    shutil.copy2(package_source_path, package_path)
+
+    manifest, archive = _load_valid_backup(package_path)
+    archive.close()
+    return _preview_from_manifest(preview_id, package_path, manifest)
+
+
+def create_restore_preview_from_backup_dialog() -> RestoreDialogPreviewRead:
+    selected_path = _open_backup_zip_file_dialog()
+    if selected_path is None:
+        return RestoreDialogPreviewRead(selected=False)
+    preview = create_restore_preview_from_path(selected_path)
+    return RestoreDialogPreviewRead(selected=True, filename=selected_path.name, preview=preview)
 
 
 def create_restore_preview(upload_file: UploadFile) -> RestorePreviewRead:
@@ -506,6 +1506,7 @@ def _preview_update_from_manifest(preview_id: str, package_path: Path, manifest:
         size_bytes=package_path.stat().st_size,
         version_dir=f"{VERSIONS_DIR_NAME}/{version}",
         executable_path=f"{VERSIONS_DIR_NAME}/{version}/{APP_EXE_NAME}",
+        data_compatibility=_data_compatibility(manifest, version),
     )
 
 
@@ -574,7 +1575,9 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
     previous_version = _current_installed_version()
     target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / version
     if target_version_dir.exists():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"版本目录已存在：{target_version_dir}")
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"版本目录已存在：{target_version_dir}。请使用已安装版本切换。")
+    data_compatibility = _data_compatibility(manifest, version)
+    _require_data_compatible(data_compatibility)
 
     work_root = UPDATE_STAGING_ROOT / _safe_preview_id(preview_id) / "work"
     extracted_root = work_root / "extracted"
@@ -592,20 +1595,17 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
         pre_update_backup = create_backup(reason="pre_update")
         (APP_ROOT / VERSIONS_DIR_NAME).mkdir(parents=True, exist_ok=True)
         shutil.move(str(extracted_version_dir), str(target_version_dir))
+        (target_version_dir / PORTABLE_RELEASE_MANIFEST_NAME).write_text(
+            json.dumps(manifest, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
 
         for name in (APP_EXE_NAME, PORTABLE_RELEASE_MANIFEST_NAME, "README.md", "zip-upgrade-guide.md", "upgrade_zip_release.ps1"):
             source = extracted_root / name
             if source.exists() and source.is_file():
                 shutil.copy2(source, APP_ROOT / name)
 
-        current_payload = {
-            "current_version": version,
-            "previous_version": previous_version,
-            "updated_at": _utc_now().isoformat(),
-        }
-        temp_current = APP_ROOT / f"{CURRENT_VERSION_FILE}.tmp"
-        temp_current.write_text(json.dumps(current_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        temp_current.replace(APP_ROOT / CURRENT_VERSION_FILE)
+        _write_current_version(version, previous_version, timestamp_key="updated_at", manifest=manifest)
     finally:
         try:
             shutil.rmtree(work_root)
@@ -619,12 +1619,244 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
         pre_update_backup=pre_update_backup,
         restart_required=True,
         version_dir=(APP_ROOT / VERSIONS_DIR_NAME / version).as_posix(),
+        data_compatibility=data_compatibility,
     )
 
 
-def build_diagnostics_json() -> tuple[bytes, str]:
-    info = get_maintenance_info()
+def switch_installed_version(version: str, confirm_switch: bool) -> VersionSwitchRead:
+    if not confirm_switch:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="切换版本需要二次确认")
+    if not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能切换版本")
+
+    target_version = _safe_version(version)
+    previous_version = _current_installed_version()
+    target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / target_version
+    target_exe = target_version_dir / APP_EXE_NAME
+    if not target_version_dir.is_dir():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
+    if not target_exe.is_file():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"版本目录缺少可执行程序：{target_exe}")
+    if previous_version == target_version:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="目标版本已经是当前版本")
+    manifest = _version_manifest(target_version, target_version_dir)
+    data_compatibility = _data_compatibility(manifest, target_version)
+    _require_data_compatible(data_compatibility)
+
+    pre_switch_backup = create_backup(reason="pre_version_switch")
+    _write_current_version(target_version, previous_version, timestamp_key="switched_at", manifest=manifest)
+    return VersionSwitchRead(
+        switched=True,
+        app_version=target_version,
+        previous_version=previous_version,
+        pre_switch_backup=pre_switch_backup,
+        restart_required=True,
+        version_dir=target_version_dir.as_posix(),
+        data_compatibility=data_compatibility,
+    )
+
+
+def _read_desktop_browser_pid() -> int | None:
+    value = os.environ.get(DESKTOP_BROWSER_PID_ENV)
+    if not value:
+        return None
+    try:
+        pid = int(value)
+    except ValueError:
+        return None
+    return pid if pid > 0 else None
+
+
+def _post_close_to_process_windows(pid: int) -> int:
+    if sys.platform != "win32":
+        return 0
+
+    try:
+        import ctypes
+        from ctypes import wintypes
+    except ImportError:
+        return 0
+
+    user32 = ctypes.windll.user32
+    wm_close = 0x0010
+    closed_count = 0
+
+    def enum_handler(hwnd, _lparam):
+        nonlocal closed_count
+        if not user32.IsWindowVisible(hwnd):
+            return True
+
+        process_id = wintypes.DWORD()
+        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+        if int(process_id.value) != pid:
+            return True
+
+        user32.PostMessageW(hwnd, wm_close, 0, 0)
+        closed_count += 1
+        return True
+
+    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(enum_handler)
+    user32.EnumWindows(callback, 0)
+    return closed_count
+
+
+def _wait_for_process_exit(pid: int, timeout_seconds: float) -> bool:
+    if sys.platform != "win32":
+        return False
+
+    try:
+        import ctypes
+    except ImportError:
+        return False
+
+    kernel32 = ctypes.windll.kernel32
+    synchronize = 0x00100000
+    wait_object_0 = 0x00000000
+    handle = kernel32.OpenProcess(synchronize, False, pid)
+    if not handle:
+        return False
+    try:
+        result = kernel32.WaitForSingleObject(handle, int(timeout_seconds * 1000))
+        return result == wait_object_0
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def _terminate_process_tree(pid: int, timeout_seconds: float = 3.0) -> bool:
+    if sys.platform != "win32":
+        return False
+
+    try:
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return result.returncode == 0
+
+
+def _close_desktop_browser_window(wait_seconds: float = 4.0) -> bool:
+    pid = _read_desktop_browser_pid()
+    if pid is None:
+        return False
+
+    posted_count = _post_close_to_process_windows(pid)
+    if posted_count and _wait_for_process_exit(pid, wait_seconds):
+        return True
+
+    return _terminate_process_tree(pid)
+
+
+def _schedule_application_restart(launcher_path: Path, delay_seconds: float = 0.8) -> None:
+    def restart_after_response() -> None:
+        time.sleep(delay_seconds)
+        _close_desktop_browser_window()
+        try:
+            subprocess.Popen([str(launcher_path)], cwd=str(APP_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        except OSError:
+            return
+        os._exit(0)
+
+    thread = threading.Thread(target=restart_after_response, name="maintenance-restart", daemon=False)
+    thread.start()
+
+
+def request_application_restart() -> RestartRead:
+    if not _desktop_file_dialog_enabled() or not _is_portable_install():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行方式不支持程序内重启")
+    launcher_path = APP_ROOT / APP_EXE_NAME
+    if not launcher_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到程序启动器，无法重启")
+    _schedule_application_restart(launcher_path)
+    return RestartRead(restart_scheduled=True, launcher_path=launcher_path.as_posix())
+
+
+def _environment_payload() -> dict:
+    return {
+        "python_version": sys.version,
+        "platform": platform.platform(),
+        "machine": platform.machine(),
+        "processor": platform.processor(),
+        "executable": sys.executable,
+        "frozen": bool(getattr(sys, "frozen", False)),
+        "cwd": Path.cwd().as_posix(),
+        "environment": {
+            key: value
+            for key in ("REIMBURSEMENT_APP_ROOT", "REIMBURSEMENT_APP_VERSION", "PYTHONPATH")
+            if (value := os.environ.get(key))
+        },
+    }
+
+
+def _diagnostic_bool(value: bool | None) -> str:
+    if value is None:
+        return "-"
+    return "是" if value else "否"
+
+
+def _diagnostics_summary_text(diagnostics: dict) -> bytes:
+    paths = diagnostics.get("paths") or {}
+    state = diagnostics.get("state") or {}
+    database_check = diagnostics.get("database_check") or {}
+    qr_engine = diagnostics.get("qr_engine") or {}
+    browser = diagnostics.get("browser_runtime") or {}
+    log_file = diagnostics.get("log_file") or {}
+    log_size = int(log_file.get("size_bytes") or 0)
+    log_truncated = bool(log_size > LOG_TAIL_BYTES)
+    log_size_suffix = f"，{log_size} bytes" if log_file.get("exists") else ""
+    log_truncated_suffix = "，诊断包仅包含尾部日志" if log_truncated else ""
+    opencv_version = qr_engine.get("opencv_package_version")
+    opencv_version_suffix = f"，版本 {opencv_version}" if opencv_version else ""
+    chromium_path = browser.get("chromium_path")
+    chromium_path_suffix = f"，{chromium_path}" if chromium_path else ""
+    lines = [
+        "报销管理诊断摘要",
+        "",
+        f"生成时间: {diagnostics.get('generated_at') or '-'}",
+        f"程序版本: {diagnostics.get('app_version') or '-'}",
+        f"当前版本: {state.get('current_version') or '-'}",
+        f"便携安装: {_diagnostic_bool(state.get('portable_install'))}",
+        f"安装根目录: {paths.get('app_root') or '-'}",
+        f"当前版本目录: {state.get('current_version_dir') or '-'}",
+        f"数据目录: {paths.get('data_dir') or '-'}",
+        f"数据库路径: {paths.get('database_path') or '-'}",
+        f"日志路径: {log_file.get('path') or paths.get('logs_dir') or '-'}",
+        f"日志状态: {'已生成' if log_file.get('exists') else '未生成'}"
+        f"{log_size_suffix}"
+        f"{log_truncated_suffix}",
+        "",
+        "运行能力",
+        f"QR 引擎: {qr_engine.get('selected_engine_label') or qr_engine.get('selected_engine') or '-'}",
+        f"OpenCV runtime: {_diagnostic_bool(qr_engine.get('opencv_runtime_installed'))}"
+        f"{opencv_version_suffix}",
+        f"OpenCV 模型完整: {_diagnostic_bool(qr_engine.get('opencv_model_files_complete'))}",
+        f"浏览器/WebView2: {browser.get('preferred_runtime') or '-'}",
+        f"WebView2 可用: {_diagnostic_bool(browser.get('webview2_available'))}",
+        f"Chromium: {browser.get('chromium_name') or '-'}"
+        f"{chromium_path_suffix}",
+        "",
+        "数据库检查",
+        f"状态: {database_check.get('status') or '-'}",
+        f"SQLite integrity_check: {database_check.get('sqlite_integrity') or '-'}",
+        f"外键问题数: {database_check.get('foreign_key_issues') or 0}",
+        f"业务问题数: {len(database_check.get('issues') or [])}",
+        "",
+        "诊断包内容",
+        "已包含: diagnostics.json、summary.txt、config/settings.json、config/runtime.json、env/environment.json、logs/app.log（如存在）。",
+        "不包含: data/expense.db、uploads/ 附件、备份 ZIP。",
+    ]
+    return ("\n".join(lines) + "\n").encode("utf-8")
+
+
+def _diagnostics_payload(db: Session | None = None) -> dict:
+    info = get_maintenance_info(db)
+    settings = _settings_payload(db)
     payload = {
+        "schema_version": 1,
         "app_version": APP_VERSION,
         "generated_at": _utc_now().isoformat(),
         "paths": {
@@ -638,11 +1870,60 @@ def build_diagnostics_json() -> tuple[bytes, str]:
         "state": {
             "portable_install": info.portable_install,
             "current_version": info.current_version,
+            "current_version_dir": info.current_version_dir,
             "database_exists": info.database_exists,
             "uploads_exists": info.uploads_exists,
             "backups_total": len(info.backups),
         },
+        "database_check": check_database_integrity(db).model_dump(),
+        "qr_engine": info.qr_engine.model_dump() if info.qr_engine else None,
+        "browser_runtime": info.browser_runtime.model_dump() if info.browser_runtime else None,
+        "log_file": info.log_file.model_dump() if info.log_file else None,
+        "settings": settings,
+        "runtime_config": _runtime_config_payload(),
+        "environment": _environment_payload(),
         "backups": [backup.model_dump() for backup in info.backups[:20]],
     }
+    return payload
+
+
+def build_diagnostics_json(db: Session | None = None) -> tuple[bytes, str]:
+    payload = _diagnostics_payload(db)
     filename = f"reimbursement-diagnostics-{_timestamp()}.json"
     return _write_json_bytes(payload), filename
+
+
+def build_diagnostics_package(db: Session | None = None) -> tuple[bytes, str]:
+    diagnostics = _diagnostics_payload(db)
+    settings = diagnostics.get("settings") or {"available": False}
+    runtime_config = diagnostics.get("runtime_config") or {}
+    environment = diagnostics.get("environment") or {}
+    files: list[dict] = []
+    payload = BytesIO()
+    log_tail = _read_log_tail()
+    with zipfile.ZipFile(payload, mode="w", compression=zipfile.ZIP_DEFLATED) as archive:
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(diagnostics), "diagnostics.json"))
+        files.append(_zip_bytes_entry(archive, _diagnostics_summary_text(diagnostics), "summary.txt"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(settings), "config/settings.json"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(runtime_config), "config/runtime.json"))
+        files.append(_zip_bytes_entry(archive, _write_json_bytes(environment), "env/environment.json"))
+        if log_tail:
+            files.append(_zip_bytes_entry(archive, log_tail, "logs/app.log"))
+
+        manifest = {
+            "schema_version": 1,
+            "package_type": "reimbursement_diagnostics",
+            "app_version": APP_VERSION,
+            "generated_at": diagnostics["generated_at"],
+            "log_tail_bytes": LOG_TAIL_BYTES,
+            "log_truncated": bool(
+                diagnostics.get("log_file", {}).get("size_bytes", 0) > LOG_TAIL_BYTES
+                if diagnostics.get("log_file")
+                else False
+            ),
+            "files": files,
+        }
+        archive.writestr("manifest.json", _write_json_bytes(manifest))
+
+    filename = f"reimbursement-diagnostics-{_timestamp()}.zip"
+    return payload.getvalue(), filename

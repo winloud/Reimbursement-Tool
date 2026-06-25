@@ -20,11 +20,11 @@
 
 ## 二、当前状态
 
-- 当前稳定版：`v1.1.1`
+- 当前稳定版：`v1.2.1`
 - 当前开发版：TBD
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
-- 发布方式：本地生成 ZIP，不同步上传；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
+- 发布方式：本地生成 ZIP；正式版本通过 `vX.Y.Z` tag 触发 GitHub Release workflow；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
 - 默认发票二维码识别路线：`zxing-cpp`
 - 可选兼容路线：`OpenCV + NumPy + WeChatQRCode`，通过 EXE 同目录 runtime ZIP 本地安装
 
@@ -42,7 +42,7 @@
 ### 发票与 PDF
 
 - 支持 PDF 和图片发票上传；XML / OFD 发票当前不支持。
-- PDF 发票默认使用 PyMuPDF 渲染第一页，并通过 `zxing-cpp` 识别二维码；OpenCV WeChatQRCode 作为可选兼容模式。
+- PDF 发票逐页识别二维码，多页多发票 PDF 可拆分为多条发票记录；图片发票也通过二维码识别。
 - 新上传发票默认需要用户确认金额；未确认发票不计入汇总，也不允许生成 PDF。
 - 支持报销单页预览、报销单和发票附件合并下载、PDF 字体设置、增值税专用发票附件打印两遍设置。
 
@@ -50,6 +50,8 @@
 
 - SQLite 本地存储，运行态数据位于便携安装根目录 `data/`、`uploads/`、`logs/`。
 - 支持完整报销数据 ZIP 导入导出，导入执行前自动备份数据库和受影响附件。
+- 独立“数据维护”页面支持完整备份、恢复预览、恢复执行、程序内更新、已安装版本切换、备份/版本清理、数据库检查和诊断包导出。
+- 程序内更新和版本切换包含数据结构兼容性门禁；缺少兼容性信息或不兼容时禁止自动安装或切换。
 - 看板支持金额汇总、月份范围、费用分布、趋势图和出差负荷热力图。
 
 ### 发布与运行
@@ -66,6 +68,8 @@
 
 | 版本 | 状态 | 文档 |
 | --- | --- | --- |
+| `v1.2.1` | 已发布 | [releases/v1.2.1-plan.md](releases/v1.2.1-plan.md) |
+| `v1.2.0` | 已发布 | [releases/v1.2.0-plan.md](releases/v1.2.0-plan.md) |
 | `v1.1.1` | 已发布 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | `v1.1.0` | 已发布 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
 | 当前开发 | 规划中 | [releases/active-plan.md](releases/active-plan.md) |
@@ -85,6 +89,8 @@
 
 | 测试 | 结论 | 文档 |
 | --- | --- | --- |
+| V1.2.1 发布验证 | 发布预检、GitHub Release workflow、Release notes 和资产均已验证 | [releases/v1.2.1-plan.md](releases/v1.2.1-plan.md) |
+| V1.2.0 发布验证 | 后端、前端工具测试、前端构建、CHANGELOG 提取、主 ZIP、ZIP 内容检查和 GitHub Release 均已验证 | [releases/v1.2.0-plan.md](releases/v1.2.0-plan.md) |
 | V1.1.1 发布验证 | 后端、前端工具测试、前端构建、CHANGELOG 提取、主 ZIP、ZIP 内容检查和 GitHub Release 均已验证 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | 发票 QR 两路线对照测试 | `test example/` 240 个 PDF 中，zxing 与 OpenCV payload 和最终解析结果均 `240/240` 一致 | [testing/invoice_qr_route_comparison_2026-06-09.md](testing/invoice_qr_route_comparison_2026-06-09.md) |
 | V1.1.0 发布验证 | 后端、前端工具测试、前端构建、主 ZIP、可选 OpenCV runtime、冻结 EXE 短启动均已验证 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
@@ -95,6 +101,6 @@
 
 优先级建议：
 
-1. 完成便携式 ZIP 安装根目录、程序内更新和发布包结构验证。
-2. 完善正式发布 README 中的首次安装、从旧 ZIP 迁移和程序内更新说明。
-3. 完善发布后的 GitHub Actions 结果回查和 Release 资产校验记录。
+1. 评估增量包和增量更新，继续保留全量 ZIP 作为主交付方式。
+2. 根据实际使用反馈打磨数据维护页的更新、备份和诊断流程。
+3. 继续补齐发布后 GitHub Actions 结果回查和 Release 资产校验记录。

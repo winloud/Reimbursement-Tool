@@ -566,6 +566,7 @@ export default function ReportEdit() {
         return;
       }
       setPdfPreviewPages(res.data?.pages || []);
+      await loadForEdit({ quiet: true });
       setPdfPreviewOpen(true);
     } catch (err) {
       setError(getApiErrorMessage(err, "生成 PDF 预览失败"));

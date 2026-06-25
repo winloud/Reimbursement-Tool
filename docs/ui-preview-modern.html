@@ -1,0 +1,693 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>报销管理系统 - 现代简约风格预览</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+            background: #F7F5F1;
+            color: #1E2227;
+            line-height: 1.6;
+        }
+
+        /* Sidebar */
+        .app-layout {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        .sidebar {
+            width: 260px;
+            background: white;
+            border-right: 1px solid #E7E3DA;
+            padding: 32px 24px;
+            position: sticky;
+            top: 0;
+            height: 100vh;
+            overflow-y: auto;
+        }
+
+        .logo {
+            margin-bottom: 32px;
+        }
+
+        .logo h1 {
+            font-size: 24px;
+            font-weight: 700;
+            margin-bottom: 4px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .logo p {
+            font-size: 13px;
+            color: #6B7077;
+        }
+
+        .new-report-btn {
+            width: 100%;
+            padding: 14px 20px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-size: 15px;
+            font-weight: 600;
+            cursor: pointer;
+            margin-bottom: 24px;
+            transition: all 0.3s ease;
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.25);
+        }
+
+        .new-report-btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.35);
+        }
+
+        .nav-menu {
+            list-style: none;
+        }
+
+        .nav-item {
+            margin-bottom: 8px;
+        }
+
+        .nav-link {
+            display: flex;
+            align-items: center;
+            padding: 12px 16px;
+            color: #6B7077;
+            text-decoration: none;
+            border-radius: 10px;
+            transition: all 0.2s ease;
+            font-weight: 500;
+        }
+
+        .nav-link:hover {
+            background: rgba(102, 126, 234, 0.08);
+            color: #667eea;
+        }
+
+        .nav-link.active {
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.1) 0%, rgba(118, 75, 162, 0.1) 100%);
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .nav-icon {
+            width: 20px;
+            height: 20px;
+            margin-right: 12px;
+        }
+
+        /* Main Content */
+        .main-content {
+            flex: 1;
+            padding: 40px;
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .page-header {
+            margin-bottom: 40px;
+        }
+
+        .page-title {
+            font-size: 32px;
+            font-weight: 700;
+            margin-bottom: 8px;
+        }
+
+        .page-subtitle {
+            font-size: 16px;
+            color: #6B7077;
+        }
+
+        /* Stats Cards */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .stat-card {
+            background: white;
+            padding: 28px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            transition: all 0.3s ease;
+            cursor: pointer;
+        }
+
+        .stat-card:hover {
+            transform: translateY(-4px);
+            box-shadow: 0 8px 24px rgba(102, 126, 234, 0.15);
+        }
+
+        .stat-label {
+            font-size: 14px;
+            color: #6B7077;
+            margin-bottom: 12px;
+            font-weight: 500;
+        }
+
+        .stat-value {
+            font-size: 36px;
+            font-weight: 700;
+            margin-bottom: 8px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .stat-meta {
+            font-size: 13px;
+            color: #6B7077;
+        }
+
+        /* Chart Cards */
+        .chart-grid {
+            display: grid;
+            grid-template-columns: 1.5fr 1fr;
+            gap: 24px;
+            margin-bottom: 40px;
+        }
+
+        .chart-card {
+            background: white;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .chart-header {
+            margin-bottom: 24px;
+        }
+
+        .chart-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 6px;
+        }
+
+        .chart-subtitle {
+            font-size: 14px;
+            color: #6B7077;
+        }
+
+        .chart-placeholder {
+            height: 300px;
+            background: linear-gradient(135deg, rgba(102, 126, 234, 0.05) 0%, rgba(118, 75, 162, 0.05) 100%);
+            border-radius: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #6B7077;
+            font-size: 14px;
+        }
+
+        /* Trip Calendar */
+        .calendar-card {
+            background: white;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            margin-bottom: 40px;
+        }
+
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, 1fr);
+            gap: 8px;
+            margin-top: 24px;
+        }
+
+        .calendar-day {
+            aspect-ratio: 1;
+            background: #F7F5F1;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 13px;
+            color: #6B7077;
+            transition: all 0.2s ease;
+        }
+
+        .calendar-day.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            font-weight: 600;
+        }
+
+        .calendar-day:hover:not(.active) {
+            background: rgba(102, 126, 234, 0.1);
+        }
+
+        /* Filter Bar */
+        .filter-bar {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .filter-row {
+            display: flex;
+            gap: 16px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .filter-input {
+            flex: 1;
+            min-width: 200px;
+            padding: 12px 16px;
+            border: 1px solid #E7E3DA;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .filter-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .filter-btn {
+            padding: 12px 20px;
+            border: 1px solid #E7E3DA;
+            background: white;
+            border-radius: 10px;
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .filter-btn:hover {
+            border-color: #667eea;
+            color: #667eea;
+        }
+
+        .filter-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border-color: transparent;
+        }
+
+        /* Table */
+        .table-card {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            overflow: hidden;
+        }
+
+        .table {
+            width: 100%;
+            border-collapse: collapse;
+        }
+
+        .table thead {
+            background: #F7F5F1;
+        }
+
+        .table th {
+            padding: 16px 20px;
+            text-align: left;
+            font-size: 13px;
+            font-weight: 600;
+            color: #6B7077;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .table td {
+            padding: 20px;
+            border-top: 1px solid #E7E3DA;
+            font-size: 14px;
+        }
+
+        .table tbody tr {
+            transition: all 0.2s ease;
+        }
+
+        .table tbody tr:hover {
+            background: rgba(102, 126, 234, 0.03);
+        }
+
+        .status-badge {
+            display: inline-block;
+            padding: 6px 12px;
+            border-radius: 20px;
+            font-size: 12px;
+            font-weight: 600;
+        }
+
+        .status-badge.draft {
+            background: rgba(107, 112, 119, 0.1);
+            color: #6B7077;
+        }
+
+        .status-badge.printed {
+            background: rgba(102, 126, 234, 0.1);
+            color: #667eea;
+        }
+
+        .status-badge.reimbursed {
+            background: rgba(22, 163, 74, 0.1);
+            color: #16A34A;
+        }
+
+        .action-btn {
+            padding: 8px 16px;
+            background: transparent;
+            border: 1px solid #E7E3DA;
+            border-radius: 8px;
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            margin-right: 8px;
+        }
+
+        .action-btn:hover {
+            border-color: #667eea;
+            color: #667eea;
+            background: rgba(102, 126, 234, 0.05);
+        }
+
+        .action-btn.primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+        }
+
+        .action-btn.primary:hover {
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(102, 126, 234, 0.3);
+        }
+
+        /* Report Edit Form */
+        .form-section {
+            background: white;
+            padding: 32px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            margin-bottom: 24px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 700;
+            margin-bottom: 24px;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 20px;
+        }
+
+        .form-field {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-label {
+            font-size: 14px;
+            font-weight: 500;
+            color: #1E2227;
+            margin-bottom: 8px;
+        }
+
+        .form-input {
+            padding: 12px 16px;
+            border: 1px solid #E7E3DA;
+            border-radius: 10px;
+            font-size: 14px;
+            transition: all 0.2s ease;
+        }
+
+        .form-input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        /* Trip Card */
+        .trip-card {
+            background: white;
+            padding: 24px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .trip-card:hover {
+            box-shadow: 0 4px 20px rgba(102, 126, 234, 0.12);
+        }
+
+        .trip-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .trip-title {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        .trip-actions {
+            display: flex;
+            gap: 8px;
+        }
+
+        .icon-btn {
+            width: 32px;
+            height: 32px;
+            border: none;
+            background: rgba(102, 126, 234, 0.1);
+            border-radius: 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .icon-btn:hover {
+            background: rgba(102, 126, 234, 0.2);
+        }
+
+        /* Invoice Upload */
+        .upload-zone {
+            border: 2px dashed rgba(102, 126, 234, 0.3);
+            background: rgba(102, 126, 234, 0.05);
+            padding: 32px;
+            border-radius: 12px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .upload-zone:hover {
+            border-color: #667eea;
+            background: rgba(102, 126, 234, 0.08);
+        }
+
+        /* Summary Sidebar */
+        .summary-sidebar {
+            position: sticky;
+            top: 40px;
+            background: white;
+            padding: 28px;
+            border-radius: 16px;
+            box-shadow: 0 2px 12px rgba(102, 126, 234, 0.08);
+            border: 1px solid rgba(102, 126, 234, 0.1);
+        }
+
+        .summary-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 12px 0;
+            border-bottom: 1px solid #E7E3DA;
+        }
+
+        .summary-label {
+            font-size: 14px;
+            color: #6B7077;
+        }
+
+        .summary-value {
+            font-size: 14px;
+            font-weight: 600;
+        }
+
+        .summary-total {
+            margin-top: 20px;
+            padding-top: 20px;
+            border-top: 2px solid #E7E3DA;
+        }
+
+        .summary-total .summary-value {
+            font-size: 28px;
+            font-weight: 700;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        @media (max-width: 1024px) {
+            .app-layout { flex-direction: column; }
+            .sidebar { width: 100%; height: auto; position: static; }
+            .chart-grid { grid-template-columns: 1fr; }
+        }
+
+        @media (max-width: 768px) {
+            .main-content { padding: 20px; }
+            .stats-grid { grid-template-columns: 1fr; }
+            .page-title { font-size: 24px; }
+        }
+    </style>
+</head>
+<body>
+    <div class="app-layout">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="logo">
+                <h1>报销管理</h1>
+                <p>出差旅费报销工具</p>
+            </div>
+
+            <button class="new-report-btn">+ 新增报销单</button>
+
+            <ul class="nav-menu">
+                <li class="nav-item">
+                    <a href="#" class="nav-link active">
+                        <span class="nav-icon">📊</span>
+                        总览看板
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#" class="nav-link">
+                        <span class="nav-icon">📄</span>
+                        报销单管理
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#" class="nav-link">
+                        <span class="nav-icon">⚙️</span>
+                        个性化设置
+                    </a>
+                </li>
+                <li class="nav-item">
+                    <a href="#" class="nav-link">
+                        <span class="nav-icon">💾</span>
+                        数据维护
+                    </a>
+                </li>
+            </ul>
+        </div>
+
+        <!-- Main Content -->
+        <div class="main-content">
+            <!-- Page Header -->
+            <div class="page-header">
+                <h1 class="page-title">总览看板</h1>
+                <p class="page-subtitle">按月份范围查看报销进度、费用结构和出差天数</p>
+            </div>
+
+            <!-- Stats Grid -->
+            <div class="stats-grid">
+                <div class="stat-card">
+                    <div class="stat-label">报销总金额</div>
+                    <div class="stat-value">¥45,230.50</div>
+                    <div class="stat-meta">今年累计 12 张报销单</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">本月出差天数</div>
+                    <div class="stat-value">12 天</div>
+                    <div class="stat-meta">已完成 3 次出差</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">待报销单数</div>
+                    <div class="stat-value">5 张</div>
+                    <div class="stat-meta">草稿 3 张，已打印 2 张</div>
+                </div>
+
+                <div class="stat-card">
+                    <div class="stat-label">途中补贴</div>
+                    <div class="stat-value">¥2,400</div>
+                    <div class="stat-meta">日标准 ¥200</div>
+                </div>
+            </div>
+
+            <!-- Charts -->
+            <div class="chart-grid">
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">月份范围趋势</div>
+                        <div class="chart-subtitle">金额按报销日期统计，出差天数按实际行程日期统计</div>
+                    </div>
+                    <div class="chart-placeholder">折线图：总报销金额 & 出差天数</div>
+                </div>
+
+                <div class="chart-card">
+                    <div class="chart-header">
+                        <div class="chart-title">已报销费用分布</div>
+                        <div class="chart-subtitle">查看所选月份范围内已报销费用的类别占比</div>
+                    </div>
+                    <div class="chart-placeholder">饼图：费用类别分布</div>
+                </div>
+            </div>
+
+            <!-- Calendar -->
+            <div class="calendar-card">
+                <div class="chart-header">
+                    <div class="chart-title">出差负荷热力图</div>
+                    <div class="chart-subtitle">显示 2024-01 至 2024-12 的出差连续负荷，颜色越深代表连续出差越久</div>
+                </div>
+                <div class="calendar-grid">
+                    <div class="calendar-day">1</div>
+                    <div class="calendar-day">2</div>
+                    <div class="calendar-day active">3</div>
+                    <div class="calendar-day active">4</div>
+                    <div class="calendar-day active">5</div>
+                    <div class="calendar-day">6</div>
+                    <div class="calendar-day">7</div>
+                    <div class="calendar-day">8</div>
+                    <div class="calendar-day">9</div>
+                    <div class="calendar-day">10</div>
+                    <div class="calendar-day">11</div>
+                    <div class="calendar-day active">12</div>
+                    <div class="calendar-day active">13</div>
+                    <div class="calendar-day">14</div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

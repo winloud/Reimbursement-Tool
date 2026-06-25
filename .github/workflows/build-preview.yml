@@ -27,7 +27,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Resolve preview metadata
         id: preview
@@ -102,12 +102,16 @@ jobs:
           "artifact_name=$artifactBaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-packaging.txt
 
       - name: Set up Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v6
         with:
           node-version: "22"
           cache: npm
@@ -136,15 +140,19 @@ jobs:
       - name: Build preview ZIP
         shell: pwsh
         run: |
-          $arguments = @(
-            "-PreviewBuild",
-            "-PreviewSerial", $env:PREVIEW_SERIAL,
-            "-ReleaseDate", $env:RELEASE_DATE
-          )
           if (-not [string]::IsNullOrWhiteSpace($env:PREVIEW_TARGET_VERSION)) {
-            $arguments += @("-Version", $env:PREVIEW_TARGET_VERSION)
+            & .\scripts\build_release.ps1 `
+              -PreviewBuild `
+              -PreviewSerial $env:PREVIEW_SERIAL `
+              -ReleaseDate $env:RELEASE_DATE `
+              -Version $env:PREVIEW_TARGET_VERSION
           }
-          & .\scripts\build_release.ps1 @arguments
+          else {
+            & .\scripts\build_release.ps1 `
+              -PreviewBuild `
+              -PreviewSerial $env:PREVIEW_SERIAL `
+              -ReleaseDate $env:RELEASE_DATE
+          }
           if ($LASTEXITCODE -ne 0) {
             throw "Preview build failed with exit code $LASTEXITCODE."
           }
@@ -161,13 +169,24 @@ jobs:
             throw "Preview ZIP was not generated for $env:PREVIEW_ID."
           }
 
-          $asciiZip = Join-Path "release" "$env:ARTIFACT_BASE_NAME.zip"
-          Copy-Item -LiteralPath $previewZip.FullName -Destination $asciiZip -Force
-          "artifact_path=$asciiZip" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          $payloadRoot = Join-Path "release" "preview-artifact-payload"
+          if (Test-Path -LiteralPath $payloadRoot) {
+            Remove-Item -LiteralPath $payloadRoot -Recurse -Force
+          }
+          New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
+          Expand-Archive -LiteralPath $previewZip.FullName -DestinationPath $payloadRoot -Force
+
+          $manifest = Get-ChildItem -LiteralPath $payloadRoot -Filter "portable-release.json" -Recurse |
+            Select-Object -First 1
+          if (-not $manifest) {
+            throw "Expanded preview artifact payload is missing portable-release.json."
+          }
+
+          "artifact_path=release/preview-artifact-payload/*" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "artifact_name=$env:ARTIFACT_BASE_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
 
       - name: Upload preview artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: ${{ steps.prepare.outputs.artifact_name }}
           path: ${{ steps.prepare.outputs.artifact_path }}
