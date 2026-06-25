@@ -383,6 +383,91 @@ function Add-VerificationSummary {
     Write-TextFile -Path $ReleasePlanPath -Text $updated
 }
 
+function Invoke-RollbackPrompt {
+    param(
+        [Parameter(Mandatory = $true)][string]$ReleaseCommit,
+        [Parameter(Mandatory = $true)][string]$Branch,
+        [Parameter(Mandatory = $true)][bool]$IsRepublish
+    )
+    Write-Host ""
+    Write-Host "GitHub Actions workflow failed. The tag and release commit have been pushed." -ForegroundColor Yellow
+    Write-Host ""
+    Write-Host "Rollback options:" -ForegroundColor Cyan
+    Write-Host "  1. Delete remote tag $TagName and reset local branch (recommended for new releases)"
+    Write-Host "  2. Delete remote tag $TagName only (keep local commit for investigation)"
+    Write-Host "  3. Keep everything and investigate manually"
+    Write-Host ""
+
+    $choice = Read-Host "Enter your choice (1/2/3)"
+
+    switch ($choice) {
+        "1" {
+            Write-Host "Rolling back: deleting remote tag and resetting local branch..." -ForegroundColor Yellow
+
+            Write-Host "==> Delete remote tag"
+            & git -C $Root push --delete origin $TagName 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Failed to delete remote tag $TagName. It may not exist or you may lack permissions."
+            } else {
+                Write-Host "Remote tag $TagName deleted." -ForegroundColor Green
+            }
+
+            if (-not $IsRepublish) {
+                Write-Host "==> Reset local branch"
+                & git -C $Root reset --hard HEAD~1
+                if ($LASTEXITCODE -ne 0) {
+                    throw "Failed to reset local branch."
+                }
+                Write-Host "Local branch reset to before release commit." -ForegroundColor Green
+
+                Write-Host "==> Delete local tag"
+                & git -C $Root tag -d $TagName 2>&1 | Out-Null
+                if ($LASTEXITCODE -eq 0) {
+                    Write-Host "Local tag $TagName deleted." -ForegroundColor Green
+                }
+            } else {
+                Write-Host "==> Reset local tag"
+                $originalTagCommit = & git -C $Root rev-list -n 1 "origin/$TagName" 2>&1
+                if ($LASTEXITCODE -eq 0 -and $originalTagCommit) {
+                    & git -C $Root tag -f -a $TagName $originalTagCommit -m $TagName
+                    Write-Host "Local tag $TagName reset to remote commit before force-push." -ForegroundColor Green
+                } else {
+                    Write-Warning "Could not find original remote tag commit. Local tag unchanged."
+                }
+            }
+
+            Write-Host ""
+            Write-Host "Rollback complete. The repository is back to its pre-release state." -ForegroundColor Green
+            Write-Host "You can investigate the workflow failure and retry the release." -ForegroundColor Green
+        }
+        "2" {
+            Write-Host "Deleting remote tag only..." -ForegroundColor Yellow
+
+            Write-Host "==> Delete remote tag"
+            & git -C $Root push --delete origin $TagName 2>&1 | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                Write-Warning "Failed to delete remote tag $TagName. It may not exist or you may lack permissions."
+            } else {
+                Write-Host "Remote tag $TagName deleted." -ForegroundColor Green
+            }
+
+            Write-Host ""
+            Write-Host "Remote tag deleted. Local commit and tag preserved for investigation." -ForegroundColor Green
+            Write-Host "To clean up later, run: git reset --hard HEAD~1 && git tag -d $TagName" -ForegroundColor Cyan
+        }
+        "3" {
+            Write-Host "Keeping everything as-is for manual investigation." -ForegroundColor Yellow
+            Write-Host ""
+            Write-Host "The tag $TagName and release commit are still on the remote." -ForegroundColor Yellow
+            Write-Host "To retry later, use: release_publish.ps1 -Version $Version -ReleaseDate $ReleaseDate -Publish -RepublishExistingTag" -ForegroundColor Cyan
+        }
+        default {
+            Write-Host "Invalid choice. No rollback performed." -ForegroundColor Red
+            Write-Host "The tag $TagName and release commit remain on the remote." -ForegroundColor Yellow
+        }
+    }
+}
+
 if ($Version -notmatch "^\d+\.\d+\.\d+$") {
     throw "Version must use X.Y.Z format."
 }
@@ -444,6 +529,7 @@ if (-not $Publish) {
 }
 
 $publishStartedAt = [DateTime]::UtcNow.AddSeconds(-15)
+$releaseCommit = & git -C $Root rev-parse HEAD
 Invoke-External -Name "Push release branch" -FilePath "git" -ArgumentList @("push", "origin", $branch)
 if ($RepublishExistingTag) {
     Invoke-External -Name "Force-push release tag" -FilePath "git" -ArgumentList @("push", "--force", "origin", "refs/tags/${TagName}:refs/tags/${TagName}")
@@ -456,7 +542,8 @@ $run = Wait-ReleaseRun -BranchOrTag $TagName -NotBeforeUtc $publishStartedAt
 Write-Host "==> Watch Publish Release run $($run.databaseId)"
 & gh run watch $run.databaseId --exit-status
 if ($LASTEXITCODE -ne 0) {
-    throw "Publish Release workflow failed for run $($run.databaseId)."
+    Invoke-RollbackPrompt -ReleaseCommit $releaseCommit -Branch $branch -IsRepublish $RepublishExistingTag.IsPresent
+    throw "Publish Release workflow failed for run $($run.databaseId). Check Actions: $($run.url)"
 }
 
 $metricsJsonPath = Join-Path $env:TEMP "release-metrics-$TagName.json"
