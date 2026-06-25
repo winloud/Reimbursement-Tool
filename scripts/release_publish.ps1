@@ -278,7 +278,7 @@ function Invoke-Preflight {
     }
     Write-Host "==> Release preflight"
     & (Join-Path $PSScriptRoot "prepare_release.ps1") @params
-    if ($LASTEXITCODE -ne 0) {
+    if (-not $?) {
         throw "Release preflight failed with exit code $LASTEXITCODE."
     }
 }
@@ -457,7 +457,7 @@ if ($CompareRunId -gt 0) {
 }
 Write-Host "==> Collect release metrics"
 & (Join-Path $PSScriptRoot "collect_release_metrics.ps1") @metricsParams | Out-Null
-if ($LASTEXITCODE -ne 0) {
+if (-not $?) {
     throw "Release metrics collection failed."
 }
 $metrics = Get-Content -Raw -LiteralPath $metricsJsonPath | ConvertFrom-Json
@@ -473,7 +473,7 @@ if (-not $DownloadReleaseAssetForValidation) {
     $validationParams.MetadataOnly = $true
 }
 & (Join-Path $PSScriptRoot "validate_release_asset.ps1") @validationParams | Out-Null
-if ($LASTEXITCODE -ne 0) {
+if (-not $?) {
     throw "Release asset validation failed."
 }
 $validation = Get-Content -Raw -LiteralPath $validationJsonPath | ConvertFrom-Json

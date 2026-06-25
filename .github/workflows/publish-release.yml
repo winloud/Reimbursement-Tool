@@ -151,7 +151,7 @@ jobs:
             throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
           }
           & .\scripts\validate_release_asset.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -ZipPath $mainZip.FullName -SkipOpenCvRuntimeCheck
-          if ($LASTEXITCODE -ne 0) {
+          if (-not $?) {
             throw "Local release ZIP validation failed with exit code $LASTEXITCODE."
           }
 
