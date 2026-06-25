@@ -29,10 +29,10 @@
 ## 完成记录
 
 ### 重要改动
-- 暂无。
+- 发布总控脚本新增 `Invoke-RollbackPrompt` 函数，在 GitHub Actions workflow 失败后提供交互式回滚选项，避免仓库处于不一致状态。
 
 ### 验证记录
-- 暂无。
+- [x] PowerShell 语法检查：`release_publish.ps1` 中的 `Invoke-RollbackPrompt` 函数可由 PowerShell parser 解析。
 
 ### 已同步到 CHANGELOG
-- 暂无。
+- 已在 Unreleased 记录发布失败回滚功能。
