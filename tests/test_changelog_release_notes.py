@@ -91,6 +91,8 @@ def test_release_publish_script_covers_release_governance_flow():
     assert "Assert-ReleaseTagAvailable" in script
     assert "RepublishExistingTag" in script
     assert "Assert-ReleaseTagExistsForRepublish" in script
+    assert "NotBeforeUtc" in script
+    assert "$parsedRuns = $json | ConvertFrom-Json" in script
     assert "Update-Changelog" in script
     assert "Freeze-ReleasePlan" in script
     assert "prepare_release.ps1" in script

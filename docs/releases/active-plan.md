@@ -18,6 +18,7 @@
 - 新增 `scripts/collect_release_metrics.ps1`，读取 GitHub Actions run、计算 job/step 耗时，并可与基线 run 对比。
 - 更新 `.github/workflows/publish-release.yml`，在上传资产前对 runner 本地构建出的主 ZIP 做内容校验；总控脚本发布后默认只做 metadata-only 远端资产校验，避免重复下载主 ZIP。
 - 总控脚本新增 `-RepublishExistingTag` 和 `-AllowUntracked`，用于显式重发既有 Release，并允许未跟踪本地草稿文件不阻断已跟踪文件干净的发布。
+- 总控脚本等待 GitHub Actions 时只匹配本次 tag push 之后的新 run，避免重发既有 tag 时误抓历史 run。
 - 更新 `docs/release-process.md` 和测试断言。
 
 本次不做：

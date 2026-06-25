@@ -292,15 +292,23 @@ function Get-CurrentBranch {
 }
 
 function Wait-ReleaseRun {
-    param([Parameter(Mandatory = $true)][string]$BranchOrTag)
+    param(
+        [Parameter(Mandatory = $true)][string]$BranchOrTag,
+        [Parameter(Mandatory = $true)][datetime]$NotBeforeUtc
+    )
     for ($attempt = 1; $attempt -le 60; $attempt++) {
         $json = & gh run list --workflow "Publish Release" --limit 20 --json databaseId,headBranch,event,status,conclusion,url,createdAt
         if ($LASTEXITCODE -ne 0) {
             throw "Failed to list GitHub Actions runs."
         }
-        $runs = @($json | ConvertFrom-Json)
+        $parsedRuns = $json | ConvertFrom-Json
+        $runs = if ($parsedRuns -is [array]) { $parsedRuns } else { @($parsedRuns) }
         $run = $runs |
-            Where-Object { $_.headBranch -eq $BranchOrTag -and $_.event -eq "push" } |
+            Where-Object {
+                $_.headBranch -eq $BranchOrTag `
+                    -and $_.event -eq "push" `
+                    -and ([DateTime]$_.createdAt).ToUniversalTime() -ge $NotBeforeUtc
+            } |
             Sort-Object createdAt -Descending |
             Select-Object -First 1
         if ($run) {
@@ -421,6 +429,7 @@ if (-not $Publish) {
     return
 }
 
+$publishStartedAt = [DateTime]::UtcNow.AddSeconds(-15)
 Invoke-External -Name "Push release branch" -FilePath "git" -ArgumentList @("push", "origin", $branch)
 if ($RepublishExistingTag) {
     Invoke-External -Name "Force-push release tag" -FilePath "git" -ArgumentList @("push", "--force", "origin", "refs/tags/${TagName}:refs/tags/${TagName}")
@@ -429,7 +438,7 @@ else {
     Invoke-External -Name "Push release tag" -FilePath "git" -ArgumentList @("push", "origin", $TagName)
 }
 
-$run = Wait-ReleaseRun -BranchOrTag $TagName
+$run = Wait-ReleaseRun -BranchOrTag $TagName -NotBeforeUtc $publishStartedAt
 Write-Host "==> Watch Publish Release run $($run.databaseId)"
 & gh run watch $run.databaseId --exit-status
 if ($LASTEXITCODE -ne 0) {
