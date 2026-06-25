@@ -51,6 +51,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 - 创建 `chore(release): publish vX.Y.Z` commit 和本地 tag。
 - GitHub Actions 在上传资产前调用 `scripts/validate_release_asset.ps1 -ZipPath ...`，对 runner 本地刚构建出的主 ZIP 做内容校验。
 - 带 `-Publish` 时推送 `main` 和 tag，等待 `Publish Release` workflow，默认以 metadata-only 方式检查 GitHub Release 资产是否存在且命名正确，采集耗时，写回冻结计划，再提交并推送 `docs(release): record vX.Y.Z verification`。
+- 如果 GitHub Actions workflow 失败，脚本会提示用户选择回滚策略：删除远端 tag 并重置本地分支（推荐）、只删除远端 tag（保留本地 commit 供调查），或保持现状手动处理。
 
 重发既有版本时必须显式使用 `-RepublishExistingTag`，例如：
 

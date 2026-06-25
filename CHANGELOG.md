@@ -4,6 +4,10 @@
 
 ## Unreleased
 
+### Added
+
+- 发布总控脚本新增失败回滚提示，当 GitHub Actions workflow 失败时，提供交互式选项：删除远端 tag 并重置本地分支、只删除远端 tag 保留本地 commit 供调查，或保持现状手动处理。
+
 ## v1.2.2 - 2026-06-25
 
 ### Added
