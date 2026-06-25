@@ -17,6 +17,7 @@
 - 新增 `scripts/validate_release_asset.ps1`，支持校验本地 ZIP、GitHub Release metadata-only 校验和按需下载远端主 ZIP 深校验；下载失败会自动重试。
 - 新增 `scripts/collect_release_metrics.ps1`，读取 GitHub Actions run、计算 job/step 耗时，并可与基线 run 对比。
 - 更新 `.github/workflows/publish-release.yml`，在上传资产前对 runner 本地构建出的主 ZIP 做内容校验；总控脚本发布后默认只做 metadata-only 远端资产校验，避免重复下载主 ZIP。
+- 总控脚本新增 `-RepublishExistingTag` 和 `-AllowUntracked`，用于显式重发既有 Release，并允许未跟踪本地草稿文件不阻断已跟踪文件干净的发布。
 - 更新 `docs/release-process.md` 和测试断言。
 
 本次不做：
@@ -34,6 +35,7 @@
 
 ### 重要改动
 - 新增发布总控脚本和两个可独立复用的发布验证工具，目标是把发布治理从 AI 手工编排推进到脚本驱动。
+- 重发既有版本和本地存在未跟踪草稿文件的场景也纳入脚本参数，减少发布时的临场手工处理。
 
 ### 验证记录
 - [x] PowerShell 语法检查：`release_publish.ps1`、`validate_release_asset.ps1`、`collect_release_metrics.ps1` 均可由 PowerShell parser 解析。

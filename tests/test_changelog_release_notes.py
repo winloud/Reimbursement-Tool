@@ -87,6 +87,7 @@ def test_release_publish_script_covers_release_governance_flow():
     )
 
     assert "Assert-CleanWorktree" in script
+    assert "AllowUntracked" in script
     assert "Assert-ReleaseTagAvailable" in script
     assert "RepublishExistingTag" in script
     assert "Assert-ReleaseTagExistsForRepublish" in script

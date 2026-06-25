@@ -9,6 +9,7 @@
 - 新增 `scripts/release_publish.ps1` 发布总控脚本，可自动准备版本文件、冻结发布计划、运行预检、创建 release commit/tag，并在 `-Publish` 时推送 tag、等待 GitHub Actions、校验资产、采集耗时并写回验证记录。
 - 新增 `scripts/validate_release_asset.ps1`，可校验本地发布 ZIP、只检查 GitHub Release 资产元数据，或按需下载远端主 ZIP 做深校验；下载资产时会自动重试。
 - 新增 `scripts/collect_release_metrics.ps1`，可采集 GitHub Actions run 的总耗时和步骤耗时，并输出 JSON 或 Markdown，支持与基线 run 对比。
+- 发布总控脚本新增显式重发既有 tag 和忽略未跟踪本地草稿文件的参数，便于修正同版本 Release 或在干净的已跟踪文件状态下继续发布。
 
 ### Changed
 

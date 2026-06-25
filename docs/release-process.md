@@ -17,6 +17,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 - `-VersionType patch|minor|major|TBD`：可选，默认 `patch`，写入冻结发布计划。
 - `-Publish`：推送分支和 tag，等待 GitHub Actions，校验 Release 资产，采集耗时，写回冻结计划并提交验证记录。
 - `-RepublishExistingTag`：可选；只用于重发已存在的 GitHub Release。脚本会跳过 changelog/版本文件冻结，先运行预检，再移动并 force-push 同名 tag 触发 workflow。
+- `-AllowUntracked`：可选；只忽略未跟踪文件，已跟踪文件变更仍会阻断发布。用于本地存在草稿文件但不会进入 Git/tag 的场景。
 - `-CompareRunId <id>`：可选，用于发布后自动生成与基线 run 的耗时对比。
 - `-DownloadReleaseAssetForValidation`：可选；默认不下载 GitHub Release 主 ZIP，只检查资产元数据。只有需要发布后从公网下载主 ZIP 再深校验时才使用。
 - `-SkipTests`：仅用于临时烟测或已经由其他可信流程完成测试的场景；正式发布默认不要使用。

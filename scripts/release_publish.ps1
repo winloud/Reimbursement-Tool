@@ -4,6 +4,7 @@
     [ValidateSet("patch", "minor", "major", "TBD")][string]$VersionType = "patch",
     [switch]$Publish,
     [switch]$RepublishExistingTag,
+    [switch]$AllowUntracked,
     [switch]$SkipTests,
     [switch]$RunFrontendBuild,
     [switch]$DownloadReleaseAssetForValidation,
@@ -90,8 +91,17 @@ function Invoke-External {
 
 function Assert-CleanWorktree {
     $status = @(git -C $Root status --porcelain)
-    if ($status.Count -gt 0) {
+    $blockingStatus = $status
+    $untrackedStatus = @()
+    if ($AllowUntracked) {
+        $blockingStatus = @($status | Where-Object { $_ -notmatch "^\?\?" })
+        $untrackedStatus = @($status | Where-Object { $_ -match "^\?\?" })
+    }
+    if ($blockingStatus.Count -gt 0) {
         throw "Working tree is not clean. Commit or stash changes before running release_publish.ps1."
+    }
+    if ($untrackedStatus.Count -gt 0) {
+        Write-Warning "Ignoring untracked files because -AllowUntracked was provided: $($untrackedStatus -join '; ')"
     }
 }
 
