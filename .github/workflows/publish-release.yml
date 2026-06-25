@@ -141,6 +141,20 @@ jobs:
             throw "Release build failed with exit code $LASTEXITCODE."
           }
 
+      - name: Validate local release ZIP
+        shell: pwsh
+        run: |
+          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
+            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+            Select-Object -First 1
+          if (-not $mainZip) {
+            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          }
+          & .\scripts\validate_release_asset.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -ZipPath $mainZip.FullName -SkipOpenCvRuntimeCheck
+          if ($LASTEXITCODE -ne 0) {
+            throw "Local release ZIP validation failed with exit code $LASTEXITCODE."
+          }
+
       - name: Prepare GitHub Release assets
         shell: pwsh
         run: |

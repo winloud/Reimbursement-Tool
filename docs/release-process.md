@@ -2,11 +2,77 @@
 
 本文档记录正式发布的快速路径。详细版本任务和验证记录仍写入 `docs/releases/active-plan.md` 或冻结后的 `docs/releases/vX.Y.Z-plan.md`。
 
-## 快速路径
+## 自动发布总控
+
+正式发布优先使用总控脚本，让脚本完成发布治理编排，AI 只负责确认输入、处理异常和解释结果：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish
+```
+
+常用参数：
+
+- `-Version X.Y.Z`：必填，正式版本号。
+- `-ReleaseDate yyyymmdd`：可选；未传时按中国时区当天生成。
+- `-VersionType patch|minor|major|TBD`：可选，默认 `patch`，写入冻结发布计划。
+- `-Publish`：推送分支和 tag，等待 GitHub Actions，校验 Release 资产，采集耗时，写回冻结计划并提交验证记录。
+- `-RepublishExistingTag`：可选；只用于重发已存在的 GitHub Release。脚本会跳过 changelog/版本文件冻结，先运行预检，再移动并 force-push 同名 tag 触发 workflow。
+- `-CompareRunId <id>`：可选，用于发布后自动生成与基线 run 的耗时对比。
+- `-DownloadReleaseAssetForValidation`：可选；默认不下载 GitHub Release 主 ZIP，只检查资产元数据。只有需要发布后从公网下载主 ZIP 再深校验时才使用。
+- `-SkipTests`：仅用于临时烟测或已经由其他可信流程完成测试的场景；正式发布默认不要使用。
+
+脚本自动执行：
+
+- 检查工作区和本地/远端 tag。
+- 将 `CHANGELOG.md` 的 `Unreleased` 冻结到 `## vX.Y.Z - YYYY-MM-DD`。
+- 更新 `README.md`、`backend/app_metadata.py`、`frontend/package.json` 和 `frontend/package-lock.json`。
+- 将 `docs/releases/active-plan.md` 冻结为 `docs/releases/vX.Y.Z-plan.md`，并重建新的 active plan。
+- 更新 docs 索引，运行 `scripts/prepare_release.ps1`。
+- 创建 `chore(release): publish vX.Y.Z` commit 和本地 tag。
+- GitHub Actions 在上传资产前调用 `scripts/validate_release_asset.ps1 -ZipPath ...`，对 runner 本地刚构建出的主 ZIP 做内容校验。
+- 带 `-Publish` 时推送分支/tag，等待 `Publish Release` workflow，默认以 metadata-only 方式检查 GitHub Release 资产是否存在且命名正确，采集耗时，写回冻结计划，再提交并推送 `docs(release): record vX.Y.Z verification`。
+
+重发既有版本时必须显式使用 `-RepublishExistingTag`，例如：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish -RepublishExistingTag -CompareRunId <baseline-run-id>
+```
+
+该模式用于修正发布流程或重建同版本资产；它会更新同名 GitHub Release 资产和 notes，但不会把 `Unreleased` 再冻结到该版本。
+
+## 独立工具
+
+发布后可单独复验 Release 资产：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -MetadataOnly
+```
+
+校验本地 ZIP 内容，不需要联网下载：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -ZipPath release\报销管理-vX.Y.Z-yyyymmdd.zip
+```
+
+只有需要模拟用户从 GitHub 下载主 ZIP 时，才运行远端下载深校验：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
+```
+
+采集或对比 GitHub Actions 耗时：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\collect_release_metrics.ps1 -RunId <run-id> -CompareRunId <baseline-run-id> -Format Markdown
+```
+
+两个工具都支持写出 JSON，供总控脚本或其他自动化读取。
+
+## 手工路径
 
 正式发布包以 GitHub tag workflow 产物为准。本地默认做发布预检，不重复生成正式 ZIP，除非需要验证本机 PyInstaller 输出、程序内更新包行为，或 GitHub Actions 暂不可用。
 
-推荐流程：
+当总控脚本不可用或需要排查细节时，使用手工流程：
 
 1. 冻结 `CHANGELOG.md`：把 `Unreleased` 内容移动到 `## vX.Y.Z - YYYY-MM-DD`。
 2. 更新 `README.md`、`backend/app_metadata.py`、`frontend/package.json` 和 `frontend/package-lock.json` 的版本信息。

@@ -50,6 +50,8 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "release-notes.md" in workflow
     assert "BuildOpenCvRuntime = $true" in workflow
     assert "ReleaseDate = $env:RELEASE_DATE" in workflow
+    assert "Validate local release ZIP" in workflow
+    assert "-ZipPath $mainZip.FullName" in workflow
     assert "China Standard Time" in workflow
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
@@ -77,3 +79,62 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
     assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow
     assert "gh release create" not in workflow
     assert "contents: read" in workflow
+
+
+def test_release_publish_script_covers_release_governance_flow():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "release_publish.ps1").read_text(
+        encoding="utf-8-sig"
+    )
+
+    assert "Assert-CleanWorktree" in script
+    assert "Assert-ReleaseTagAvailable" in script
+    assert "RepublishExistingTag" in script
+    assert "Assert-ReleaseTagExistsForRepublish" in script
+    assert "Update-Changelog" in script
+    assert "Freeze-ReleasePlan" in script
+    assert "prepare_release.ps1" in script
+    assert "git\" -ArgumentList @(\"commit\", \"-m\", \"chore(release): publish $TagName\")" in script
+    assert "git\" -ArgumentList @(\"tag\", \"-a\", $TagName" in script
+    assert "git\" -ArgumentList @(\"tag\", \"-f\", \"-a\", $TagName" in script
+    assert "refs/tags/${TagName}:refs/tags/${TagName}" in script
+    assert "gh run watch" in script
+    assert "validate_release_asset.ps1" in script
+    assert "DownloadReleaseAssetForValidation" in script
+    assert "MetadataOnly = $true" in script
+    assert "collect_release_metrics.ps1" in script
+    assert "docs(release): record $TagName verification" in script
+
+
+def test_release_asset_validator_checks_portable_zip_contract():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "validate_release_asset.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "reimbursement-tool-v$Version-$ReleaseDate.zip" in script
+    assert "Invoke-ReleaseAssetDownload" in script
+    assert "MetadataOnly" in script
+    assert "ZipPath" in script
+    assert "github_release_metadata" in script
+    assert "local_zip" in script
+    assert "portable-release.json" in script
+    assert "current-version.json" in script
+    assert "versions/$Version" in script
+    assert "data_schema_version" in script
+    assert "min_supported_data_schema_version" in script
+    assert "/data/" in script
+    assert "/uploads/" in script
+    assert "/logs/" in script
+    assert "opencv-wechat-runtime-*.zip" in script
+
+
+def test_release_metrics_collector_outputs_json_and_markdown():
+    script = (Path(__file__).resolve().parents[1] / "scripts" / "collect_release_metrics.ps1").read_text(
+        encoding="utf-8"
+    )
+
+    assert "gh run view $Id --json url,createdAt,updatedAt,conclusion,jobs" in script
+    assert "duration_seconds" in script
+    assert "CompareRunId" in script
+    assert "OutputJson" in script
+    assert "OutputMarkdown" in script
+    assert "ConvertTo-MetricsMarkdown" in script
