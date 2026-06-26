@@ -45,20 +45,6 @@ const settingsCardContentSx = {
   "&:last-child": { pb: { xs: 2, md: 2.25 } },
 };
 
-const settingsGridSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "repeat(3, minmax(0, 1fr))" },
-  gap: { xs: 2, md: 2.5 },
-  alignItems: "stretch",
-};
-
-const splitGridSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "minmax(0, 260px) minmax(0, 1fr)" },
-  gap: { xs: 1.5, md: 2 },
-  alignItems: "start",
-};
-
 const fontHintAlertSx = {
   borderRadius: 1,
   alignItems: "flex-start",
@@ -68,36 +54,39 @@ const fontHintAlertSx = {
   },
 };
 
-function SectionHeader({ icon, title, description }) {
+function SectionHeader({ icon, title, description, action }) {
   return (
-    <Stack direction="row" spacing={1.25} alignItems="flex-start">
-      <Box
-        sx={{
-          width: 28,
-          height: 28,
-          borderRadius: 1,
-          bgcolor: "rgba(37, 99, 235, 0.08)",
-          color: "primary.main",
-          display: "grid",
-          placeItems: "center",
-          flex: "0 0 auto",
-          "& .MuiSvgIcon-root": {
-            fontSize: 18,
-          },
-        }}
-      >
-        {icon}
-      </Box>
-      <Box sx={{ minWidth: 0 }}>
-        <Typography variant="subtitle1" fontWeight={900} sx={{ lineHeight: 1.25 }}>
-          {title}
-        </Typography>
-        {description && (
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            {description}
+    <Stack direction={{ xs: "column", sm: "row" }} spacing={1.5} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "flex-start" }}>
+      <Stack direction="row" spacing={1.25} alignItems="flex-start" sx={{ minWidth: 0 }}>
+        <Box
+          sx={{
+            width: 30,
+            height: 30,
+            borderRadius: 1,
+            bgcolor: "rgba(37, 99, 235, 0.08)",
+            color: "primary.main",
+            display: "grid",
+            placeItems: "center",
+            flex: "0 0 auto",
+            "& .MuiSvgIcon-root": {
+              fontSize: 19,
+            },
+          }}
+        >
+          {icon}
+        </Box>
+        <Box sx={{ minWidth: 0 }}>
+          <Typography variant="subtitle1" fontWeight={900} sx={{ lineHeight: 1.25 }}>
+            {title}
           </Typography>
-        )}
-      </Box>
+          {description && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              {description}
+            </Typography>
+          )}
+        </Box>
+      </Stack>
+      {action}
     </Stack>
   );
 }
@@ -223,7 +212,7 @@ export default function SettingsPage() {
         <Stack spacing={2}>
           <Card sx={settingsCardSx}>
             <CardContent sx={settingsCardContentSx}>
-              <Box sx={splitGridSx}>
+              <Stack spacing={2}>
                 <SectionHeader
                   icon={<TuneIcon />}
                   title="默认报销信息"
@@ -232,7 +221,11 @@ export default function SettingsPage() {
                 <Box
                   sx={{
                     display: "grid",
-                    gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))" },
+                    gridTemplateColumns: {
+                      xs: "1fr",
+                      sm: "repeat(2, minmax(0, 1fr))",
+                      md: "repeat(3, minmax(0, 1fr))",
+                    },
                     gap: { xs: 1.5, md: 2 },
                   }}
                 >
@@ -247,82 +240,79 @@ export default function SettingsPage() {
                     inputProps={{ min: 0, step: "0.01" }}
                   />
                 </Box>
-              </Box>
+              </Stack>
             </CardContent>
           </Card>
 
-          <Box sx={settingsGridSx}>
-            <Card sx={settingsCardSx}>
-              <CardContent sx={settingsCardContentSx}>
-                <Stack spacing={2}>
-                  <SectionHeader
-                    icon={<ScheduleIcon />}
-                    title="编辑体验"
-                    description="控制报销单编辑页的保存节奏。"
-                  />
-                  <TextField
-                    fullWidth
-                    label="自动保存延时"
-                    type="number"
-                    value={form.autosave_delay_seconds}
-                    onChange={handleChange("autosave_delay_seconds")}
-                    error={Boolean(autosaveDelayError)}
-                    helperText={autosaveDelayError || "修改停止后等待多久自动保存，范围 3-60 秒。"}
-                    inputProps={{
-                      min: AUTOSAVE_DELAY_MIN_SECONDS,
-                      max: AUTOSAVE_DELAY_MAX_SECONDS,
-                      step: 1,
-                    }}
-                  />
-                </Stack>
-              </CardContent>
-            </Card>
-
-            <Card sx={settingsCardSx}>
-              <CardContent sx={settingsCardContentSx}>
-                <Stack spacing={2}>
-                  <SectionHeader
-                    icon={<QrCodeScannerIcon />}
-                    title="发票二维码识别"
-                    description="选择发票解析时使用的二维码识别引擎。"
-                  />
-                  <Select fullWidth value={form.invoice_qr_engine} onChange={handleChange("invoice_qr_engine")}>
-                    {INVOICE_QR_ENGINE_OPTIONS.map((option) => (
-                      <MenuItem key={option.value} value={option.value}>
-                        {option.label}
-                      </MenuItem>
-                    ))}
-                  </Select>
-                </Stack>
-              </CardContent>
-            </Card>
-
-            <Card sx={settingsCardSx}>
-              <CardContent sx={settingsCardContentSx}>
-                <Stack spacing={2}>
-                  <SectionHeader
-                    icon={<PictureAsPdfIcon />}
-                    title="PDF 导出"
-                    description="控制 PDF 附件打印规则。"
-                  />
-                  <FormControlLabel
-                    control={
-                      <Switch
-                        checked={Boolean(form.double_print_vat_special_invoices)}
-                        onChange={handleToggle("double_print_vat_special_invoices")}
-                      />
-                    }
-                    label="增值税专用发票附件打印两遍"
-                  />
-                </Stack>
-              </CardContent>
-            </Card>
-
-          </Box>
+          <Card sx={settingsCardSx}>
+            <CardContent sx={settingsCardContentSx}>
+              <Stack spacing={2}>
+                <SectionHeader
+                  icon={<ScheduleIcon />}
+                  title="编辑体验"
+                  description="控制报销单编辑页的保存节奏。"
+                />
+                <TextField
+                  fullWidth
+                  label="自动保存延时"
+                  type="number"
+                  value={form.autosave_delay_seconds}
+                  onChange={handleChange("autosave_delay_seconds")}
+                  error={Boolean(autosaveDelayError)}
+                  helperText={autosaveDelayError || "修改停止后等待多久自动保存，范围 3-60 秒。"}
+                  inputProps={{
+                    min: AUTOSAVE_DELAY_MIN_SECONDS,
+                    max: AUTOSAVE_DELAY_MAX_SECONDS,
+                    step: 1,
+                  }}
+                />
+              </Stack>
+            </CardContent>
+          </Card>
 
           <Card sx={settingsCardSx}>
             <CardContent sx={settingsCardContentSx}>
-              <Box sx={splitGridSx}>
+              <Stack spacing={2}>
+                <SectionHeader
+                  icon={<QrCodeScannerIcon />}
+                  title="发票二维码识别"
+                  description="选择发票解析时使用的二维码识别引擎。"
+                />
+                <Select fullWidth value={form.invoice_qr_engine} onChange={handleChange("invoice_qr_engine")}>
+                  {INVOICE_QR_ENGINE_OPTIONS.map((option) => (
+                    <MenuItem key={option.value} value={option.value}>
+                      {option.label}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Card sx={settingsCardSx}>
+            <CardContent sx={settingsCardContentSx}>
+              <Stack spacing={2}>
+                <SectionHeader
+                  icon={<PictureAsPdfIcon />}
+                  title="PDF 导出"
+                  description="控制 PDF 附件打印规则。"
+                />
+                <FormControlLabel
+                  control={
+                    <Switch
+                      checked={Boolean(form.double_print_vat_special_invoices)}
+                      onChange={handleToggle("double_print_vat_special_invoices")}
+                    />
+                  }
+                  label="增值税专用发票附件打印两遍"
+                />
+              </Stack>
+            </CardContent>
+          </Card>
+
+          <Card sx={settingsCardSx}>
+            <CardContent sx={settingsCardContentSx}>
+              <Stack spacing={2}>
                 <SectionHeader
                   icon={<TranslateIcon />}
                   title="PDF 填充字体"
@@ -362,10 +352,9 @@ export default function SettingsPage() {
                     项目内置字体读取 `backend/assets/fonts/` 下的 .ttf、.ttc、.otf 文件。
                   </Alert>
                 </Stack>
-              </Box>
+              </Stack>
             </CardContent>
           </Card>
-
         </Stack>
       )}
 
