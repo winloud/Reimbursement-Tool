@@ -32,7 +32,6 @@ import {
   validateAutosaveDelaySeconds,
 } from "./settingsPageUtils";
 
-const CONTENT_MAX_WIDTH = 900;
 const settingsCardSx = {
   border: 1,
   borderColor: "rgba(148, 163, 184, 0.32)",
@@ -189,7 +188,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <Stack spacing={2.5} sx={{ width: "100%", maxWidth: CONTENT_MAX_WIDTH, mx: "auto", pb: 4 }}>
+    <Stack spacing={2.5} sx={{ width: "100%", pb: 4 }}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2}>
         <Box>
           <Typography variant="h4" fontWeight={900}>

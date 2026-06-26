@@ -14,7 +14,6 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
-  Grid,
   IconButton,
   InputAdornment,
   LinearProgress,
@@ -97,14 +96,11 @@ const SAVE_LABELS = {
 };
 
 const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
-const CONTENT_MAX_WIDTH = 1440;
 const SECTION_GAP = { xs: 2, md: 2.5 };
 const FIELD_GAP = { xs: 1.5, md: 2 };
 
 const pageContentSx = {
   width: "100%",
-  maxWidth: CONTENT_MAX_WIDTH,
-  mx: "auto",
   pb: 4,
 };
 
@@ -140,6 +136,13 @@ const repeatedCardGridSx = {
 const tripFieldGridSx = {
   display: "grid",
   gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(4, minmax(0, 1fr))" },
+  gap: FIELD_GAP,
+  alignItems: "start",
+};
+
+const basicInfoGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", sm: "repeat(12, minmax(0, 1fr))" },
   gap: FIELD_GAP,
   alignItems: "start",
 };
@@ -851,8 +854,8 @@ export default function ReportEdit() {
                       <Typography variant="h6" fontWeight={800}>
                         基本信息
                       </Typography>
-                      <Grid container spacing={FIELD_GAP}>
-                        <Grid item xs={12} sm={6}>
+                      <Box sx={basicInfoGridSx}>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -863,11 +866,11 @@ export default function ReportEdit() {
                             InputLabelProps={{ shrink: true }}
                             disabled={readonly}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField fullWidth size="small" label="部门" value={form.department} onChange={handleChange("department")} disabled={readonly} />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -876,8 +879,8 @@ export default function ReportEdit() {
                             onChange={handleChange("employee_name")}
                             disabled={readonly}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -891,8 +894,8 @@ export default function ReportEdit() {
                               inputProps: { min: 0, step: "0.01" },
                             }}
                           />
-                        </Grid>
-                        <Grid item xs={12}>
+                        </Box>
+                        <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -903,11 +906,11 @@ export default function ReportEdit() {
                             multiline
                             minRows={2}
                           />
-                        </Grid>
-                        <Grid item xs={12}>
+                        </Box>
+                        <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}>
                           <Divider />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -918,8 +921,8 @@ export default function ReportEdit() {
                             onChange={handleChange("advance_date_month")}
                             inputProps={{ min: 1, max: 12 }}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -930,8 +933,8 @@ export default function ReportEdit() {
                             onChange={handleChange("advance_date_day")}
                             inputProps={{ min: 1, max: 31 }}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -945,8 +948,8 @@ export default function ReportEdit() {
                               inputProps: { min: 0, step: "0.01" },
                             }}
                           />
-                        </Grid>
-                      </Grid>
+                        </Box>
+                      </Box>
                   </Stack>
                 </CardContent>
               </Card>

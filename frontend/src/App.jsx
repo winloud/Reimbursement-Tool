@@ -32,7 +32,15 @@ const NAV_ITEMS = [
   { label: "数据维护", to: "/maintenance", icon: <StorageIcon fontSize="small" /> },
 ];
 
-const APP_CONTENT_MAX_WIDTH = 1440;
+// 全站统一内容区宽度：随屏幕分级放宽，保证各页面左右边界对齐
+// 笔记本(14"/15.6") ~1440，27" ~1680，32" ~1920
+const APP_CONTENT_SX = {
+  width: "100%",
+  mx: "auto",
+  maxWidth: 1440,
+  "@media (min-width:1920px)": { maxWidth: 1680 },
+  "@media (min-width:2560px)": { maxWidth: 1920 },
+};
 
 function Sidebar() {
   const location = useLocation();
@@ -104,7 +112,7 @@ function AppRoutes() {
     <Box sx={{ display: { xs: "block", md: "flex" }, minHeight: "100vh", bgcolor: "#F4F7FB" }}>
       <Sidebar />
       <Box component="main" sx={{ flex: 1, minWidth: 0, px: { xs: 2, md: 3, xl: 4 }, py: { xs: 2, md: 3 } }}>
-        <Box sx={{ width: "100%", maxWidth: APP_CONTENT_MAX_WIDTH, mx: "auto" }}>
+        <Box sx={APP_CONTENT_SX}>
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/reports" element={<ReportList />} />
