@@ -3,7 +3,6 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
-  applyDefaultSubsidyMarkers,
   buildTripDateRanges,
   buildDraftPayload,
   buildCustomExpenseCategory,
@@ -20,6 +19,7 @@ import {
   makeReturnTripAfter,
   moveTrip,
   normalizeTrip,
+  appendTripWithAutoStart,
   swapTripEndpoints,
   validateFuelSubsidyAmount,
 } from "./reportEditUtils.js";
@@ -146,15 +146,18 @@ describe("report edit utilities", () => {
   });
 
   it("supports trip reorder, copy, swap, and return trip generation", () => {
-    const first = normalizeTrip({ id: 1, depart_place: "深圳", arrive_place: "成都", transport: "高铁" }, 0);
+    const first = normalizeTrip({ id: 1, depart_place: "深圳", arrive_place: "成都", transport: "高铁", subsidy_start: true, subsidy_end: true }, 0);
     const second = normalizeTrip({ id: 2, depart_place: "成都", arrive_place: "北京", transport: "飞机" }, 1);
 
     assert.deepEqual(moveTrip([first, second], 0, 1).map((trip) => trip.id), [2, 1]);
 
     const cloned = cloneTripAfter([first, second], 0);
     assert.equal(cloned.length, 3);
-    assert.equal(cloned[1].id, null);
-    assert.equal(cloned[1].depart_place, "深圳");
+    // 复制段追加到末尾（不再插在源行程后面）
+    assert.equal(cloned[2].id, null);
+    assert.equal(cloned[2].depart_place, "深圳");
+    assert.equal(cloned[2].subsidy_start, false);
+    assert.equal(cloned[2].subsidy_end, false);
 
     const swapped = swapTripEndpoints(first);
     assert.equal(swapped.depart_place, "成都");
@@ -165,6 +168,9 @@ describe("report edit utilities", () => {
     assert.equal(returned[1].depart_place, "成都");
     assert.equal(returned[1].arrive_place, "深圳");
     assert.equal(returned[1].transport, "高铁");
+    // 返程自动标「止」收尾，不继承源段的「起」
+    assert.equal(returned[1].subsidy_start, false);
+    assert.equal(returned[1].subsidy_end, true);
   });
 
   it("summarizes only confirmed invoices plus trip-based subsidy", () => {
@@ -219,7 +225,7 @@ describe("report edit utilities", () => {
     );
   });
 
-  it("calculates subsidy days from default start and end markers", () => {
+  it("defaults subsidy to first depart through last arrive when unmarked", () => {
     const trips = [
       normalizeTrip({ depart_month: 3, depart_day: 4, depart_place: "杭州", arrive_month: 3, arrive_day: 4, arrive_place: "芜湖" }, 0),
       normalizeTrip({ depart_month: 3, depart_day: 4, depart_place: "芜湖", arrive_month: 3, arrive_day: 4, arrive_place: "杭州" }, 1),
@@ -227,15 +233,36 @@ describe("report edit utilities", () => {
       normalizeTrip({ depart_month: 3, depart_day: 15, depart_place: "芜湖", arrive_month: 3, arrive_day: 15, arrive_place: "杭州" }, 3),
     ];
 
-    const marked = applyDefaultSubsidyMarkers(trips);
+    // 新模型：无显式标记 → 第 1 段出发(3/4) → 最后 1 段到达(3/15) 连续 = 12 天
+    assert.equal(calculateSubsidyDays("2026-03-01", trips), 12);
+  });
 
-    assert.deepEqual(marked.map((trip) => [trip.subsidy_start, trip.subsidy_end]), [
-      [true, false],
-      [false, true],
-      [true, false],
-      [false, true],
-    ]);
-    assert.equal(calculateSubsidyDays("2026-03-01", trips), 5);
+  it("excludes the home gap when manually split with end/start markers", () => {
+    const trips = [
+      normalizeTrip({ depart_month: 6, depart_day: 1, arrive_month: 6, arrive_day: 2, subsidy_end: true }, 0),
+      normalizeTrip({ depart_month: 6, depart_day: 8, arrive_month: 6, arrive_day: 9, subsidy_start: true }, 1),
+    ];
+
+    // [6/1,6/2]=2 天 + [6/8,6/9]=2 天 = 4 天；中间 6/3-6/7 在家不算
+    assert.equal(calculateSubsidyDays("2026-06-01", trips), 4);
+  });
+
+  it("forms separate trips via auto-finalized returns and auto-started appends", () => {
+    // 第一次往返：行程1（去）+ 生成返程（自动标「止」收尾）
+    let trips = [
+      normalizeTrip({ depart_month: 6, depart_day: 26, depart_place: "北京", arrive_month: 6, arrive_day: 26, arrive_place: "上海" }, 0),
+    ];
+    trips = makeReturnTripAfter(trips, 0);
+    assert.equal(trips[1].subsidy_end, true);
+
+    // 添加行程（前一段是「止」→ 自动标「起」），填第二次去程，再生成返程
+    trips = appendTripWithAutoStart(trips, { depart_month: 6, depart_day: 30, depart_place: "北京", arrive_month: 6, arrive_day: 30, arrive_place: "上海" });
+    assert.equal(trips[2].subsidy_start, true);
+    trips = makeReturnTripAfter(trips, 2);
+    assert.equal(trips[3].subsidy_end, true);
+
+    // 两次独立出差：[6/26] + [6/30] = 2 天（中间 6/27-6/29 在家不算）
+    assert.equal(calculateSubsidyDays("2026-06-01", trips), 2);
   });
 
   it("calculates subsidy days from manual start and end markers", () => {

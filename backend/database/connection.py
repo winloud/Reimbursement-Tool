@@ -27,6 +27,7 @@ def create_db_and_tables() -> None:
 
     Base.metadata.create_all(bind=engine)
     migrate_sqlite_schema()
+    normalize_subsidy_markers()
     recalculate_existing_reports()
 
 
@@ -82,6 +83,29 @@ def backfill_unique_uid(connection, table_name: str, column_name: str) -> None:
                 {"uid": uid, "id": row_id},
             )
         seen.add(uid)
+
+
+def normalize_subsidy_markers() -> None:
+    """一次性幂等清洗：清掉每张报销单首段、末段的全部显式起止标记。
+
+    新模型下第 1 段隐含「起」、最后 1 段隐含「止」，首末段不应携带显式标记——
+    它们多为历史 bug（如「生成返程」继承源段标记）或旧地名自动推断的冗余。残留的
+    首末显式标记会在增减行程后位置漂移成中间段时，把补贴区间错误截断。清洗后由
+    recalculate_existing_reports 用新逻辑重算。中间段的切分标记保留。幂等。
+    """
+    with engine.begin() as connection:
+        connection.execute(
+            text(
+                "UPDATE trips SET subsidy_start = 0, subsidy_end = 0 "
+                "WHERE sort_order = (SELECT MIN(t2.sort_order) FROM trips t2 WHERE t2.report_id = trips.report_id)"
+            )
+        )
+        connection.execute(
+            text(
+                "UPDATE trips SET subsidy_start = 0, subsidy_end = 0 "
+                "WHERE sort_order = (SELECT MAX(t2.sort_order) FROM trips t2 WHERE t2.report_id = trips.report_id)"
+            )
+        )
 
 
 def recalculate_existing_reports() -> None:
