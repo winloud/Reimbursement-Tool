@@ -2,23 +2,23 @@
 
 ## 状态
 - 版本号：v1.2.3
-- 计划状态：开发中
+- 计划状态：功能开发完成，待本地测试包验证后合并 main 发布
 - 预计版本类型：minor（出差补贴「起/止」模型行为变化，用户可见、影响报销金额；含 UI 调整与一次性历史数据清洗）
 
 ## 目标
 - [x] 新增发布失败回滚功能，在 GitHub Actions 失败时提供交互式回滚选项（已合并 main）。
 - [x] 各页面内容宽度对齐 + 响应式适配（14"/15.6"/27"/32" 显示器）。
 - [x] 报销单列表对非法行程脏数据容错，避免单条脏数据导致整页 500。
-- [ ] 重新设计出差补贴「起/止」标记模型：默认整段 + 例外手动切分。
-- [ ] 去掉行程卡片折叠功能。
+- [x] 重新设计出差补贴「起/止」标记模型：默认整段 + 例外手动切分。
+- [x] 去掉行程卡片折叠功能。
 
 ## 范围
-本次做：
-1. 发布失败回滚（已完成，已在 main）。
-2. 页面宽度统一 + 响应式分级（已完成）。
-3. 列表脏数据容错 + 回归测试（已完成）。
-4. 出差补贴「起/止」模型重设计（进行中）—— 详见下方专章。
-5. 去掉行程卡片折叠（随第 4 项一起）。
+本次做（均已完成）：
+1. 发布失败回滚（已在 main）。
+2. 页面宽度统一 + 响应式分级。
+3. 列表脏数据容错 + 回归测试。
+4. 出差补贴「起/止」模型重设计 —— 详见下方专章。
+5. 去掉行程卡片折叠。
 
 本次不做：
 - 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
@@ -33,21 +33,21 @@
 
 ## 专章：出差补贴「起/止」模型重设计
 
-### 背景与缺陷
-报销单录入页用每段两个「起/止」开关标记补贴区间，现有实现有真实缺陷：
+### 背景与缺陷（旧模型）
 1. **「全有或全无」模式切换**：任一段有标记就整单转手动、其余段自动推断全失效。
-2. **「生成返程」继承标记 → 补贴算错**：`makeReturnTripAfter` 保留源段起/止，单段往返被算成两个独立单天区间，漏算中间天（实例 report 153：北京→上海 6/26、上海→北京 6/28 算成 2 天，应为 3 天）。
+2. **「生成返程」继承标记 → 补贴算错**：单段往返被算成两个独立单天区间，漏算中间天（report 153：北京→上海 6/26、上海→北京 6/28 算成 2 天，应为 3 天）。
 3. **靠地名字符串相等认「家」**：北京 vs 北京市/北京南站 就失效。
 4. **三处并行逻辑**（前端 reportEditUtils、后端 report_service、stats_service）易不一致。
 5. 行程卡片**折叠**功能无必要。
 
 ### 新模型（领域负责人拍板）
-- **默认（绝大多数报销）**：补贴 = **第 1 段出发日 → 最后 1 段到达日**，覆盖中间所有自然日。不需任何标记，不看地名。（依据：现代交通一次行程多为当天/隔天，首段到达时间不重要；用首段出发 + 末段到达算时长。）
+- **默认（绝大多数报销）**：补贴 = **第 1 段出发日 → 最后 1 段到达日**，覆盖中间所有自然日。不需任何标记，不看地名。
 - **第 1 段隐含「起」、最后 1 段隐含「止」**——单次往返零操作即正确。
-- **起/止只在例外时手动用**：一个出差事由中途回家或去别的项目地点、要把中间某段挖掉不算补贴时，标「止」(这段出差结束) +「起」(下段出差重启) 切分；区间之间的间隙不计补贴。回家与去别处用同一套手动切分，无特殊逻辑。
+- **起/止只在例外时用**：一个出差事由中途回家/去别处、要把中间某段挖掉不算补贴时，标「止」+「起」切分，区间间隙不计补贴。
+- **便利操作**：「生成返程」视为一次出差结束，返程段自动标「止」；「复制行程/添加行程」追加到末尾，若前一段是「止」则新段自动标「起」——复制+返程即可自动构造多次独立往返出差，无需手动点标记。
 - 无模式切换、不看地名。
 
-补贴天数算法（统一，替代现有「has_manual_markers 两分支 + 地名推断」）：
+补贴天数算法（统一，替代「has_manual_markers 两分支 + 地名推断」）：
 ```
 effective_start(i) = (i == 0) or trip[i].subsidy_start
 effective_end(i)   = (i == last) or trip[i].subsidy_end
@@ -55,22 +55,23 @@ effective_end(i)   = (i == last) or trip[i].subsidy_end
 校验：连续起 / 孤止 / 止早于起 → 友好报错
 ```
 
-### 实现步骤
-1. **后端 `backend/services/report_service.py`**：重写 `calculate_subsidy_days`（去 `has_manual_markers` 分支）；`build_subsidy_intervals` 注入 effective 首末并保留 4 类校验；删除 `derive_default_subsidy_markers`；建议把「隐含首末 + 配对」抽成单一共享函数。
-2. **后端 `backend/services/stats_service.py`**：`report_trip_intervals` 复用同一共享函数，根除三处不一致。
-3. **前端 `frontend/src/pages/reportEditUtils.js`**：重写 `calculateSubsidyDays` 与后端规则逐字对齐；删除 `applyDefaultSubsidyMarkers` 及其调用点（`addTrip`/`loadForEdit`）；`cloneTripAfter`/`makeReturnTripAfter` 清空生成段的 `subsidy_start/end`。
-4. **UI `frontend/src/pages/ReportEdit.jsx`**：第 1 段「起」、最后 1 段「止」隐含锁定高亮（标“出差开始/结束·自动”，不可点），中间段「止」「起」可点切分；头部摘要仅在切分处显示起止；去掉折叠（`collapsed`/`toggleTripCollapsed`/图标/`!trip.collapsed` 包裹）并从 `normalizeTrip` 移除 collapsed。
-5. **历史数据清洗（一次性）**：`n>1` 时清掉第 1 段 `subsidy_end`、清掉最后 1 段 `subsidy_start`（冗余/bug 产物），中间段保留；单段清显式标记（隐含补回）。效果：153 式修正为 3 天，多段往返天数不变。仿 `backend/database/connection.py` 的 migrate 方式，执行前自动备份。
-6. **测试**：`tests/test_phase3.py` 与 `frontend/src/pages/reportEditUtils.test.js` 同步更新预期，新增「默认整段=首末」「中途切分排除在家间隙」「返程不继承标记」用例；删/改 `derive_default_subsidy_markers`/`applyDefaultSubsidyMarkers` 相关断言。
+### 实现（已落地）
+1. **后端 `report_service.py`**：重写 `calculate_subsidy_days`（去 `has_manual_markers` 分支），抽共享函数 `subsidy_trips_with_implicit_bounds`（隐含首末 + 配对），删除 `derive_default_subsidy_markers`。
+2. **后端 `stats_service.py`**：`report_trip_intervals` 复用同一共享函数，根除三处不一致。
+3. **前端 `reportEditUtils.js`**：`calculateSubsidyDays` 与后端规则逐字对齐；删除 `applyDefaultSubsidyMarkers`；`makeReturnTripAfter` 让返程自动标「止」收尾；新增 `appendTripWithAutoStart`（新段紧接「止」时自动标「起」），`addTrip`/`cloneTripAfter` 复用它——**复制行程改为追加到末尾**，避免插在源行程后打乱顺序。
+4. **UI `ReportEdit.jsx`**：第 1 段「起」、末段「止」隐含锁定高亮，中间段「止/起」可点切分；摘要按 effective 显示；去掉折叠（`collapsed`/`toggleTripCollapsed`/图标/条件包裹）。
+5. **历史数据清洗（一次性，幂等）**：`connection.py` 启动时 `normalize_subsidy_markers` 清掉每张单**首段、末段的全部显式起止标记**（首末靠隐含；残留会在增减行程后位置漂移截断区间），中间段切分标记保留；随后 `recalculate_existing_reports` 用新逻辑重算。
+6. **测试**：`tests/test_phase3.py` 与 `reportEditUtils.test.js` 同步更新并新增用例（默认整段/中途切分排除在家间隙/返程自动收尾/多次往返/连续起报错）。
 
-### 验证
-- 后端：`.release-venv/Scripts/python.exe -m pytest tests/test_phase3.py tests/test_report_crud.py -q`
-- 前端：reportEditUtils 单测 + `npm run build`
-- 手动（dev server）：report 153 显示 3 天且首起末止中间无标记；新建单次往返零操作正确；多段中途回家标切分排除间隙；历史单天数不回归。
+### 验证（已完成）
+- [x] 后端 `pytest`（test_phase3 等）**88 passed**；前端 `node --test reportEditUtils.test.js` **14 passed**；`npm run build` 通过。
+- [x] 历史数据迁移回归：全库 28 张单仅 2 张脏数据被修正（#153 2→3、#134 3→24，均为旧 bug 漏算中间天），无回退。
+- [x] 连带 bug 修复：① 加行程后残留 end 截断区间致补贴 0；② 复制+返程构造多次出差（复制插入打乱 → 改追加末尾 + 返程收尾）。
+- [x] dev 手动：单次往返零操作正确；复制/添加 + 生成返程自动形成多次独立出差并正确切分。
 
 ### 风险
-- 三处逻辑一致性：务必抽共享函数、前后端规则逐字对齐。
-- 历史数据迁移：必须备份 + 用真实历史单验证天数不回归。
+- 三处逻辑一致性：已抽共享函数、前后端规则逐字对齐。
+- 历史数据迁移：启动前由升级流程备份；已用真实历史单验证天数不回退。
 - PDF 不依赖起止（仅用 subsidy_days/total），不受影响。
 
 ---
@@ -81,13 +82,14 @@ effective_end(i)   = (i == last) or trip[i].subsidy_end
 - 发布总控脚本新增 `Invoke-RollbackPrompt`，GitHub Actions workflow 失败后提供交互式回滚选项（已在 main）。
 - 各页面内容宽度统一由 App 外层容器控制，响应式分级（笔记本 ~1440 / 27" ~1680 / 32" ~1920）；报销单录入「基本信息」卡片字段区由 MUI Grid 改为 CSS Grid 消除右侧留白不对称。（commit `4ad65c5`）
 - 报销单列表排序/筛选路径对 `TripDateError` 容错，单条脏数据不再让整页 500；新增回归测试。（commit `2c0e2bf`）
+- 出差补贴「起/止」模型重设计：默认整段 + 手动切分、返程自动收尾、复制追加末尾自动续接；去掉行程折叠；启动幂等清洗历史脏数据；前后端逻辑统一。（commit `c94591e`）
 
 ### 验证记录
 - [x] PowerShell 语法检查：`release_publish.ps1` 的 `Invoke-RollbackPrompt` 可解析。
-- [x] 前端 `npm run build` 通过（宽度对齐 + 基本信息卡片）。
+- [x] 前端 `npm run build` 通过（宽度对齐 + 基本信息卡片 + 起止重设计）。
 - [x] 后端 `pytest`（report_crud/trash/batch/status_machine）40 passed，含列表容错回归测试。
-- [ ] 起/止模型重设计的前后端测试与手动验证（待实现后补）。
+- [x] 起/止模型重设计：后端 88 passed、前端 14 passed、build 通过；数据迁移回归仅修正 2 张脏数据无回退；加段/复制返程 bug 已修。
 
 ### 已同步到 CHANGELOG
 - 已在 Unreleased 记录发布失败回滚功能。
-- 待补：页面宽度对齐、列表脏数据容错、出差补贴起止模型重设计。
+- 待补到 CHANGELOG（下次正式发布冻结时写入 vX.Y.Z 段）：页面宽度对齐、列表脏数据容错、出差补贴起止模型重设计。
