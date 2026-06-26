@@ -497,7 +497,11 @@ def report_trip_date_bounds(report: ExpenseReport) -> tuple[date | None, date | 
         return None, None
 
     report_reference = report.report_date or date.today()
-    trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    try:
+        trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    except TripDateError:
+        # 非法行程时序属于脏数据，只读的列表排序/序列化不应整页崩溃，降级为无日期边界
+        return None, None
     if not trip_ranges:
         return None, None
     return min(item.depart for item in trip_ranges), max(item.arrive for item in trip_ranges)
@@ -525,9 +529,14 @@ def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip
     start = trip_start or date.min
     end = trip_end or date.max
     report_reference = report.report_date or date.today()
+    try:
+        trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    except TripDateError:
+        # 脏数据无法推断行程日期，按不匹配日期筛选处理，避免整列表崩溃
+        return False
     return any(
         trip_range.depart <= end and trip_range.arrive >= start
-        for trip_range in infer_trip_date_ranges(report_reference, list(report.trips))
+        for trip_range in trip_ranges
     )
 
 
