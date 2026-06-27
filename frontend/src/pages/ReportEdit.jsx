@@ -14,7 +14,6 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
-  Grid,
   IconButton,
   InputAdornment,
   LinearProgress,
@@ -33,8 +32,6 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
-import ExpandLessIcon from "@mui/icons-material/ExpandLess";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
 import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
@@ -58,7 +55,6 @@ import {
 import {
   STATUS_ACTIONS,
   STATUS_META,
-  applyDefaultSubsidyMarkers,
   buildCustomExpenseCategory,
   buildDraftPayload,
   buildReportPayload,
@@ -74,6 +70,7 @@ import {
   makeBlankTrip,
   makeReturnTripAfter,
   moveTrip,
+  appendTripWithAutoStart,
   normalizeExpenseItem,
   normalizeTrip,
   swapTripEndpoints,
@@ -97,14 +94,11 @@ const SAVE_LABELS = {
 };
 
 const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
-const CONTENT_MAX_WIDTH = 1440;
 const SECTION_GAP = { xs: 2, md: 2.5 };
 const FIELD_GAP = { xs: 1.5, md: 2 };
 
 const pageContentSx = {
   width: "100%",
-  maxWidth: CONTENT_MAX_WIDTH,
-  mx: "auto",
   pb: 4,
 };
 
@@ -140,6 +134,13 @@ const repeatedCardGridSx = {
 const tripFieldGridSx = {
   display: "grid",
   gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(4, minmax(0, 1fr))" },
+  gap: FIELD_GAP,
+  alignItems: "start",
+};
+
+const basicInfoGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", sm: "repeat(12, minmax(0, 1fr))" },
   gap: FIELD_GAP,
   alignItems: "start",
 };
@@ -267,9 +268,9 @@ export default function ReportEdit() {
           advance_date_day: report.advance_date_day || "",
           advance_amount: toMoney(report.advance_amount),
         };
-        const nextTrips = applyDefaultSubsidyMarkers(
-          [...(report.trips || [])].sort((a, b) => a.sort_order - b.sort_order).map(normalizeTrip),
-        );
+        const nextTrips = [...(report.trips || [])]
+          .sort((a, b) => a.sort_order - b.sort_order)
+          .map(normalizeTrip);
         const nextItems = (report.expense_items || []).map(normalizeExpenseItem);
         const nextInvoices = report.invoices || [];
         const nextDefaults = {
@@ -494,7 +495,7 @@ export default function ReportEdit() {
   };
 
   const addTrip = () => {
-    setTrips((prev) => applyDefaultSubsidyMarkers([...prev, normalizeTrip(makeBlankTrip(form.report_date), prev.length)]));
+    setTrips((prev) => appendTripWithAutoStart(prev, makeBlankTrip(form.report_date)));
   };
 
   const removeTrip = (index) => {
@@ -511,10 +512,6 @@ export default function ReportEdit() {
 
   const swapTrip = (index) => {
     setTrips((prev) => prev.map((trip, i) => (i === index ? swapTripEndpoints(trip) : trip)));
-  };
-
-  const toggleTripCollapsed = (index) => {
-    setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, collapsed: !trip.collapsed } : trip)));
   };
 
   const toggleTripMarker = (index, field) => {
@@ -851,8 +848,8 @@ export default function ReportEdit() {
                       <Typography variant="h6" fontWeight={800}>
                         基本信息
                       </Typography>
-                      <Grid container spacing={FIELD_GAP}>
-                        <Grid item xs={12} sm={6}>
+                      <Box sx={basicInfoGridSx}>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -863,11 +860,11 @@ export default function ReportEdit() {
                             InputLabelProps={{ shrink: true }}
                             disabled={readonly}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField fullWidth size="small" label="部门" value={form.department} onChange={handleChange("department")} disabled={readonly} />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -876,8 +873,8 @@ export default function ReportEdit() {
                             onChange={handleChange("employee_name")}
                             disabled={readonly}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={6}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -891,8 +888,8 @@ export default function ReportEdit() {
                               inputProps: { min: 0, step: "0.01" },
                             }}
                           />
-                        </Grid>
-                        <Grid item xs={12}>
+                        </Box>
+                        <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -903,11 +900,11 @@ export default function ReportEdit() {
                             multiline
                             minRows={2}
                           />
-                        </Grid>
-                        <Grid item xs={12}>
+                        </Box>
+                        <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}>
                           <Divider />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -918,8 +915,8 @@ export default function ReportEdit() {
                             onChange={handleChange("advance_date_month")}
                             inputProps={{ min: 1, max: 12 }}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -930,8 +927,8 @@ export default function ReportEdit() {
                             onChange={handleChange("advance_date_day")}
                             inputProps={{ min: 1, max: 31 }}
                           />
-                        </Grid>
-                        <Grid item xs={12} sm={4}>
+                        </Box>
+                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -945,8 +942,8 @@ export default function ReportEdit() {
                               inputProps: { min: 0, step: "0.01" },
                             }}
                           />
-                        </Grid>
-                      </Grid>
+                        </Box>
+                      </Box>
                   </Stack>
                 </CardContent>
               </Card>
@@ -981,8 +978,12 @@ export default function ReportEdit() {
                       .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
                     const uploading = uploadState?.key === uploadKey;
                     const uploadDisabled = readonly || !trip.id || saveState === "saving";
-                    const markerPrefix = trip.subsidy_start ? "起 " : "";
-                    const markerSuffix = trip.subsidy_end ? " 止" : "";
+                    const isFirstTrip = index === 0;
+                    const isLastTrip = index === trips.length - 1;
+                    const effectiveStart = isFirstTrip || trip.subsidy_start;
+                    const effectiveEnd = isLastTrip || trip.subsidy_end;
+                    const markerPrefix = effectiveStart ? "起 " : "";
+                    const markerSuffix = effectiveEnd ? " 止" : "";
                     const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
                       trip.depart_place || "出发地"
                     } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
@@ -1020,12 +1021,12 @@ export default function ReportEdit() {
                               </Box>
                             </Stack>
                             <Stack direction="row" spacing={0.5} alignItems="center">
-                              <Tooltip title="标记为出差开始">
+                              <Tooltip title={isFirstTrip ? "出差开始（默认，自动）" : "标记这段为一次出差的开始"}>
                                 <span>
                                   <Button
                                     size="small"
-                                    variant={trip.subsidy_start ? "contained" : "outlined"}
-                                    disabled={readonly}
+                                    variant={effectiveStart ? "contained" : "outlined"}
+                                    disabled={readonly || isFirstTrip}
                                     onClick={() => toggleTripMarker(index, "subsidy_start")}
                                     sx={{ minWidth: 32, px: 0.75 }}
                                   >
@@ -1033,23 +1034,18 @@ export default function ReportEdit() {
                                   </Button>
                                 </span>
                               </Tooltip>
-                              <Tooltip title="标记为出差结束">
+                              <Tooltip title={isLastTrip ? "出差结束（默认，自动）" : "标记这段为一次出差的结束"}>
                                 <span>
                                   <Button
                                     size="small"
-                                    variant={trip.subsidy_end ? "contained" : "outlined"}
-                                    disabled={readonly}
+                                    variant={effectiveEnd ? "contained" : "outlined"}
+                                    disabled={readonly || isLastTrip}
                                     onClick={() => toggleTripMarker(index, "subsidy_end")}
                                     sx={{ minWidth: 32, px: 0.75 }}
                                   >
                                     止
                                   </Button>
                                 </span>
-                              </Tooltip>
-                              <Tooltip title={trip.collapsed ? "展开" : "折叠"}>
-                                <IconButton size="small" onClick={() => toggleTripCollapsed(index)}>
-                                  {trip.collapsed ? <ExpandMoreIcon /> : <ExpandLessIcon />}
-                                </IconButton>
                               </Tooltip>
                               <Tooltip title="复制行程">
                                 <span>
@@ -1082,9 +1078,7 @@ export default function ReportEdit() {
                             </Stack>
                           </Stack>
 
-                          {!trip.collapsed && (
-                            <>
-                              <Box sx={tripFieldGridSx}>
+                          <Box sx={tripFieldGridSx}>
                                 <Box>
                                   <TextField
                                     fullWidth
@@ -1223,8 +1217,6 @@ export default function ReportEdit() {
                                 />
                                 {renderInvoiceList(tripInvoices)}
                               </Stack>
-                            </>
-                          )}
                         </Stack>
                       </CardContent>
                         </Card>

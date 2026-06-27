@@ -323,3 +323,40 @@ def test_update_reimbursed_report_forbidden(db):
     with pytest.raises(HTTPException) as exc:
         update_report(db, report.id, ReportUpdate(purpose="改"))
     assert exc.value.status_code == 403
+
+
+def test_list_reports_tolerates_invalid_trip_chronology(db):
+    """历史脏数据：同日行程到达时间早于出发时间。只读列表不应整页崩溃，而是降级。"""
+    from backend.models.report import ExpenseReport
+    from backend.models.trip import Trip
+
+    # 直接 ORM 插入非法行程，绕过 create_report 的保存校验，模拟旧版本遗留的脏数据
+    report = ExpenseReport(status="draft", report_date=date(2026, 6, 26), purpose="脏数据")
+    report.trips.append(
+        Trip(
+            sort_order=1,
+            depart_month=6, depart_day=7, depart_hour=3, depart_place="上海",
+            arrive_month=6, arrive_day=7, arrive_hour=2, arrive_place="北京",
+        )
+    )
+    db.add(report)
+    db.commit()
+
+    # 排序/序列化路径：不抛 TripDateError，行程日期边界降级为 None
+    items, total = list_reports(db, page=1, page_size=20)
+    assert total == 1
+    assert items[0].id == report.id
+    assert items[0].trip_start_date is None
+    assert items[0].trip_end_date is None
+
+    # 序列化为前端读取模型也不应崩
+    read_model = ReportRead.model_validate(report)
+    assert read_model.trip_start_date is None
+    assert read_model.trip_end_date is None
+
+    # 筛选路径：带行程日期筛选不应崩，脏数据按不匹配处理
+    items, total = list_reports(
+        db,
+        filters=ReportFilters(trip_start=date(2026, 1, 1), trip_end=date(2026, 12, 31)),
+    )
+    assert total == 0

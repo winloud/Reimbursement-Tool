@@ -464,7 +464,8 @@ def test_calculate_subsidy_days_rejects_arrival_hour_before_departure_hour():
         calculate_subsidy_days(2026, trips)
 
 
-def test_calculate_subsidy_days_uses_default_start_end_markers_for_round_trips():
+def test_calculate_subsidy_days_defaults_to_first_depart_last_arrive():
+    # 新模型：无显式标记 → 补贴 = 第 1 段出发 → 最后 1 段到达，中间全算
     trips = [
         Trip(sort_order=1, depart_month=3, depart_day=4, depart_place="杭州", arrive_month=3, arrive_day=4, arrive_place="芜湖"),
         Trip(sort_order=2, depart_month=3, depart_day=4, depart_place="芜湖", arrive_month=3, arrive_day=4, arrive_place="杭州"),
@@ -472,7 +473,19 @@ def test_calculate_subsidy_days_uses_default_start_end_markers_for_round_trips()
         Trip(sort_order=4, depart_month=3, depart_day=15, depart_place="芜湖", arrive_month=3, arrive_day=15, arrive_place="杭州"),
     ]
 
-    assert calculate_subsidy_days(2026, trips) == 5
+    # 3/4 → 3/15 连续 = 12 天（回家不再自动切分，需手动标止/起）
+    assert calculate_subsidy_days(2026, trips) == 12
+
+
+def test_calculate_subsidy_days_manual_split_excludes_home_gap():
+    # 中途回家：手动标「止」+「起」切分，在家间隙不计补贴
+    trips = [
+        Trip(sort_order=1, depart_month=6, depart_day=1, arrive_month=6, arrive_day=2, subsidy_end=True),
+        Trip(sort_order=2, depart_month=6, depart_day=8, arrive_month=6, arrive_day=9, subsidy_start=True),
+    ]
+
+    # [6/1,6/2]=2 天 + [6/8,6/9]=2 天 = 4 天；中间 6/3-6/7 在家不算
+    assert calculate_subsidy_days(2026, trips) == 4
 
 
 def test_calculate_subsidy_days_uses_manual_start_end_markers():
@@ -486,9 +499,12 @@ def test_calculate_subsidy_days_uses_manual_start_end_markers():
     assert calculate_subsidy_days(2026, trips) == 5
 
 
-def test_calculate_subsidy_days_rejects_unmatched_end_marker():
+def test_calculate_subsidy_days_rejects_consecutive_start_marker():
+    # 中间段标「起」但上一段出差还没「止」→ 连续起点，报错
     trips = [
-        Trip(sort_order=1, depart_month=3, depart_day=4, arrive_month=3, arrive_day=4, subsidy_end=True),
+        Trip(sort_order=1, depart_month=3, depart_day=4, arrive_month=3, arrive_day=4),
+        Trip(sort_order=2, depart_month=3, depart_day=6, arrive_month=3, arrive_day=6, subsidy_start=True),
+        Trip(sort_order=3, depart_month=3, depart_day=8, arrive_month=3, arrive_day=8),
     ]
 
     with pytest.raises(TripDateError):

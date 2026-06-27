@@ -18,13 +18,12 @@ from backend.schemas.stats import (
 )
 from backend.services.report_service import (
     FIXED_CATEGORY_LABELS,
-    SubsidyTrip,
     build_subsidy_intervals,
     custom_category_name,
-    derive_default_subsidy_markers,
     infer_trip_date_ranges,
     is_custom_category,
     quantize_amount,
+    subsidy_trips_with_implicit_bounds,
 )
 
 PENDING_STATUS = "printed"
@@ -229,22 +228,8 @@ def report_trip_intervals(report: ExpenseReport) -> list[tuple[date, date]]:
         return []
 
     sorted_trips = sorted(report.trips, key=lambda trip: trip.sort_order)
-    has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
-    default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
-    subsidy_trips: list[SubsidyTrip] = []
-
-    for trip_range in infer_trip_date_ranges(report.report_date, sorted_trips):
-        default_start, default_end = default_markers.get(id(trip_range.trip), (False, False))
-        subsidy_trips.append(
-            SubsidyTrip(
-                trip=trip_range.trip,
-                depart=trip_range.depart,
-                arrive=trip_range.arrive,
-                subsidy_start=trip_range.trip.subsidy_start if has_manual_markers else default_start,
-                subsidy_end=trip_range.trip.subsidy_end if has_manual_markers else default_end,
-            )
-        )
-    return build_subsidy_intervals(subsidy_trips)
+    trip_ranges = infer_trip_date_ranges(report.report_date, sorted_trips)
+    return build_subsidy_intervals(subsidy_trips_with_implicit_bounds(trip_ranges))
 
 
 def add_months(value: date, months: int) -> date:

@@ -107,34 +107,6 @@ export const normalizeTrip = (trip = {}, index = 0) => ({
   collapsed: trip.collapsed ?? false,
 });
 
-export const applyDefaultSubsidyMarkers = (trips = []) => {
-  const normalized = trips.map((trip, index) => normalizeTrip(trip, index));
-  if (normalized.length === 0 || normalized.some((trip) => trip.subsidy_start || trip.subsidy_end)) {
-    return normalized;
-  }
-
-  const homePlace = String(normalized[0].depart_place || "").trim();
-  let openInterval = false;
-  const next = normalized.map((trip) => ({ ...trip, subsidy_start: false, subsidy_end: false }));
-  next.forEach((trip, index) => {
-    const departPlace = String(trip.depart_place || "").trim();
-    const arrivePlace = String(trip.arrive_place || "").trim();
-    const shouldStart = index === 0 || (!openInterval && homePlace && departPlace === homePlace);
-    if (shouldStart) {
-      trip.subsidy_start = true;
-      openInterval = true;
-    }
-    if (openInterval && homePlace && arrivePlace === homePlace) {
-      trip.subsidy_end = true;
-      openInterval = false;
-    }
-  });
-  if (openInterval) {
-    next[next.length - 1].subsidy_end = true;
-  }
-  return next;
-};
-
 export const makeBlankTrip = (reportDate) => {
   const date = reportDate ? new Date(`${reportDate}T00:00:00`) : new Date();
   const month = Number.isNaN(date.getTime()) ? 1 : date.getMonth() + 1;
@@ -297,20 +269,23 @@ export const getTripYearRangeLabel = (reportDate, trips = []) => {
 };
 
 export const calculateSubsidyDays = (reportDate, trips) => {
-  const markedTrips = trips.some((trip) => trip.subsidy_start || trip.subsidy_end)
-    ? trips.map((trip, index) => normalizeTrip(trip, index))
-    : applyDefaultSubsidyMarkers(trips);
-  const ranges = buildTripDateRanges(reportDate, markedTrips);
-
+  const ranges = buildTripDateRanges(reportDate, trips);
   if (ranges.length === 0) return 0;
+
+  // 第 1 段隐含「起」、最后 1 段隐含「止」，中间叠加用户显式标记
+  // （与后端 subsidy_trips_with_implicit_bounds 规则逐字对齐）
+  const lastIndex = ranges.length - 1;
   const intervals = [];
   let activeStart = null;
-  for (const range of ranges) {
-    if (range.trip.subsidy_start) {
+  for (let index = 0; index < ranges.length; index += 1) {
+    const range = ranges[index];
+    const effectiveStart = index === 0 || range.trip.subsidy_start;
+    const effectiveEnd = index === lastIndex || range.trip.subsidy_end;
+    if (effectiveStart) {
       if (activeStart) return 0;
       activeStart = range.depart;
     }
-    if (range.trip.subsidy_end) {
+    if (effectiveEnd) {
       if (!activeStart || range.arrive.getTime() < activeStart.getTime()) return 0;
       intervals.push({ start: activeStart, end: range.arrive });
       activeStart = null;
@@ -422,10 +397,9 @@ export const moveTrip = (trips, from, to) => {
 export const cloneTripAfter = (trips, index) => {
   const source = trips[index];
   if (!source) return trips.map(normalizeTrip);
-  const cloned = normalizeTrip({ ...source, id: null }, index + 1);
-  const next = [...trips];
-  next.splice(index + 1, 0, cloned);
-  return next.map(normalizeTrip);
+  // 复制为新一段并追加到末尾（避免插在源行程后面、打乱后续行程顺序）；
+  // 若末尾前一段是「止」，则自动接为新一次出差的「起」。
+  return appendTripWithAutoStart(trips, { ...source, id: null });
 };
 
 export const swapTripEndpoints = (trip) => ({
@@ -443,10 +417,20 @@ export const swapTripEndpoints = (trip) => ({
 export const makeReturnTripAfter = (trips, index) => {
   const source = trips[index];
   if (!source) return trips.map(normalizeTrip);
-  const returned = normalizeTrip({ ...swapTripEndpoints(source), id: null }, index + 1);
+  // 返程 = 一次出差结束，自动标「止」收尾（不继承源段的「起」）。
+  // 之后若再「添加行程」，新段会因前一段是「止」而自动标「起」，形成新一次出差。
+  const returned = normalizeTrip({ ...swapTripEndpoints(source), id: null, subsidy_start: false, subsidy_end: true }, index + 1);
   const next = [...trips];
   next.splice(index + 1, 0, returned);
   return next.map(normalizeTrip);
+};
+
+// 「添加行程」用：新增的末段若紧接在一段「止」之后，则它是新一次出差的「起」。
+export const appendTripWithAutoStart = (trips, blankTrip) => {
+  const prevLast = trips[trips.length - 1];
+  const startsNewTrip = Boolean(prevLast && prevLast.subsidy_end);
+  const nextTrip = normalizeTrip({ ...blankTrip, subsidy_start: startsNewTrip, subsidy_end: false }, trips.length);
+  return [...trips, nextTrip].map(normalizeTrip);
 };
 
 const textChanged = (current, initial) => String(current ?? "").trim() !== String(initial ?? "").trim();

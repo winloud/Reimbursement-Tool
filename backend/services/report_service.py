@@ -240,48 +240,31 @@ def calculate_subsidy_days(report_reference: date | int, trips: list[Trip]) -> i
         return 0
 
     sorted_trips = sorted(trips, key=lambda trip: trip.sort_order)
-    has_manual_markers = any(trip.subsidy_start or trip.subsidy_end for trip in sorted_trips)
-    default_markers = derive_default_subsidy_markers(sorted_trips) if not has_manual_markers else {}
-    subsidy_trips: list[SubsidyTrip] = []
-    for trip_range in infer_trip_date_ranges(report_reference, sorted_trips):
-        default_start, default_end = default_markers.get(id(trip_range.trip), (False, False))
-        subsidy_trips.append(
-            SubsidyTrip(
-                trip=trip_range.trip,
-                depart=trip_range.depart,
-                arrive=trip_range.arrive,
-                subsidy_start=trip_range.trip.subsidy_start if has_manual_markers else default_start,
-                subsidy_end=trip_range.trip.subsidy_end if has_manual_markers else default_end,
-            )
-        )
-
-    intervals = build_subsidy_intervals(subsidy_trips)
+    trip_ranges = infer_trip_date_ranges(report_reference, sorted_trips)
+    intervals = build_subsidy_intervals(subsidy_trips_with_implicit_bounds(trip_ranges))
     return count_merged_interval_days(intervals)
 
 
-def derive_default_subsidy_markers(trips: list[Trip]) -> dict[int, tuple[bool, bool]]:
-    if not trips:
-        return {}
+def subsidy_trips_with_implicit_bounds(trip_ranges: list[TripDateRange]) -> list[SubsidyTrip]:
+    """将行程日期区间转为带 effective 起止的 SubsidyTrip。
 
-    home_place = (trips[0].depart_place or "").strip()
-    markers = {id(trip): [False, False] for trip in trips}
-    open_interval = False
-
-    for index, trip in enumerate(trips):
-        depart_place = (trip.depart_place or "").strip()
-        arrive_place = (trip.arrive_place or "").strip()
-        should_start = index == 0 or (not open_interval and home_place and depart_place == home_place)
-        if should_start:
-            markers[id(trip)][0] = True
-            open_interval = True
-        if open_interval and home_place and arrive_place == home_place:
-            markers[id(trip)][1] = True
-            open_interval = False
-
-    if open_interval:
-        markers[id(trips[-1])][1] = True
-
-    return {key: (value[0], value[1]) for key, value in markers.items()}
+    模型：第 1 段隐含「起」、最后 1 段隐含「止」，中间叠加用户显式标记。
+    默认（无显式标记）即「第 1 段出发 → 最后 1 段到达」一个连续区间；
+    用户仅在一次出差中途回家/去别处、需要排除某段间隙时，手动标「止」「起」切分。
+    不再依赖出发地/到达地字符串匹配，也没有「全手动/全自动」模式切换。
+    """
+    ranges = list(trip_ranges)
+    last_index = len(ranges) - 1
+    return [
+        SubsidyTrip(
+            trip=trip_range.trip,
+            depart=trip_range.depart,
+            arrive=trip_range.arrive,
+            subsidy_start=index == 0 or bool(trip_range.trip.subsidy_start),
+            subsidy_end=index == last_index or bool(trip_range.trip.subsidy_end),
+        )
+        for index, trip_range in enumerate(ranges)
+    ]
 
 
 def build_subsidy_intervals(trips: list[SubsidyTrip]) -> list[tuple[date, date]]:
@@ -497,7 +480,11 @@ def report_trip_date_bounds(report: ExpenseReport) -> tuple[date | None, date | 
         return None, None
 
     report_reference = report.report_date or date.today()
-    trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    try:
+        trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    except TripDateError:
+        # 非法行程时序属于脏数据，只读的列表排序/序列化不应整页崩溃，降级为无日期边界
+        return None, None
     if not trip_ranges:
         return None, None
     return min(item.depart for item in trip_ranges), max(item.arrive for item in trip_ranges)
@@ -525,9 +512,14 @@ def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip
     start = trip_start or date.min
     end = trip_end or date.max
     report_reference = report.report_date or date.today()
+    try:
+        trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    except TripDateError:
+        # 脏数据无法推断行程日期，按不匹配日期筛选处理，避免整列表崩溃
+        return False
     return any(
         trip_range.depart <= end and trip_range.arrive >= start
-        for trip_range in infer_trip_date_ranges(report_reference, list(report.trips))
+        for trip_range in trip_ranges
     )
 
 
