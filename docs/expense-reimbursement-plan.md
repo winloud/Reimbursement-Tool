@@ -20,11 +20,12 @@
 
 ## 二、当前状态
 
-- 当前稳定版：`v1.2.4`
+- 当前源码版本：`v1.2.4`
+- 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
 - 当前开发版：TBD
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
-- 发布方式：本地生成 ZIP；正式版本通过 `vX.Y.Z` tag 触发 GitHub Release workflow；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
+- 发布方式：本地按需生成 ZIP；正式版本从 `main` 创建不可变 `vX.Y.Z` tag，由 GitHub Actions 构建、验证并发布 GitHub Release；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
 - 默认发票二维码识别路线：`zxing-cpp`
 - 可选兼容路线：`OpenCV + NumPy + WeChatQRCode`，通过 EXE 同目录 runtime ZIP 本地安装
 
@@ -68,13 +69,13 @@
 
 | 版本 | 状态 | 文档 |
 | --- | --- | --- |
-| `v1.2.4` | 已发布 | [releases/v1.2.4-plan.md](releases/v1.2.4-plan.md) |
-| `v1.2.3` | 已发布 | [releases/v1.2.3-plan.md](releases/v1.2.3-plan.md) |
-| `v1.2.2` | 已发布 | [releases/v1.2.2-plan.md](releases/v1.2.2-plan.md) |
-| `v1.2.1` | 已发布 | [releases/v1.2.1-plan.md](releases/v1.2.1-plan.md) |
-| `v1.2.0` | 已发布 | [releases/v1.2.0-plan.md](releases/v1.2.0-plan.md) |
-| `v1.1.1` | 已发布 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
-| `v1.1.0` | 已发布 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
+| `v1.2.4` | 内容已冻结 | [releases/v1.2.4-plan.md](releases/v1.2.4-plan.md) |
+| `v1.2.3` | 内容已冻结 | [releases/v1.2.3-plan.md](releases/v1.2.3-plan.md) |
+| `v1.2.2` | 内容已冻结 | [releases/v1.2.2-plan.md](releases/v1.2.2-plan.md) |
+| `v1.2.1` | 内容已冻结 | [releases/v1.2.1-plan.md](releases/v1.2.1-plan.md) |
+| `v1.2.0` | 内容已冻结 | [releases/v1.2.0-plan.md](releases/v1.2.0-plan.md) |
+| `v1.1.1` | 内容已冻结 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
+| `v1.1.0` | 内容已冻结 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
 | 当前开发 | 规划中 | [releases/active-plan.md](releases/active-plan.md) |
 
 ---
@@ -85,6 +86,7 @@
 | --- | --- | --- |
 | 发票二维码识别路线 | 默认 `zxing-cpp`，OpenCV WeChatQRCode 作为可选兼容模式 | [decisions/0001-invoice-qr-engine.md](decisions/0001-invoice-qr-engine.md) |
 | ZIP 桌面升级路线 | 采用便携式安装根目录、根目录 launcher 和版本目录，不与 Linux server 强行合并升级执行链 | [decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md) |
+| 发布治理 | GitHub 是公开发布真源，正式远端 tag 不可变，发布失败从原 tag 续跑 | [decisions/0003-release-governance.md](decisions/0003-release-governance.md) |
 
 ---
 
@@ -109,4 +111,4 @@
 
 1. 评估增量包和增量更新，继续保留全量 ZIP 作为主交付方式。
 2. 根据实际使用反馈打磨数据维护页的更新、备份和诊断流程。
-3. 继续补齐发布后 GitHub Actions 结果回查和 Release 资产校验记录。
+3. 继续增强 GitHub Actions 内的 Release 资产校验和可恢复发布能力，避免在仓库中重复维护机器状态。

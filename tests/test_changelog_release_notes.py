@@ -53,10 +53,13 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "Validate local release ZIP" in workflow
     assert "-ZipPath $mainZip.FullName" in workflow
     assert "if (-not $?)" in workflow
-    assert "China Standard Time" in workflow
+    assert "--metadata-output release-metadata.json" in workflow
+    assert '$metadata.release_date' in workflow
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
-    assert "releases/assets/$($asset.id)" in workflow
+    assert "release-manifest.json" in workflow
+    assert "SHA256SUMS.txt" in workflow
+    assert "releases/assets/$($asset.id)" not in workflow
 
 
 def test_preview_workflow_manually_builds_artifact_without_publishing_release():
@@ -87,40 +90,47 @@ def test_release_publish_script_covers_release_governance_flow():
         encoding="utf-8-sig"
     )
 
-    assert "Assert-CleanWorktree" in script
+    assert "Assert-CleanForNewPreparation" in script
+    assert "Assert-OnlyReleaseChanges" in script
     assert "AllowUntracked" in script
     assert 'ReleaseBranch = "main"' in script
     assert "Assert-ReleaseBranch" in script
     assert "Formal releases must be published from '$ReleaseBranch'" in script
     assert "Assert-ReleaseBranch -Branch $branch" in script
-    assert "Assert-ReleaseTagAvailable" in script
-    assert "RepublishExistingTag" in script
-    assert "Assert-ReleaseTagExistsForRepublish" in script
+    assert "Test-ReleasePrepared" in script
+    assert "Get-RemoteTagCommit" in script
+    assert "Assert-TagCommitMatches" in script
     assert "NotBeforeUtc" in script
-    assert "$parsedRuns = $json | ConvertFrom-Json" in script
+    assert "$parsed = $json | ConvertFrom-Json" in script
     assert "Update-Changelog" in script
     assert "Freeze-ReleasePlan" in script
     assert "prepare_release.ps1" in script
     assert "git\" -ArgumentList @(\"commit\", \"-m\", \"chore(release): publish $TagName\")" in script
-    assert "git\" -ArgumentList @(\"tag\", \"-a\", $TagName" in script
-    assert "git\" -ArgumentList @(\"tag\", \"-f\", \"-a\", $TagName" in script
-    assert "refs/tags/${TagName}:refs/tags/${TagName}" in script
+    assert "Create immutable release tag" in script
+    assert 'gh workflow run "Publish Release" --ref $ReleaseBranch' in script
+    assert "RepublishExistingTag" not in script
+    assert 'git reset --hard' not in script
+    assert 'git push --delete' not in script
+    assert 'git push --force' not in script
+    assert 'tag\", \"-f' not in script
     assert "gh run watch" in script
+    assert "gh run rerun" not in script
     assert "validate_release_asset.ps1" in script
     assert "DownloadReleaseAssetForValidation" in script
     assert "MetadataOnly = $true" in script
     assert "collect_release_metrics.ps1" in script
-    assert "docs(release): record $TagName verification" in script
+    assert "docs(release): record $TagName verification" not in script
 
 
 def test_release_process_documents_main_first_release_flow():
     document = (Path(__file__).resolve().parents[1] / "docs" / "release-process.md").read_text(encoding="utf-8")
 
-    assert "正式版本必须从主线发布" in document
+    assert "正式版本只从已合并并推送的 `main` 发布" in document
     assert "将开发分支合并到 `main`" in document
     assert "git checkout main" in document
     assert "git pull --ff-only origin main" in document
-    assert "git push origin main" in document
+    assert "-Publish" in document
+    assert "已推送的正式 `vX.Y.Z` tag 永不移动" in document
     assert "git push origin <branch>" not in document
 
 

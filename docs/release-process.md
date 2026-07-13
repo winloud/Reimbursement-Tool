@@ -1,157 +1,122 @@
 # 发布流程
 
-本文档记录正式发布的快速路径。详细版本任务和验证记录仍写入 `docs/releases/active-plan.md` 或冻结后的 `docs/releases/vX.Y.Z-plan.md`。
+本文档记录正式发布的快速路径。GitHub Actions 和 GitHub Release 是公开发布状态的权威来源；仓库中的计划文档记录开发内容、冻结状态和必要的人工验证，不重复保存可从 GitHub 查询的机器状态。
+
+## 核心约束
+
+- 正式版本只从已合并并推送的 `main` 发布。
+- `docs/releases/active-plan.md` 必须在创建正式 tag 前冻结，冻结计划状态统一为“内容已冻结”。
+- 已推送的正式 `vX.Y.Z` tag 永不移动、删除或 force-push。
+- 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
+- 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
 ## 标准发布顺序
 
-多人协作时，正式版本必须从主线发布。开发分支可以做本地预检、preview artifact 或测试包，但不直接创建正式 tag。
-
-标准顺序：
-
-1. 在 `codex/*`、`feat/*` 或 `fix/*` 分支完成开发和测试。
-2. 将开发分支合并到 `main`。
-3. 推送 `main` 到远端，确认 `origin/main` 包含本次发布源码。
-4. 切到最新 `main` 后运行发布总控脚本。
-5. 总控脚本在 `main` 上创建 release commit 和 `vX.Y.Z` tag，推送 `main` 和 tag，由 GitHub Actions 构建 GitHub Release。
+1. 在开发分支完成开发、测试和文档记录。
+2. 将开发分支合并到 `main`，推送并确认 `origin/main` 包含本次源码。
+3. 在最新 `main` 上运行发布总控的准备模式，检查版本文件和预检结果。
+4. 检查准备模式产生的 diff；确认后运行同一脚本的 `-Publish` 模式。
+5. 脚本创建或识别 release commit/tag，推送必要状态，等待或续跑 workflow，并校验 GitHub Release。
 
 ```powershell
 git checkout main
 git pull --ff-only origin main
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
+git diff
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish
 ```
 
-## 自动发布总控
+准备模式可重复运行，不创建 commit 或 tag。正式发布只需要一次 `-Publish` 调用；如果进程中断，再次运行相同命令会根据已有 release commit、本地/远端 tag、workflow 和 Release 状态继续执行。
 
-正式发布优先使用总控脚本，让脚本完成发布治理编排，AI 只负责确认输入、处理异常和解释结果。脚本默认要求 `-Publish` 在 `main` 上运行；如果当前分支不是 `main`，会在修改版本文件或创建 tag 前停止：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish
-```
-
-常用参数：
+## 发布总控接口
 
 - `-Version X.Y.Z`：必填，正式版本号。
-- `-ReleaseDate yyyymmdd`：可选；未传时按中国时区当天生成。
+- `-ReleaseDate yyyymmdd`：可选；未传时按中国时区当天生成。日期必须与 `CHANGELOG.md` 对应版本标题一致。
 - `-VersionType patch|minor|major|TBD`：可选，默认 `patch`，写入冻结发布计划。
-- `-Publish`：从发布分支推送 `main` 和 tag，等待 GitHub Actions，校验 Release 资产，采集耗时，写回冻结计划并提交验证记录。
-- `-RepublishExistingTag`：可选；只用于重发已存在的 GitHub Release。脚本会跳过 changelog/版本文件冻结，先运行预检，再移动并 force-push 同名 tag 触发 workflow。
-- `-AllowUntracked`：可选；只忽略未跟踪文件，已跟踪文件变更仍会阻断发布。用于本地存在草稿文件但不会进入 Git/tag 的场景。
-- `-CompareRunId <id>`：可选，用于发布后自动生成与基线 run 的耗时对比。
-- `-DownloadReleaseAssetForValidation`：可选；默认不下载 GitHub Release 主 ZIP，只检查资产元数据。只有需要发布后从公网下载主 ZIP 再深校验时才使用。
-- `-ReleaseBranch main`：可选，默认 `main`；仅当仓库主发布分支更名时才改。
-- `-SkipTests`：仅用于临时烟测或已经由其他可信流程完成测试的场景；正式发布默认不要使用。
+- 不带 `-Publish`：准备版本文件、冻结 active plan、创建下一轮 active plan 并运行预检；不提交、不创建 tag、不 push。
+- `-Publish`：从当前状态安全续跑，直至 workflow 和 GitHub Release 校验完成。
+- `-AllowUntracked`：可选；只忽略未跟踪文件，已跟踪文件变更仍按发布状态规则检查。
+- `-DownloadReleaseAssetForValidation`：可选；默认不下载主 ZIP，只下载小型 `release-manifest.json` 和 `SHA256SUMS.txt` 做完整性校验；需要模拟最终用户下载时再启用远端 ZIP 深校验。
+- `-ReleaseBranch main`：可选，默认 `main`；仅在仓库正式发布分支更名时调整。
+- `-SkipTests`：只用于临时烟测或测试已由其他可信流程完成的场景；正式发布默认不使用。
 
-脚本自动执行：
+`-RepublishExistingTag` 和总控脚本中的 `-CompareRunId` 已移除：正式 tag 不允许重定向；耗时比较继续使用独立 metrics 工具。
 
-- 检查工作区、发布分支和本地/远端 tag。
-- 将 `CHANGELOG.md` 的 `Unreleased` 冻结到 `## vX.Y.Z - YYYY-MM-DD`。
-- 更新 `README.md`、`backend/app_metadata.py`、`frontend/package.json` 和 `frontend/package-lock.json`。
-- 将 `docs/releases/active-plan.md` 冻结为 `docs/releases/vX.Y.Z-plan.md`，并重建新的 active plan。
-- 更新 docs 索引，运行 `scripts/prepare_release.ps1`。
-- 创建 `chore(release): publish vX.Y.Z` commit 和本地 tag。
-- GitHub Actions 在上传资产前调用 `scripts/validate_release_asset.ps1 -ZipPath ...`，对 runner 本地刚构建出的主 ZIP 做内容校验。
-- 带 `-Publish` 时推送 `main` 和 tag，等待 `Publish Release` workflow，默认以 metadata-only 方式检查 GitHub Release 资产是否存在且命名正确，采集耗时，写回冻结计划，再提交并推送 `docs(release): record vX.Y.Z verification`。
-- 如果 GitHub Actions workflow 失败，脚本会提示用户选择回滚策略：删除远端 tag 并重置本地分支（推荐）、只删除远端 tag（保留本地 commit 供调查），或保持现状手动处理。
+## 状态识别与续跑
 
-重发既有版本时必须显式使用 `-RepublishExistingTag`，例如：
+发布总控按以下状态处理：
 
-```powershell
-git checkout main
-git pull --ff-only origin main
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -Publish -RepublishExistingTag -CompareRunId <baseline-run-id>
-```
+- 尚未准备：更新版本元数据、冻结 CHANGELOG 和版本计划，重建 active plan，运行预检。
+- 已准备但未提交：复用现有准备结果并完成预检；`-Publish` 时创建 release commit。
+- 已有 release commit 或本地 tag：验证 tag 与预期 commit 一致后继续，不重复创建。
+- 已有远端 tag：验证远端 tag SHA 与本地发布 commit 一致；不一致立即停止，不做 force-push。
+- workflow 运行中：等待现有 run，不重复触发。
+- workflow 失败或未找到：先把 workflow 修复提交并推送到 `main`，再由当前 `main` 上的 workflow 定义通过 `workflow_dispatch` 检出同一不可变 tag 重跑。
+- GitHub Release 已成功：验证 Release notes、资产、manifest 和 checksum 后直接返回成功。
 
-该模式用于修正发布流程或重建同版本资产；仍应从 `main` 执行。它会更新同名 GitHub Release 资产和 notes，但不会把 `Unreleased` 再冻结到该版本。
+失败时不执行 `reset --hard`、自动删除 tag 或其他破坏性回滚。修复仅涉及 workflow 时从原 tag 重跑；修复涉及源码时更新 `CHANGELOG.md` 并发布新的 patch 版本。
 
-## 独立工具
+## GitHub Release 工作流
 
-发布后可单独复验 Release 资产：
+`Publish Release` 支持两种入口：
+
+- 推送严格匹配 `vX.Y.Z` 的 tag。
+- 手工触发并传入既有 `tag`，用于从原 tag commit 重建或修复 Release 资产。
+
+工作流必须确认 tag commit 属于 `origin/main`，从 `CHANGELOG.md` 对应版本标题读取发布日期，并为同一 tag 设置并发锁和超时。新 Release 先作为 draft 创建；测试、构建、ZIP 内容校验、`release-manifest.json` 和 `SHA256SUMS.txt` 全部成功后再公开。重跑已有 Release 只覆盖本次目标资产，不删除额外资产。
+
+OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须校验下载文件的 SHA256 和 ZIP 内容；校验失败时重新构建，不能只依赖文件名和非零大小。
+
+## 独立验证工具
+
+发布后按需复验 Release 资产；`-MetadataOnly` 不下载主 ZIP，但会下载 manifest 和 checksum 两个小型完整性资产：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -MetadataOnly
 ```
 
-校验本地 ZIP 内容，不需要联网下载：
+校验本地 ZIP 内容：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -ZipPath release\报销管理-vX.Y.Z-yyyymmdd.zip
 ```
 
-只有需要模拟用户从 GitHub 下载主 ZIP 时，才运行远端下载深校验：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
-```
-
-采集或对比 GitHub Actions 耗时：
+需要模拟用户从 GitHub 下载时，省略 `-MetadataOnly` 和 `-ZipPath` 进行远端深校验。耗时采集和比较保持为独立命令：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\collect_release_metrics.ps1 -RunId <run-id> -CompareRunId <baseline-run-id> -Format Markdown
 ```
 
-两个工具都支持写出 JSON，供总控脚本或其他自动化读取。
+这些结果默认只在终端或 GitHub 中查看；只有能长期帮助安装、升级或迁移判断的人工验证才写回文档。
 
-## 手工路径
+## 手工发布路径
 
-正式发布包以 GitHub tag workflow 产物为准。本地默认做发布预检，不重复生成正式 ZIP，除非需要验证本机 PyInstaller 输出、程序内更新包行为，或 GitHub Actions 暂不可用。
+发布总控不可用时：
 
-当总控脚本不可用或需要排查细节时，使用手工流程：
-
-1. 冻结 `CHANGELOG.md`：把 `Unreleased` 内容移动到 `## vX.Y.Z - YYYY-MM-DD`。
-2. 更新 `README.md`、`backend/app_metadata.py`、`frontend/package.json` 和 `frontend/package-lock.json` 的版本信息。
-3. 将 `docs/releases/active-plan.md` 冻结为 `docs/releases/vX.Y.Z-plan.md`，并重建新的 `active-plan.md`。
-4. 运行发布预检：
-
-```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\prepare_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
-```
-
-5. 提交发布准备：
+1. 将 `Unreleased` 内容冻结到 `## vX.Y.Z - YYYY-MM-DD`。
+2. 更新 README、后端和前端版本元数据。
+3. 将 active plan 冻结为 `vX.Y.Z-plan.md`，状态写“内容已冻结”，并创建下一轮 active plan。
+4. 运行 `scripts/prepare_release.ps1` 和必要测试。
+5. 提交 release commit。
+6. 仅在确认 release commit 已位于并推送到 `main` 后，创建一次 annotated tag 并推送。
+7. 等待 tag workflow，或用 workflow 的手工 `tag` 输入从同一 tag 续跑。
 
 ```powershell
 git add CHANGELOG.md README.md backend/app_metadata.py frontend/package.json frontend/package-lock.json docs
 git commit -m "chore(release): publish vX.Y.Z"
-git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin main
+git tag -a vX.Y.Z -m "vX.Y.Z"
 git push origin vX.Y.Z
 ```
 
-6. 等待 `Publish Release` workflow 完成，核对 GitHub Release notes 和资产。
-7. 将远端发布验证结果补入冻结计划；这一步可以在确认 Release 成功后单独提交。
+如果 tag 已存在，必须先验证其 SHA；不要移动或覆盖。Release 成功后无需再补一次机器状态提交。
 
 ## 本地正式 ZIP
 
-需要本地包时再运行：
+GitHub tag workflow 的资产是正式交付物。本地只有在验证本机 PyInstaller 输出、程序内更新包行为或 GitHub Actions 暂不可用时才生成正式 ZIP：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -SkipDependencyInstall -ReuseReleaseVenv
 ```
 
-本地 ZIP 必须留在 `release/`，不要提交 Git。若同名正式 ZIP 已存在，发布脚本会拒绝覆盖，需要手动确认后再处理。
-
-## 发布耗时参考
-
-v1.2.0 的 GitHub Release workflow 用时约 3m16s：
-
-- 前端依赖安装约 34s。
-- 后端测试依赖安装约 27s。
-- 测试和 release notes 抽取约 10s。
-- 云端构建正式 ZIP 和 OpenCV runtime 约 1m24s。
-- 发布资产约 7s。
-
-总体发布体感较长主要来自本地重复测试、重复构建正式 ZIP、等待远端 workflow，以及发布后补验证记录。后续发布默认走“本地预检 + 远端打包”的快速路径。
-
-v1.2.1 的 GitHub Release workflow run `28121701414` 成功，但没有变快，run 总耗时 `266s`，job 用时 `4m21s`：
-
-- 前端依赖安装 `30s`，略快于 v1.2.0 的 `34s`。
-- 后端测试依赖安装 `73s`，慢于 v1.2.0 的 `27s`；本次 pip cache 首次未命中，run 结束后才写入缓存。
-- 测试 `17s`，慢于 v1.2.0 的 `9s`。
-- OpenCV runtime 成功从 v1.2.0 Release 复用，新增恢复步骤 `13s`，主构建从 `84s` 降到 `78s`。
-- 发布资产 `8s`，与 v1.2.0 的 `7s` 基本一致。
-
-结论：runtime 复用已生效，但本次收益被首次 cache miss 和后端依赖安装波动抵消；下一次发布需要继续观察 pip/npm cache 命中后的真实耗时。
-
-## 后续可选优化
-
-- 正式发布 workflow 已复用既有 OpenCV runtime 资产；只有找不到匹配 `opencv-contrib-python-headless` 版本的资产时才重建。
-- GitHub Actions 的 checkout/setup/upload-artifact action 已升级到当前可用的新主版本，避免继续使用旧 Node.js 运行时。
+本地 ZIP 必须留在 `release/`，不提交 Git；同名正式 ZIP 不自动覆盖，只能由用户明确处理。

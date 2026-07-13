@@ -58,8 +58,10 @@
 - 正式 ZIP 包文件名规则为 `报销管理-vX.Y.Z-yyyymmdd.zip`，避免同名覆盖；已有 ZIP 只允许用户手动删除。
 - 预览 ZIP 不得自作主张编造或占用正式版本号。未绑定目标版本时命名为 `报销管理-preview-yyyymmdd-NNN.zip`；如果 `docs/releases/active-plan.md` 已明确目标版本 `vX.Y.Z`，命名为 `报销管理-vX.Y.Z-preview-yyyymmdd-NNN.zip`。`NNN` 为当天三位数字流水号，例如 `001`。
 - 只有正式发版或用户明确指定正式版本时，才生成 `报销管理-vX.Y.Z-yyyymmdd.zip`。
-- 发布版本时，默认按 `docs/releases/active-plan.md`、`CHANGELOG.md`、`scripts/build_release.ps1` 和 `.github/workflows/publish-release.yml` 的 tag 发布流程执行；推送 `vX.Y.Z` tag 后由 GitHub Actions 创建或更新 GitHub Release，并自动从 `CHANGELOG.md` 抽取对应版本说明。
+- GitHub Actions 和 GitHub Release 是公开发布状态的权威来源；仓库文档只记录源码版本、冻结内容和长期有价值的人工验证，不重复维护 workflow、资产大小等可查询状态。
+- 发布版本时，默认按 `docs/releases/active-plan.md`、`CHANGELOG.md`、`scripts/release_publish.ps1` 和 `.github/workflows/publish-release.yml` 执行：不带 `-Publish` 时只准备版本文件并预检；带 `-Publish` 时从已有状态安全续跑，推送 `vX.Y.Z` tag 后由 GitHub Actions 构建并验证 GitHub Release。
 - 正式发布 tag 必须从已合并并推送的 `main` 创建；开发分支先合并到 `main` 并推送，再在 `main` 上运行发布总控或手工打 tag。开发分支只用于预检、preview 或测试包，不直接发布正式版本。
+- `docs/releases/active-plan.md` 必须在创建正式 tag 前冻结为 `docs/releases/vX.Y.Z-plan.md`，冻结计划状态统一写“内容已冻结”，随后重建下一轮 active plan。
+- 已推送的正式 `vX.Y.Z` tag 永不移动或 force-push。发布失败时保留 release commit 和 tag，从同一不可变 tag 续跑；源码需要修改时发布新的 patch 版本，不做破坏性回滚。
 - GitHub Release 主 ZIP 资产使用 ASCII 文件名 `reimbursement-tool-vX.Y.Z-yyyymmdd.zip`，避免 GitHub 规范化非 ASCII 资产名；本地 `release/` 主 ZIP 仍使用 `报销管理-vX.Y.Z-yyyymmdd.zip`。
-- 发布完成后，将 docs/releases/active-plan.md 冻结为 docs/releases/vX.Y.Z-plan.md。
-- 再从模板创建新的 docs/releases/active-plan.md。
+- 正常发布成功后不再为了记录机器可查询状态而自动修改文档、提交或再次 push；重要的安装、升级、迁移等人工验证可按需作为普通 docs commit 补充。

@@ -1,7 +1,8 @@
 # 报销单工具开发文档
 
 ## 当前状态
-- 当前稳定版：v1.2.4
+- 当前源码版本：v1.2.4
+- 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
 - 当前开发版：TBD
 
 ## 核心文档
@@ -17,6 +18,7 @@
 ## 技术决策
 - decisions/
 - ZIP 桌面升级路线：[decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md)
+- 发布治理与不可变 tag：[decisions/0003-release-governance.md](decisions/0003-release-governance.md)
 
 ## 测试依据
 - testing/
