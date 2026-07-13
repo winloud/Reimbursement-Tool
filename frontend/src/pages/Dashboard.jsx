@@ -23,14 +23,10 @@ import EventRepeatIcon from "@mui/icons-material/EventRepeat";
 import { useNavigate } from "react-router-dom";
 import {
   CartesianGrid,
-  Cell,
   Legend,
   Line,
   LineChart,
-  Pie,
-  PieChart,
   ResponsiveContainer,
-  Sector,
   Tooltip,
   XAxis,
   YAxis,
@@ -53,7 +49,14 @@ import {
   monthValueFromDate,
 } from "./dashboardUtils";
 
-const CATEGORY_COLORS = ["#2563EB", "#16A34A", "#F59E0B", "#DC2626", "#7C3AED", "#0891B2", "#DB2777", "#64748B"];
+const CATEGORY_COLORS = ["#2454A6", "#237A57", "#B66B18", "#B93B3B", "#3A668F", "#526071", "#6B5E44", "#64748B"];
+const DASHBOARD_GRID_SX = { width: "100%", ml: 0 };
+const SUMMARY_CARD_META = {
+  total_amount: { color: "#2454A6", label: "总览" },
+  reimbursed_amount: { color: "#237A57", label: "已确认" },
+  pending_amount: { color: "#B66B18", label: "待处理" },
+  trip_days: { color: "#3A668F", label: "负荷" },
+};
 const WEEKDAY_LABELS = ["日", "一", "二", "三", "四", "五", "六"];
 const TRIP_HEAT_START_RGB = [108, 166, 119];
 const TRIP_HEAT_END_RGB = [205, 165, 93];
@@ -99,7 +102,6 @@ export default function Dashboard() {
   const [summary, setSummary] = useState(null);
   const [category, setCategory] = useState(null);
   const [calendar, setCalendar] = useState(null);
-  const [activeCategoryIndex, setActiveCategoryIndex] = useState(null);
   const [loading, setLoading] = useState(true);
   const [calendarLoading, setCalendarLoading] = useState(false);
   const [error, setError] = useState("");
@@ -224,7 +226,7 @@ export default function Dashboard() {
         </Typography>
       </Box>
 
-      <Grid container spacing={2.5}>
+      <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12}>
           <Card sx={{ borderRadius: 2 }}>
             <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
@@ -280,10 +282,25 @@ export default function Dashboard() {
 
       {error && <Alert severity="error">{error}</Alert>}
 
-      <Grid container spacing={2.5}>
+      <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         {cards.map((card) => (
           <Grid item xs={12} sm={6} lg={3} key={card.key}>
-            <Card sx={{ height: "100%", borderRadius: 2 }}>
+            <Card
+              sx={{
+                height: "100%",
+                borderLeft: "5px solid",
+                borderLeftColor: SUMMARY_CARD_META[card.key]?.color || "primary.main",
+                transition: "transform 160ms ease, box-shadow 160ms ease",
+                ...(card.clickable === false
+                  ? {}
+                  : {
+                      "&:hover": {
+                        transform: "translateY(-2px)",
+                        boxShadow: "0 12px 24px rgba(23, 32, 42, 0.09)",
+                      },
+                    }),
+              }}
+            >
               {card.clickable === false ? (
                 <SummaryCardContent card={card} />
               ) : (
@@ -296,7 +313,7 @@ export default function Dashboard() {
         ))}
       </Grid>
 
-      <Grid container spacing={2.5}>
+      <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12} lg={7}>
           <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
             <CardContent sx={{ height: "100%" }}>
@@ -356,82 +373,22 @@ export default function Dashboard() {
           <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
             <CardContent sx={{ height: "100%" }}>
               <Typography variant="h6" fontWeight={800}>
-                已报销费用分布
+                费用类别排行
               </Typography>
               <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                查看所选月份范围内已报销费用的类别占比
+                按已报销金额排序，优先看占用最高的费用项
               </Typography>
               {categoryData.length === 0 ? (
                 <EmptyPanel text="暂无已报销费用数据" />
               ) : (
-                <Box sx={{ height: { xs: 190, sm: 220, lg: 255 } }}>
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={categoryData}
-                        dataKey="amount"
-                        nameKey="label"
-                        innerRadius="48%"
-                        outerRadius="78%"
-                        paddingAngle={2}
-                        isAnimationActive
-                        animationBegin={120}
-                        animationDuration={900}
-                        animationEasing="ease-out"
-                        activeIndex={activeCategoryIndex ?? undefined}
-                        activeShape={renderActivePieSector}
-                        onMouseEnter={(_, index) => setActiveCategoryIndex(index)}
-                        onMouseLeave={() => setActiveCategoryIndex(null)}
-                      >
-                        {categoryData.map((item, index) => (
-                          <Cell key={item.category} fill={CATEGORY_COLORS[index % CATEGORY_COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip formatter={(value) => formatStatsAmount(value)} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </Box>
-              )}
-              {categoryLegendItems.length > 0 && (
-                <Box
-                  sx={{
-                    display: "grid",
-                    gridTemplateColumns: { xs: "1fr", sm: "1fr 1fr" },
-                    columnGap: 4,
-                    rowGap: 0.75,
-                    mt: 1,
-                  }}
-                >
-                  {categoryLegendItems.map((item, index) => (
-                    <Box key={item.category} sx={{ display: "inline-flex", alignItems: "center", gap: 0.75, minWidth: 0 }}>
-                      <Box
-                        sx={{
-                          width: 10,
-                          height: 10,
-                          borderRadius: "50%",
-                          bgcolor: CATEGORY_COLORS[index % CATEGORY_COLORS.length],
-                          flex: "0 0 auto",
-                        }}
-                      />
-                      <Typography variant="caption" noWrap sx={{ flex: 1 }}>
-                        {item.label}
-                      </Typography>
-                      <Typography variant="caption" fontWeight={700}>
-                        {item.amountText}
-                      </Typography>
-                      <Typography variant="caption" color="text.secondary">
-                        {item.percentText}
-                      </Typography>
-                    </Box>
-                  ))}
-                </Box>
+                <CategoryRankList items={categoryLegendItems} sourceItems={categoryData} />
               )}
             </CardContent>
           </Card>
         </Grid>
       </Grid>
 
-      <Grid container spacing={2.5}>
+      <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12}>
           <Card sx={{ borderRadius: 2 }}>
             <CardContent>
@@ -467,22 +424,6 @@ export default function Dashboard() {
   );
 }
 
-function renderActivePieSector(props) {
-  const { cx, cy, innerRadius, outerRadius, startAngle, endAngle, fill } = props;
-  return (
-    <Sector
-      cx={cx}
-      cy={cy}
-      innerRadius={innerRadius}
-      outerRadius={outerRadius + 8}
-      startAngle={startAngle}
-      endAngle={endAngle}
-      fill={fill}
-      style={{ filter: "drop-shadow(0 6px 10px rgba(15, 23, 42, 0.22))" }}
-    />
-  );
-}
-
 function EmptyPanel({ text }) {
   return (
     <Stack alignItems="center" justifyContent="center" sx={{ height: 250, color: "text.secondary" }}>
@@ -492,18 +433,78 @@ function EmptyPanel({ text }) {
 }
 
 function SummaryCardContent({ card }) {
+  const meta = SUMMARY_CARD_META[card.key] || SUMMARY_CARD_META.total_amount;
   return (
-    <CardContent>
-      <Typography color="text.secondary" gutterBottom>
-        {card.title}
-      </Typography>
-      <Typography variant="h5" fontWeight={800} sx={{ mb: 1 }}>
+    <CardContent sx={{ height: "100%" }}>
+      <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+        <Typography color="text.secondary" fontWeight={800}>
+          {card.title}
+        </Typography>
+        <Typography
+          variant="caption"
+          sx={{
+            color: meta.color,
+            bgcolor: "rgba(36, 84, 166, 0.08)",
+            borderRadius: 1,
+            px: 0.75,
+            py: 0.25,
+            fontWeight: 900,
+          }}
+        >
+          {meta.label}
+        </Typography>
+      </Stack>
+      <Typography variant="h5" fontWeight={900} sx={{ mb: 1, fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace' }}>
         {card.primary}
       </Typography>
       <Typography variant="body2" color="text.secondary">
         {card.secondary || "\u00A0"}
       </Typography>
     </CardContent>
+  );
+}
+
+function CategoryRankList({ items, sourceItems }) {
+  const amountByCategory = new Map(sourceItems.map((item) => [item.category, Number(item.amount || 0)]));
+  const ranked = [...items].sort((left, right) => (amountByCategory.get(right.category) || 0) - (amountByCategory.get(left.category) || 0));
+  const maxAmount = ranked.reduce((max, item) => Math.max(max, amountByCategory.get(item.category) || 0), 0);
+
+  return (
+    <Stack spacing={1.3} sx={{ mt: 1 }}>
+      {ranked.map((item, index) => {
+        const amount = amountByCategory.get(item.category) || 0;
+        const percent = maxAmount > 0 ? Math.max(6, (amount / maxAmount) * 100) : 0;
+        const color = CATEGORY_COLORS[index % CATEGORY_COLORS.length];
+        return (
+          <Box key={item.category}>
+            <Stack direction="row" alignItems="baseline" justifyContent="space-between" spacing={1}>
+              <Typography variant="body2" fontWeight={850} noWrap>
+                {item.label}
+              </Typography>
+              <Stack direction="row" spacing={1} alignItems="baseline" sx={{ flex: "0 0 auto" }}>
+                <Typography variant="body2" fontWeight={900} sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace' }}>
+                  {item.amountText}
+                </Typography>
+                <Typography variant="caption" color="text.secondary">
+                  {item.percentText}
+                </Typography>
+              </Stack>
+            </Stack>
+            <Box
+              sx={{
+                mt: 0.65,
+                height: 8,
+                borderRadius: 1,
+                bgcolor: "rgba(104, 115, 131, 0.12)",
+                overflow: "hidden",
+              }}
+            >
+              <Box sx={{ width: `${percent}%`, height: "100%", borderRadius: 1, bgcolor: color }} />
+            </Box>
+          </Box>
+        );
+      })}
+    </Stack>
   );
 }
 

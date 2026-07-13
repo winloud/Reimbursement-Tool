@@ -62,7 +62,7 @@ function Sidebar() {
         borderRight: { md: 1 },
         borderBottom: { xs: 1, md: 0 },
         borderColor: "divider",
-        bgcolor: "background.paper",
+        bgcolor: "#F8FAFC",
         position: { md: "sticky" },
         top: 0,
         zIndex: 1,
@@ -73,8 +73,8 @@ function Sidebar() {
           <Typography variant="h6" fontWeight={800}>
             报销管理
           </Typography>
-          <Typography variant="body2" color="text.secondary">
-            出差旅费报销工具
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+            本地出差旅费工作台
           </Typography>
         </Box>
 
@@ -95,7 +95,15 @@ function Sidebar() {
               key={item.to}
               selected={isActive(item.to)}
               onClick={() => requestNavigation(item.to)}
-              sx={{ borderRadius: 1, mb: 0.5 }}
+              sx={{
+                borderRadius: 1,
+                mb: 0.5,
+                "&.Mui-selected": {
+                  bgcolor: "primary.50",
+                  color: "primary.dark",
+                  "& .MuiListItemIcon-root": { color: "primary.main" },
+                },
+              }}
             >
               <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
               <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 700 }} />
@@ -109,7 +117,7 @@ function Sidebar() {
 
 function AppRoutes() {
   return (
-    <Box sx={{ display: { xs: "block", md: "flex" }, minHeight: "100vh", bgcolor: "#F4F7FB" }}>
+    <Box sx={{ display: { xs: "block", md: "flex" }, minHeight: "100vh", bgcolor: "background.default" }}>
       <Sidebar />
       <Box component="main" sx={{ flex: 1, minWidth: 0, px: { xs: 2, md: 3, xl: 4 }, py: { xs: 2, md: 3 } }}>
         <Box sx={APP_CONTENT_SX}>

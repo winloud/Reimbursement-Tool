@@ -23,6 +23,17 @@ export const EXPENSE_CATEGORIES = [
 
 export const CUSTOM_CATEGORY_PREFIX = "custom:";
 const CUSTOM_CATEGORY_FORBIDDEN_PATTERN = /[\/\\:*?"<>|\x00-\x1f]/;
+const SUPPORTED_INVOICE_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"]);
+const CLIPBOARD_EXTENSION_BY_MIME = {
+  "application/pdf": ".pdf",
+  "image/bmp": ".bmp",
+  "image/gif": ".gif",
+  "image/jpeg": ".jpg",
+  "image/jpg": ".jpg",
+  "image/png": ".png",
+  "image/webp": ".webp",
+  "image/x-png": ".png",
+};
 const FIXED_CATEGORY_LABELS = new Set([
   ...EXPENSE_CATEGORIES.map((category) => category.label),
   "市内车费",
@@ -43,6 +54,34 @@ export const getExpenseCategoryLabel = (category) => {
 };
 
 export const buildCustomExpenseCategory = (name) => `${CUSTOM_CATEGORY_PREFIX}${String(name || "").trim()}`;
+
+const getFileExtension = (filename) => {
+  const normalized = String(filename || "").trim().toLowerCase();
+  const dotIndex = normalized.lastIndexOf(".");
+  return dotIndex >= 0 ? normalized.slice(dotIndex) : "";
+};
+
+export const isSupportedInvoiceFile = (file) => {
+  if (!file) return false;
+  const mimeType = String(file.type || "").trim().toLowerCase();
+  return SUPPORTED_INVOICE_EXTENSIONS.has(getFileExtension(file.name)) || Boolean(CLIPBOARD_EXTENSION_BY_MIME[mimeType]);
+};
+
+export const getClipboardInvoiceFiles = (clipboardData) => {
+  const itemFiles = Array.from(clipboardData?.items || [])
+    .filter((item) => item?.kind === "file" && typeof item.getAsFile === "function")
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  const candidates = itemFiles.length > 0 ? itemFiles : Array.from(clipboardData?.files || []);
+  return candidates.filter(isSupportedInvoiceFile);
+};
+
+export const getClipboardInvoiceFilename = (file, index = 0, timestamp = Date.now()) => {
+  const currentName = String(file?.name || "").trim();
+  if (SUPPORTED_INVOICE_EXTENSIONS.has(getFileExtension(currentName))) return currentName;
+  const extension = CLIPBOARD_EXTENSION_BY_MIME[String(file?.type || "").trim().toLowerCase()];
+  return extension ? `clipboard-invoice-${timestamp}-${index + 1}${extension}` : currentName;
+};
 
 export const validateCustomExpenseName = (name, expenseItems = []) => {
   const trimmed = String(name || "").trim();

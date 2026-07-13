@@ -12,8 +12,11 @@ import {
   cloneTripAfter,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
+  getClipboardInvoiceFilename,
+  getClipboardInvoiceFiles,
   getTripYearRangeLabel,
   isEmptyDraft,
+  isSupportedInvoiceFile,
   validateCustomExpenseName,
   makeBlankTrip,
   makeReturnTripAfter,
@@ -62,6 +65,34 @@ describe("report edit utilities", () => {
     assert.ok(saveIndex < uploadStateIndex);
     assert.ok(saveIndex < uploadIndex);
     assert.ok(saveIndex < reloadIndex);
+  });
+
+  it("accepts supported invoice files from clipboard items or file fallback", () => {
+    const png = { name: "", type: "image/png" };
+    const pdf = { name: "invoice.PDF", type: "" };
+    const unsupported = { name: "notes.txt", type: "text/plain" };
+
+    assert.equal(isSupportedInvoiceFile(png), true);
+    assert.equal(isSupportedInvoiceFile(pdf), true);
+    assert.equal(isSupportedInvoiceFile(unsupported), false);
+    assert.deepEqual(
+      getClipboardInvoiceFiles({
+        items: [
+          { kind: "string", getAsFile: () => null },
+          { kind: "file", getAsFile: () => png },
+          { kind: "file", getAsFile: () => unsupported },
+        ],
+        files: [pdf],
+      }),
+      [png],
+    );
+    assert.deepEqual(getClipboardInvoiceFiles({ items: [], files: [unsupported, pdf] }), [pdf]);
+  });
+
+  it("adds a backend-compatible filename to unnamed clipboard images", () => {
+    assert.equal(getClipboardInvoiceFilename({ name: "invoice.webp", type: "image/webp" }, 0, 1234), "invoice.webp");
+    assert.equal(getClipboardInvoiceFilename({ name: "", type: "image/png" }, 1, 1234), "clipboard-invoice-1234-2.png");
+    assert.equal(getClipboardInvoiceFilename({ name: "clipboard", type: "application/pdf" }, 0, 1234), "clipboard-invoice-1234-1.pdf");
   });
 
   it("builds create and update payloads using backend field names", () => {
