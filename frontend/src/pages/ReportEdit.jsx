@@ -192,7 +192,7 @@ const dropzoneConfirm = keyframes`
   100% { box-shadow: 0 0 0 9px rgba(36, 84, 166, 0); }
 `;
 
-function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "拖入或粘贴发票" }) {
+function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "上传新发票" }) {
   const dragDepthRef = useRef(0);
   const feedbackTimerRef = useRef(null);
   const [dragActive, setDragActive] = useState(false);
@@ -273,6 +273,7 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
   };
 
   const selected = focused && interactive;
+  const activeVisual = dragActive || selected;
   const primaryText = dragActive
     ? "松开即可上传到这里"
     : uploading
@@ -284,7 +285,7 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
     ? "当前费用分类已锁定为上传目标"
     : selected
       ? "按 Ctrl+V 粘贴到此费用分类，或选择文件"
-      : "支持 PDF、JPG、PNG 等图片；点击后可按 Ctrl+V";
+      : "拖入、Ctrl+V 或选择 PDF / 图片";
 
   return (
     <Box
@@ -308,22 +309,28 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
       }}
       sx={{
         border: 1,
-        borderStyle: dragActive || selected ? "solid" : "dashed",
-        borderColor: disabled ? "divider" : dragActive || selected ? "primary.main" : "divider",
+        borderStyle: activeVisual ? "solid" : "dashed",
+        borderColor: disabled
+          ? "divider"
+          : activeVisual
+            ? "primary.main"
+            : "rgba(94, 131, 201, 0.68)",
         borderRadius: 1,
-        bgcolor: disabled ? "action.hover" : dragActive || selected ? "primary.50" : "background.paper",
+        bgcolor: disabled
+          ? "action.hover"
+          : activeVisual
+            ? "primary.50"
+            : "rgba(233, 240, 251, 0.72)",
         px: 1.5,
-        py: 1,
+        py: 1.25,
         position: "relative",
         overflow: "hidden",
         outline: "none",
         transition: "border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease",
-        transform: dragActive ? "translateY(-2px)" : "translateY(0)",
-        boxShadow: dragActive
+        transform: activeVisual ? "translateY(-2px)" : "translateY(0)",
+        boxShadow: activeVisual
           ? "0 10px 24px rgba(36, 84, 166, 0.14)"
-          : selected
-            ? "0 0 0 3px rgba(36, 84, 166, 0.12)"
-            : "none",
+          : "none",
         animation: received ? `${dropzoneConfirm} 480ms ease-out` : "none",
         "&::before": {
           content: '""',
@@ -331,14 +338,18 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
           inset: 0,
           pointerEvents: "none",
           background: "linear-gradient(105deg, transparent 18%, rgba(255,255,255,0.72) 48%, transparent 78%)",
-          transform: dragActive ? "translateX(80%)" : "translateX(-120%)",
-          transition: dragActive ? "transform 700ms ease" : "none",
+          transform: activeVisual ? "translateX(80%)" : "translateX(-120%)",
+          transition: activeVisual ? "transform 700ms ease" : "none",
         },
       }}
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ position: "relative", zIndex: 1 }}>
         <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Typography variant="body2" fontWeight={selected || dragActive ? 800 : 700} color={dragActive || selected ? "primary.dark" : "text.primary"}>
+          <Typography
+            variant="body2"
+            fontWeight={800}
+            color={activeVisual ? "primary.dark" : "primary.main"}
+          >
             {primaryText}
           </Typography>
           <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>
@@ -369,7 +380,7 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
           >
             Ctrl+V
           </Box>
-          <Button component="label" size="small" disabled={!interactive} sx={{ whiteSpace: "nowrap" }}>
+          <Button component="label" size="small" disabled={!interactive} sx={{ whiteSpace: "nowrap", fontWeight: 800 }}>
             选择文件
             <input
               hidden
@@ -938,9 +949,30 @@ export default function ReportEdit() {
   };
 
   const renderInvoiceList = (items) => (
-    <Stack spacing={1}>
+    <Stack spacing={0.75} sx={{ pt: 0.25 }}>
+      <Stack direction="row" alignItems="center" spacing={0.75}>
+        <Typography variant="caption" fontWeight={800} color="text.secondary">
+          已上传发票
+        </Typography>
+        <Box
+          sx={{
+            px: 0.75,
+            py: 0.15,
+            borderRadius: 999,
+            bgcolor: "#EEF1F4",
+            color: "text.secondary",
+            fontSize: 11,
+            fontWeight: 700,
+            lineHeight: 1.5,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {items.length} 张
+        </Box>
+        <Divider sx={{ flex: 1 }} />
+      </Stack>
       {items.length === 0 ? (
-        <Typography variant="body2" color="text.secondary">
+        <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
           暂无发票
         </Typography>
       ) : (
@@ -948,7 +980,15 @@ export default function ReportEdit() {
           <Paper
             key={invoice.id}
             variant="outlined"
-            sx={{ px: 1.25, py: 1, borderRadius: 1, bgcolor: "background.paper" }}
+            sx={{
+              px: 1.25,
+              py: 1,
+              borderRadius: 1,
+              bgcolor: "#F8FAFC",
+              borderColor: "divider",
+              borderLeft: 3,
+              borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
+            }}
           >
             <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
               <Box sx={{ minWidth: 0 }}>
