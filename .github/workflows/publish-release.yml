@@ -89,16 +89,22 @@ jobs:
       - name: Install backend test dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install -r backend/requirements.txt pytest
+          python -m pip install -r backend/requirements.txt pytest PyYAML
 
       - name: Run tests
         run: |
           python -m pytest -q
+          if ($LASTEXITCODE -ne 0) { throw "Backend tests failed." }
           node --test frontend/src/pages/reportEditUtils.test.js
+          if ($LASTEXITCODE -ne 0) { throw "reportEditUtils tests failed." }
           node --test frontend/src/pages/settingsPageUtils.test.js
+          if ($LASTEXITCODE -ne 0) { throw "settingsPageUtils tests failed." }
           node --test frontend/src/pages/dashboardUtils.test.js
+          if ($LASTEXITCODE -ne 0) { throw "dashboardUtils tests failed." }
           node --test frontend/src/api/client.test.js
+          if ($LASTEXITCODE -ne 0) { throw "API client tests failed." }
           node --test frontend/src/api/reportFilters.test.js
+          if ($LASTEXITCODE -ne 0) { throw "report filter tests failed." }
 
       - name: Extract release notes and metadata from CHANGELOG
         shell: pwsh
@@ -238,6 +244,10 @@ jobs:
             $sourceTag = $release.tag_name
             break
           }
+
+          # A rejected optional asset may leave gh's non-zero exit code behind even
+          # though rebuilding the runtime is the expected fallback path.
+          $global:LASTEXITCODE = 0
 
           "runtime_version=$runtimeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "runtime_name=$runtimeName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
