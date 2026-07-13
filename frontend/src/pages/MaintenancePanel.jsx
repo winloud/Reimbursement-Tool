@@ -58,9 +58,9 @@ import {
 
 const cardSx = {
   border: 1,
-  borderColor: "rgba(148, 163, 184, 0.32)",
-  borderRadius: "8px",
-  boxShadow: "0 1px 0 rgba(15, 23, 42, 0.03)",
+  borderColor: "divider",
+  borderRadius: 1,
+  boxShadow: "none",
   bgcolor: "background.paper",
 };
 
@@ -71,9 +71,9 @@ const cardContentSx = {
 
 const softPanelSx = {
   border: 1,
-  borderColor: "rgba(148, 163, 184, 0.24)",
-  borderRadius: "8px",
-  bgcolor: "rgba(248, 250, 252, 0.72)",
+  borderColor: "divider",
+  borderRadius: 1,
+  bgcolor: "#F8FAFC",
   p: { xs: 1.5, md: 1.75 },
 };
 
@@ -143,7 +143,7 @@ function SectionHeader({ icon, title, description, action }) {
             width: 30,
             height: 30,
             borderRadius: 1,
-            bgcolor: "rgba(37, 99, 235, 0.08)",
+            bgcolor: "primary.50",
             color: "primary.main",
             display: "grid",
             placeItems: "center",

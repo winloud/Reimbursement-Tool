@@ -199,6 +199,7 @@ export default function ReportList() {
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const isTrash = isTrashStatus(status);
+  const tableColumnCount = isTrash ? 10 : 9;
 
   useEffect(() => {
     const nextState = reportListStateFromSearch(location.search);
@@ -818,11 +819,15 @@ export default function ReportList() {
         {selectedCount > 0 && (
           <Box
             sx={{
+              position: "sticky",
+              top: 0,
+              zIndex: 2,
               px: 2,
               py: 1.25,
               borderBottom: 1,
               borderColor: "divider",
-              bgcolor: "action.hover",
+              bgcolor: "primary.50",
+              boxShadow: "0 8px 18px rgba(23, 32, 42, 0.08)",
               display: "flex",
               flexWrap: "wrap",
               gap: 1,
@@ -881,7 +886,7 @@ export default function ReportList() {
         )}
 
         <TableContainer>
-          <Table>
+          <Table sx={{ minWidth: isTrash ? 1040 : 960 }}>
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
@@ -907,13 +912,13 @@ export default function ReportList() {
             <TableBody>
               {loading ? (
                 <TableRow>
-                  <TableCell colSpan={isTrash ? 10 : 9} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={tableColumnCount} align="center" sx={{ py: 6 }}>
                     <CircularProgress size={28} />
                   </TableCell>
                 </TableRow>
               ) : items.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={isTrash ? 10 : 9} align="center" sx={{ py: 6 }}>
+                  <TableCell colSpan={tableColumnCount} align="center" sx={{ py: 6 }}>
                     <Typography color="text.secondary">暂无数据</Typography>
                   </TableCell>
                 </TableRow>
@@ -942,7 +947,9 @@ export default function ReportList() {
                       <TableCell>{formatDate(report.report_date)}</TableCell>
                       <TableCell>{report.purpose || "—"}</TableCell>
                       <TableCell align="center">{report.subsidy_days ?? 0}</TableCell>
-                      <TableCell align="right">{formatAmount(report.total_amount)}</TableCell>
+                      <TableCell align="right" sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace', fontWeight: 800 }}>
+                        {formatAmount(report.total_amount)}
+                      </TableCell>
                       <TableCell align="center">
                         <Chip size="small" color={meta.color} label={meta.label} />
                       </TableCell>

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keyframes } from "@emotion/react";
 import {
   Alert,
   Autocomplete,
@@ -27,7 +28,6 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import CloudUploadIcon from "@mui/icons-material/CloudUpload";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
@@ -62,6 +62,8 @@ import {
   cloneTripAfter,
   emptyForm,
   formatAmount,
+  getClipboardInvoiceFilename,
+  getClipboardInvoiceFiles,
   getExpenseItemAmount,
   getExpenseCategoryOptions,
   getTripYearRangeLabel,
@@ -145,49 +147,242 @@ const basicInfoGridSx = {
   alignItems: "start",
 };
 
+const editSectionNavSx = {
+  position: { lg: "sticky" },
+  top: { lg: 12 },
+  zIndex: 2,
+  border: 1,
+  borderColor: "divider",
+  bgcolor: "rgba(255, 255, 255, 0.92)",
+  backdropFilter: "blur(10px)",
+};
+
+const sectionAnchorSx = {
+  scrollMarginTop: 24,
+};
+
+const tripSegmentGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+  gap: FIELD_GAP,
+};
+
+const tripSegmentPanelSx = {
+  border: 1,
+  borderColor: "divider",
+  borderRadius: 1,
+  bgcolor: "#F8FAFC",
+  p: { xs: 1.25, md: 1.5 },
+};
+
+const EDIT_SECTIONS = [
+  { id: "basic-info-section", label: "基本信息" },
+  { id: "trip-list-section", label: "行程" },
+  { id: "expense-section", label: "其他费用" },
+  { id: "summary-section", label: "汇总" },
+];
+
 const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
 
 const getApiErrorMessage = (err, fallback) =>
   err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
 
-function InvoiceDropzone({ disabled, uploading, onFiles, hint = "拖放发票到这里，或点击上传" }) {
+const dropzoneConfirm = keyframes`
+  0% { box-shadow: 0 0 0 0 rgba(36, 84, 166, 0.22); }
+  100% { box-shadow: 0 0 0 9px rgba(36, 84, 166, 0); }
+`;
+
+function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "拖入或粘贴发票" }) {
+  const dragDepthRef = useRef(0);
+  const feedbackTimerRef = useRef(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [received, setReceived] = useState(false);
+  const interactive = !disabled && !uploading;
+
+  useEffect(
+    () => () => {
+      if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!interactive) setFocused(false);
+  }, [interactive]);
+
+  const playReceiveFeedback = () => {
+    setReceived(true);
+    if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => setReceived(false), 520);
+  };
+
+  const resetDragState = () => {
+    dragDepthRef.current = 0;
+    setDragActive(false);
+  };
+
+  const handleDragEnter = (event) => {
+    event.preventDefault();
+    if (!interactive) return;
+    const dragTypes = Array.from(event.dataTransfer?.types || []);
+    if (dragTypes.length > 0 && !dragTypes.includes("Files")) return;
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (event) => {
+    event.preventDefault();
+    if (dragDepthRef.current > 0) dragDepthRef.current -= 1;
+    if (dragDepthRef.current === 0) setDragActive(false);
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = interactive ? "copy" : "none";
+  };
+
   const handleDrop = (event) => {
     event.preventDefault();
-    if (disabled) return;
+    resetDragState();
+    if (!interactive) return;
+    playReceiveFeedback();
     onFiles(event.dataTransfer.files);
   };
 
+  const handlePaste = (event) => {
+    if (!interactive) return;
+    const clipboardFiles = getClipboardInvoiceFiles(event.clipboardData);
+    if (clipboardFiles.length === 0) {
+      event.preventDefault();
+      onPasteError?.("剪贴板中没有可上传的 PDF 或图片");
+      return;
+    }
+    event.preventDefault();
+    const timestamp = Date.now();
+    const normalizedFiles = clipboardFiles.map((file, index) => {
+      const filename = getClipboardInvoiceFilename(file, index, timestamp);
+      if (!filename || filename === file.name || typeof File !== "function") return file;
+      return new File([file], filename, {
+        type: file.type,
+        lastModified: file.lastModified || timestamp,
+      });
+    });
+    playReceiveFeedback();
+    onFiles(normalizedFiles);
+  };
+
+  const selected = focused && interactive;
+  const primaryText = dragActive
+    ? "松开即可上传到这里"
+    : uploading
+      ? "正在上传发票"
+      : selected
+        ? "已选中当前上传区域"
+        : hint;
+  const secondaryText = dragActive
+    ? "当前费用分类已锁定为上传目标"
+    : selected
+      ? "按 Ctrl+V 粘贴到此费用分类，或选择文件"
+      : "支持 PDF、JPG、PNG 等图片；点击后可按 Ctrl+V";
+
   return (
     <Box
-      onDragOver={(event) => event.preventDefault()}
+      role="group"
+      tabIndex={interactive ? 0 : -1}
+      aria-label="发票上传区，可拖放、粘贴或选择文件"
+      onDragEnter={handleDragEnter}
+      onDragLeave={handleDragLeave}
+      onDragOver={handleDragOver}
       onDrop={handleDrop}
+      onPaste={handlePaste}
+      onFocus={() => {
+        if (interactive) setFocused(true);
+      }}
+      onBlur={(event) => {
+        if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
+      }}
+      onMouseDown={(event) => {
+        if (!interactive || event.target.closest?.("button, label, input")) return;
+        event.currentTarget.focus();
+      }}
       sx={{
         border: 1,
-        borderStyle: "dashed",
-        borderColor: disabled ? "divider" : "primary.light",
+        borderStyle: dragActive || selected ? "solid" : "dashed",
+        borderColor: disabled ? "divider" : dragActive || selected ? "primary.main" : "divider",
         borderRadius: 1,
-        bgcolor: disabled ? "action.hover" : "primary.50",
+        bgcolor: disabled ? "action.hover" : dragActive || selected ? "primary.50" : "background.paper",
         px: 1.5,
-        py: 1.25,
+        py: 1,
+        position: "relative",
+        overflow: "hidden",
+        outline: "none",
+        transition: "border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease",
+        transform: dragActive ? "translateY(-2px)" : "translateY(0)",
+        boxShadow: dragActive
+          ? "0 10px 24px rgba(36, 84, 166, 0.14)"
+          : selected
+            ? "0 0 0 3px rgba(36, 84, 166, 0.12)"
+            : "none",
+        animation: received ? `${dropzoneConfirm} 480ms ease-out` : "none",
+        "&::before": {
+          content: '""',
+          position: "absolute",
+          inset: 0,
+          pointerEvents: "none",
+          background: "linear-gradient(105deg, transparent 18%, rgba(255,255,255,0.72) 48%, transparent 78%)",
+          transform: dragActive ? "translateX(80%)" : "translateX(-120%)",
+          transition: dragActive ? "transform 700ms ease" : "none",
+        },
       }}
     >
-      <Stack direction={{ xs: "column", sm: "row" }} alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
-        <Typography variant="body2" color="text.secondary" sx={{ flex: 1 }}>
-          {hint}
-        </Typography>
-        <Button component="label" size="small" startIcon={<CloudUploadIcon />} disabled={disabled || uploading}>
-          上传
-          <input
-            hidden
-            multiple
-            type="file"
-            accept=".pdf,image/*"
-            onChange={(event) => {
-              onFiles(event.target.files);
-              event.target.value = "";
+      <Stack direction="row" alignItems="center" spacing={1} sx={{ position: "relative", zIndex: 1 }}>
+        <Box sx={{ minWidth: 0, flex: 1 }}>
+          <Typography variant="body2" fontWeight={selected || dragActive ? 800 : 700} color={dragActive || selected ? "primary.dark" : "text.primary"}>
+            {primaryText}
+          </Typography>
+          <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>
+            {secondaryText}
+          </Typography>
+        </Box>
+
+        <Stack direction={{ xs: "column", sm: "row" }} alignItems="center" spacing={0.75} sx={{ flex: "0 0 auto" }}>
+          <Box
+            component="kbd"
+            sx={{
+              display: { xs: "none", sm: "inline-flex" },
+              alignItems: "center",
+              gap: 0.4,
+              px: 0.8,
+              py: 0.35,
+              border: 1,
+              borderColor: "divider",
+              borderRadius: 0.75,
+              bgcolor: "#F8FAFC",
+              color: "text.secondary",
+              fontFamily: "inherit",
+              fontSize: 11,
+              fontWeight: 800,
+              lineHeight: 1.2,
+              whiteSpace: "nowrap",
             }}
-          />
-        </Button>
+          >
+            Ctrl+V
+          </Box>
+          <Button component="label" size="small" disabled={!interactive} sx={{ whiteSpace: "nowrap" }}>
+            选择文件
+            <input
+              hidden
+              multiple
+              type="file"
+              accept=".pdf,.jpg,.jpeg,.png,.bmp,.gif,.webp,image/jpeg,image/png,image/bmp,image/gif,image/webp"
+              onChange={(event) => {
+                onFiles(event.target.files);
+                event.target.value = "";
+              }}
+            />
+          </Button>
+        </Stack>
       </Stack>
     </Box>
   );
@@ -358,6 +553,19 @@ export default function ReportEdit() {
     () => invoices.some((invoice) => !invoice.amount_confirmed),
     [invoices],
   );
+  const unconfirmedInvoiceCount = useMemo(
+    () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
+    [invoices],
+  );
+  const confirmedInvoiceCount = useMemo(
+    () => invoices.filter((invoice) => invoice.amount_confirmed).length,
+    [invoices],
+  );
+  const pdfBlockMessage = hasUnconfirmedInvoices
+    ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
+    : confirmedInvoiceCount > 0
+      ? "发票已确认，可生成 PDF。"
+      : "暂无已确认发票，可先录入行程和费用。";
 
   const emptyDraft = useMemo(
     () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices }),
@@ -488,6 +696,10 @@ export default function ReportEdit() {
 
   const handleChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const scrollToSection = (sectionId) => {
+    document.getElementById(sectionId)?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
   const updateTrip = (index, field, value) => {
@@ -839,10 +1051,22 @@ export default function ReportEdit() {
         </Alert>
       )}
 
+      <Card sx={editSectionNavSx}>
+        <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
+          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+            {EDIT_SECTIONS.map((section) => (
+              <Button key={section.id} size="small" variant="text" onClick={() => scrollToSection(section.id)}>
+                {section.label}
+              </Button>
+            ))}
+          </Stack>
+        </CardContent>
+      </Card>
+
       <Box sx={mainLayoutSx}>
         <Box sx={{ minWidth: 0 }}>
           <Stack spacing={SECTION_GAP}>
-              <Card sx={workCardSx}>
+              <Card id="basic-info-section" sx={{ ...workCardSx, ...sectionAnchorSx }}>
                 <CardContent sx={sectionCardContentSx}>
                   <Stack spacing={2}>
                       <Typography variant="h6" fontWeight={800}>
@@ -948,7 +1172,7 @@ export default function ReportEdit() {
                 </CardContent>
               </Card>
 
-            <Stack spacing={1.5}>
+            <Stack id="trip-list-section" spacing={1.5} sx={sectionAnchorSx}>
               <Stack direction="row" alignItems="center" justifyContent="space-between">
                 <Box>
                   <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
@@ -984,6 +1208,16 @@ export default function ReportEdit() {
                     const effectiveEnd = isLastTrip || trip.subsidy_end;
                     const markerPrefix = effectiveStart ? "起 " : "";
                     const markerSuffix = effectiveEnd ? " 止" : "";
+                    const unconfirmedTripInvoices = tripInvoices.filter((invoice) => !invoice.amount_confirmed).length;
+                    const tripInvoiceLabel =
+                      tripInvoices.length === 0
+                        ? "无发票"
+                        : unconfirmedTripInvoices > 0
+                          ? `${unconfirmedTripInvoices} 张待确认`
+                          : `${tripInvoices.length} 张已确认`;
+                    const tripInvoiceColor =
+                      tripInvoices.length === 0 ? "default" : unconfirmedTripInvoices > 0 ? "warning" : "success";
+                    const tripTitle = `${trip.depart_place || "出发地"} -> ${trip.arrive_place || "到达地"}`;
                     const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
                       trip.depart_place || "出发地"
                     } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
@@ -1014,7 +1248,10 @@ export default function ReportEdit() {
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
                               <DragIndicatorIcon color="disabled" />
                               <Box sx={{ minWidth: 0 }}>
-                                <Typography fontWeight={800}>行程 {index + 1}</Typography>
+                                <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" useFlexGap>
+                                  <Typography fontWeight={900}>{tripTitle}</Typography>
+                                  <Chip size="small" color={tripInvoiceColor} label={tripInvoiceLabel} />
+                                </Stack>
                                 <Typography variant="body2" color="text.secondary" noWrap>
                                   {summaryText}
                                 </Typography>
@@ -1078,120 +1315,122 @@ export default function ReportEdit() {
                             </Stack>
                           </Stack>
 
-                          <Box sx={tripFieldGridSx}>
-                                <Box>
+                          <Box sx={tripSegmentGridSx}>
+                            <Box sx={tripSegmentPanelSx}>
+                              <Stack spacing={1.25}>
+                                <Typography variant="subtitle2" fontWeight={900}>
+                                  出发
+                                </Typography>
+                                <Box sx={tripFieldGridSx}>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="出发月"
+                                    label="月"
                                     type="number"
                                     value={trip.depart_month}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "depart_month", event.target.value)}
                                     inputProps={{ min: 1, max: 12 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="出发日"
+                                    label="日"
                                     type="number"
                                     value={trip.depart_day}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "depart_day", event.target.value)}
                                     inputProps={{ min: 1, max: 31 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="出发时"
+                                    label="时"
                                     type="number"
                                     value={trip.depart_hour}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "depart_hour", event.target.value)}
                                     inputProps={{ min: 0, max: 23 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="出发地"
+                                    label="地点"
                                     value={trip.depart_place}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "depart_place", event.target.value)}
                                   />
                                 </Box>
-                                <Box>
+                              </Stack>
+                            </Box>
+                            <Box sx={tripSegmentPanelSx}>
+                              <Stack spacing={1.25}>
+                                <Typography variant="subtitle2" fontWeight={900}>
+                                  到达
+                                </Typography>
+                                <Box sx={tripFieldGridSx}>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="到达月"
+                                    label="月"
                                     type="number"
                                     value={trip.arrive_month}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "arrive_month", event.target.value)}
                                     inputProps={{ min: 1, max: 12 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="到达日"
+                                    label="日"
                                     type="number"
                                     value={trip.arrive_day}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "arrive_day", event.target.value)}
                                     inputProps={{ min: 1, max: 31 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="到达时"
+                                    label="时"
                                     type="number"
                                     value={trip.arrive_hour}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "arrive_hour", event.target.value)}
                                     inputProps={{ min: 0, max: 23 }}
                                   />
-                                </Box>
-                                <Box>
                                   <TextField
                                     fullWidth
                                     size="small"
-                                    label="到达地"
+                                    label="地点"
                                     value={trip.arrive_place}
                                     disabled={readonly}
                                     onChange={(event) => updateTrip(index, "arrive_place", event.target.value)}
                                   />
                                 </Box>
-                                <Box sx={{ gridColumn: "1 / -1" }}>
-                                  <Autocomplete
-                                    freeSolo
-                                    clearOnBlur={false}
-                                    options={TRANSPORT_OPTIONS}
-                                    value={trip.transport || ""}
-                                    inputValue={trip.transport || ""}
-                                    disabled={readonly}
-                                    onChange={(_event, value) => updateTrip(index, "transport", value || "")}
-                                    onInputChange={(_event, value) => updateTrip(index, "transport", value)}
-                                    renderInput={(params) => (
-                                      <TextField
-                                        {...params}
-                                        fullWidth
-                                        size="small"
-                                        label="交通工具"
-                                      />
-                                    )}
+                              </Stack>
+                            </Box>
+                            <Box sx={{ gridColumn: "1 / -1" }}>
+                              <Autocomplete
+                                freeSolo
+                                clearOnBlur={false}
+                                options={TRANSPORT_OPTIONS}
+                                value={trip.transport || ""}
+                                inputValue={trip.transport || ""}
+                                disabled={readonly}
+                                onChange={(_event, value) => updateTrip(index, "transport", value || "")}
+                                onInputChange={(_event, value) => updateTrip(index, "transport", value)}
+                                renderInput={(params) => (
+                                  <TextField
+                                    {...params}
+                                    fullWidth
+                                    size="small"
+                                    label="交通工具"
                                   />
-                                </Box>
-                              </Box>
+                                )}
+                              />
+                            </Box>
+                          </Box>
                               <Stack spacing={1}>
                                 <Stack direction="row" justifyContent="space-between" alignItems="center">
                                   <Typography variant="subtitle2" fontWeight={800}>
@@ -1206,6 +1445,7 @@ export default function ReportEdit() {
                                 <InvoiceDropzone
                                   disabled={uploadDisabled}
                                   uploading={uploading}
+                                  onPasteError={setError}
                                   onFiles={(files) =>
                                     handleFilesUpload({
                                       files,
@@ -1227,7 +1467,7 @@ export default function ReportEdit() {
               )}
             </Stack>
 
-            <Stack spacing={1.5}>
+            <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
               <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
                 <Typography variant="h6" fontWeight={800}>
                   其他费用发票
@@ -1306,6 +1546,7 @@ export default function ReportEdit() {
                             <InvoiceDropzone
                               disabled={readonly || saveState === "saving"}
                               uploading={uploading}
+                              onPasteError={setError}
                               onFiles={(files) =>
                                 handleFilesUpload({
                                   files,
@@ -1327,7 +1568,7 @@ export default function ReportEdit() {
         </Box>
 
         <Box sx={{ minWidth: 0 }}>
-          <Card sx={{ ...workCardSx, position: { xl: "sticky" }, top: 24 }}>
+          <Card id="summary-section" sx={{ ...workCardSx, ...sectionAnchorSx, position: { xl: "sticky" }, top: 24 }}>
             <CardContent sx={sectionCardContentSx}>
               <Stack spacing={2}>
                 <Box>
@@ -1338,6 +1579,10 @@ export default function ReportEdit() {
                     未确认金额不计入报销总额。
                   </Typography>
                 </Box>
+
+                <Alert severity={hasUnconfirmedInvoices ? "warning" : "info"} sx={{ py: 0.75 }}>
+                  {pdfBlockMessage}
+                </Alert>
 
                 <Divider />
 
@@ -1404,7 +1649,7 @@ export default function ReportEdit() {
                     disabled={readonly || pdfBusy === "download"}
                     sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
                   >
-                    {pdfBusy === "preview" ? "生成中" : "预览"}
+                    {pdfBusy === "preview" ? "生成中" : hasUnconfirmedInvoices ? "待确认后预览" : "预览"}
                   </Button>
                   <Button
                     fullWidth
@@ -1414,7 +1659,7 @@ export default function ReportEdit() {
                     disabled={readonly || pdfBusy === "preview"}
                     sx={hasUnconfirmedInvoices ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
                   >
-                    {pdfBusy === "download" ? "生成中" : "下载"}
+                    {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}
                   </Button>
                 </Stack>
               </Stack>
@@ -1499,7 +1744,7 @@ export default function ReportEdit() {
         <DialogTitle>存在未确认发票</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            当前报销单存在未确认的发票，请先逐张确认发票信息后再预览或下载 PDF。
+            当前报销单有 {unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。
           </DialogContentText>
         </DialogContent>
         <DialogActions>
