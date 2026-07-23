@@ -136,9 +136,20 @@ const repeatedCardGridSx = {
 
 const tripFieldGridSx = {
   display: "grid",
-  gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", sm: "repeat(4, minmax(0, 1fr))" },
-  gap: FIELD_GAP,
+  gridTemplateColumns: "repeat(3, minmax(calc(2ch + 34px), 1fr))",
+  gap: { xs: 1, md: 1.25 },
   alignItems: "start",
+};
+
+const tripNumberFieldSx = {
+  width: "100%",
+  minWidth: 0,
+};
+
+const tripPlaceFieldSx = {
+  gridColumn: "1 / -1",
+  width: "100%",
+  minWidth: 0,
 };
 
 const basicInfoGridSx = {
@@ -164,7 +175,7 @@ const sectionAnchorSx = {
 
 const tripSegmentGridSx = {
   display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
   gap: FIELD_GAP,
 };
 
@@ -971,15 +982,15 @@ export default function ReportEdit() {
   };
 
   const renderInvoiceList = (items) => (
-    <Stack spacing={0.75} sx={{ pt: 0.25 }}>
-      <Stack direction="row" alignItems="center" spacing={0.75}>
+    <Stack spacing={0.5}>
+      <Stack direction="row" alignItems="center" spacing={0.5}>
         <Typography variant="caption" fontWeight={800} color="text.secondary">
           已上传发票
         </Typography>
         <Box
           sx={{
-            px: 0.75,
-            py: 0.15,
+            px: 0.625,
+            py: 0,
             borderRadius: 999,
             bgcolor: "#EEF1F4",
             color: "text.secondary",
@@ -998,54 +1009,89 @@ export default function ReportEdit() {
           暂无发票
         </Typography>
       ) : (
-        items.map((invoice) => (
-          <Paper
-            key={invoice.id}
-            variant="outlined"
-            sx={{
-              px: 1.25,
-              py: 1,
-              borderRadius: 1,
-              bgcolor: "#F8FAFC",
-              borderColor: "divider",
-              borderLeft: 3,
-              borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
-            }}
-          >
-            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-              <Box sx={{ minWidth: 0 }}>
-                <Stack direction="row" spacing={1} alignItems="center" flexWrap="wrap" useFlexGap>
-                  <Typography variant="body2" fontWeight={700}>
-                    {formatAmount(invoice.amount)}
-                  </Typography>
-                  <Chip size="small" label={invoice.file_type.toUpperCase()} />
-                  <Chip
-                    size="small"
-                    color={invoice.amount_confirmed ? "success" : "warning"}
-                    label={invoice.amount_confirmed ? "已确认" : "待确认"}
-                  />
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 0.5,
+            alignItems: "stretch",
+          }}
+        >
+          {items.map((invoice) => {
+            const invoiceNumber = invoice.invoice_no || "无发票号码";
+            const confirmationLabel = invoice.amount_confirmed ? "已确认" : "待确认";
+
+            return (
+              <Paper
+                key={invoice.id}
+                variant="outlined"
+                sx={{
+                  minWidth: 0,
+                  px: 0.75,
+                  py: 0.5,
+                  borderRadius: 1,
+                  bgcolor: "#F8FAFC",
+                  borderColor: "divider",
+                  borderLeft: 3,
+                  borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
+                }}
+              >
+                <Stack spacing={0.125} sx={{ minWidth: 0 }}>
+                  <Stack direction="row" spacing={0.5} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
+                    <Tooltip title={formatAmount(invoice.amount)}>
+                      <Typography
+                        variant="body2"
+                        fontWeight={800}
+                        noWrap
+                        sx={{ fontVariantNumeric: "tabular-nums", lineHeight: 1.2, minWidth: 0, maxWidth: "100%" }}
+                      >
+                        {formatAmount(invoice.amount)}
+                      </Typography>
+                    </Tooltip>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
+                      <Box component="span" sx={{ fontWeight: 700 }}>
+                        {invoice.file_type.toUpperCase()}
+                      </Box>
+                      <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
+                        ·
+                      </Box>
+                      <Box component="span" color={invoice.amount_confirmed ? "success.dark" : "warning.dark"} sx={{ fontWeight: 700 }}>
+                        {confirmationLabel}
+                      </Box>
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Tooltip title={invoiceNumber}>
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                        {invoiceNumber}
+                      </Typography>
+                    </Tooltip>
+                    <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
+                      <Tooltip title="查看发票">
+                        <IconButton size="small" aria-label="查看发票" onClick={() => setSelectedInvoice(invoice)}>
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除发票">
+                        <span>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            aria-label="删除发票"
+                            disabled={readonly}
+                            onClick={() => handleDeleteInvoice(invoice.id)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Stack>
+                  </Stack>
                 </Stack>
-                <Typography variant="caption" color="text.secondary" noWrap>
-                  {invoice.invoice_no || "无发票号码"}
-                </Typography>
-              </Box>
-              <Stack direction="row" spacing={0.5}>
-                <Tooltip title="查看发票">
-                  <IconButton size="small" onClick={() => setSelectedInvoice(invoice)}>
-                    <VisibilityIcon fontSize="small" />
-                  </IconButton>
-                </Tooltip>
-                <Tooltip title="删除发票">
-                  <span>
-                    <IconButton size="small" color="error" disabled={readonly} onClick={() => handleDeleteInvoice(invoice.id)}>
-                      <DeleteIcon fontSize="small" />
-                    </IconButton>
-                  </span>
-                </Tooltip>
-              </Stack>
-            </Stack>
-          </Paper>
-        ))
+              </Paper>
+            );
+          })}
+        </Box>
       )}
     </Stack>
   );
@@ -1390,8 +1436,8 @@ export default function ReportEdit() {
                                 </Typography>
                                 <Box sx={tripFieldGridSx}>
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="月"
                                     type="number"
                                     value={trip.depart_month}
@@ -1400,8 +1446,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 1, max: 12 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="日"
                                     type="number"
                                     value={trip.depart_day}
@@ -1410,8 +1456,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 1, max: 31 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="时"
                                     type="number"
                                     value={trip.depart_hour}
@@ -1420,8 +1466,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 0, max: 23 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripPlaceFieldSx}
                                     label="地点"
                                     value={trip.depart_place}
                                     disabled={readonly}
@@ -1437,8 +1483,8 @@ export default function ReportEdit() {
                                 </Typography>
                                 <Box sx={tripFieldGridSx}>
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="月"
                                     type="number"
                                     value={trip.arrive_month}
@@ -1447,8 +1493,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 1, max: 12 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="日"
                                     type="number"
                                     value={trip.arrive_day}
@@ -1457,8 +1503,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 1, max: 31 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripNumberFieldSx}
                                     label="时"
                                     type="number"
                                     value={trip.arrive_hour}
@@ -1467,8 +1513,8 @@ export default function ReportEdit() {
                                     inputProps={{ min: 0, max: 23 }}
                                   />
                                   <TextField
-                                    fullWidth
                                     size="small"
+                                    sx={tripPlaceFieldSx}
                                     label="地点"
                                     value={trip.arrive_place}
                                     disabled={readonly}

@@ -4,6 +4,8 @@ import { describe, it } from "node:test";
 import {
   buildTicketGroups,
   buildTicketImportPayload,
+  getClipboardTicketPdfFilename,
+  getClipboardTicketPdfFiles,
   getTicketConnection,
   mergeTicketPdfFiles,
   moveTicketCandidate,
@@ -35,6 +37,30 @@ describe("ticket import utilities", () => {
     assert.deepEqual(result.files, [first, byMime]);
     assert.deepEqual(result.duplicates, [duplicate]);
     assert.deepEqual(result.rejected, [image]);
+  });
+
+  it("accepts PDF files pasted from clipboard items or the file fallback", () => {
+    const itemPdf = { name: "clipboard.pdf", type: "application/pdf", size: 10, lastModified: 1 };
+    const fallbackPdf = { name: "fallback", type: "application/x-pdf", size: 20, lastModified: 2 };
+    const image = { name: "ticket.png", type: "image/png", size: 30, lastModified: 3 };
+
+    assert.deepEqual(
+      getClipboardTicketPdfFiles({
+        items: [
+          { kind: "string", getAsFile: () => null },
+          { kind: "file", getAsFile: () => image },
+          { kind: "file", getAsFile: () => itemPdf },
+        ],
+        files: [fallbackPdf],
+      }),
+      [itemPdf],
+    );
+    assert.deepEqual(getClipboardTicketPdfFiles({ items: [], files: [image, fallbackPdf] }), [fallbackPdf]);
+  });
+
+  it("adds a PDF filename to unnamed pasted ticket files", () => {
+    assert.equal(getClipboardTicketPdfFilename({ name: "ticket.PDF", type: "application/pdf" }, 0, 1234), "ticket.PDF");
+    assert.equal(getClipboardTicketPdfFilename({ name: "clipboard", type: "application/pdf" }, 1, 1234), "clipboard-ticket-1234-2.pdf");
   });
 
   it("normalizes station suffixes and whitespace conservatively", () => {

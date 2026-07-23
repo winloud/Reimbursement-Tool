@@ -41,6 +41,21 @@ export const isTicketPdfFile = (file) => {
   return PDF_MIME_TYPES.has(mime) || /\.pdf$/i.test(asText(file.name));
 };
 
+export const getClipboardTicketPdfFiles = (clipboardData) => {
+  const itemFiles = Array.from(clipboardData?.items || [])
+    .filter((item) => item?.kind === "file" && typeof item.getAsFile === "function")
+    .map((item) => item.getAsFile())
+    .filter(Boolean);
+  const candidates = itemFiles.length > 0 ? itemFiles : Array.from(clipboardData?.files || []);
+  return candidates.filter(isTicketPdfFile);
+};
+
+export const getClipboardTicketPdfFilename = (file, index = 0, timestamp = Date.now()) => {
+  const currentName = asText(file?.name);
+  if (/\.pdf$/i.test(currentName)) return currentName;
+  return PDF_MIME_TYPES.has(asText(file?.type).toLowerCase()) ? `clipboard-ticket-${timestamp}-${index + 1}.pdf` : currentName;
+};
+
 export const getTicketFileKey = (file) =>
   [asText(file?.name).toLowerCase(), Number(file?.size || 0), Number(file?.lastModified || 0)].join(":");
 

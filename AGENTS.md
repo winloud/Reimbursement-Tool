@@ -31,6 +31,10 @@
 - 不要把 release ZIP、运行态 data/uploads/logs、测试样本纳入 Git。
 - 不要删除用户数据、测试样本或运行态目录，除非用户明确确认。
 
+## Git 提交信息
+
+- 所有 Git 提交信息必须遵循 [Conventional Commits](docs/contributing.md) 格式；提交前确认类型、可选范围和描述与实际改动一致。
+
 ## 每次完成前检查
 
 完成任务前必须检查：
