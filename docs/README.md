@@ -33,3 +33,4 @@
 ## 开发与调试
 - 本地开发服务启动/重启：[dev-server.md](dev-server.md)
 - ZIP 本地安装、升级和备份指南：[zip-upgrade-guide.md](zip-upgrade-guide.md)
+- 提交与协作规范：[contributing.md](contributing.md)
