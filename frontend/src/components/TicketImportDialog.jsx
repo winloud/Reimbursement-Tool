@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { keyframes } from "@emotion/react";
 import {
   Alert,
   Box,
@@ -32,6 +33,8 @@ import { discardRailTicketPreview, importRailTickets, previewRailTickets } from 
 import {
   buildTicketGroups,
   buildTicketImportPayload,
+  getClipboardTicketPdfFilename,
+  getClipboardTicketPdfFiles,
   getTicketConnection,
   mergeTicketPdfFiles,
   moveTicketCandidate,
@@ -64,80 +67,224 @@ const fieldGridSx = {
   gap: 1.25,
 };
 
-function TicketDropzone({ files, disabled, onFiles, onRemove }) {
-  const dragDepthRef = useRef(0);
-  const [dragActive, setDragActive] = useState(false);
+const dropzoneConfirm = keyframes`
+  0% { box-shadow: 0 0 0 0 rgba(36, 84, 166, 0.22); }
+  100% { box-shadow: 0 0 0 9px rgba(36, 84, 166, 0); }
+`;
 
-  const resetDrag = () => {
+function TicketDropzone({ files, disabled, onFiles, onPasteError, onRemove }) {
+  const dragDepthRef = useRef(0);
+  const feedbackTimerRef = useRef(null);
+  const [dragActive, setDragActive] = useState(false);
+  const [focused, setFocused] = useState(false);
+  const [received, setReceived] = useState(false);
+  const interactive = !disabled;
+
+  useEffect(
+    () => () => {
+      if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    if (!interactive) setFocused(false);
+  }, [interactive]);
+
+  const playReceiveFeedback = () => {
+    setReceived(true);
+    if (feedbackTimerRef.current) window.clearTimeout(feedbackTimerRef.current);
+    feedbackTimerRef.current = window.setTimeout(() => setReceived(false), 520);
+  };
+
+  const resetDragState = () => {
     dragDepthRef.current = 0;
     setDragActive(false);
   };
 
+  const handleDragEnter = (event) => {
+    event.preventDefault();
+    if (!interactive) return;
+    const dragTypes = Array.from(event.dataTransfer?.types || []);
+    if (dragTypes.length > 0 && !dragTypes.includes("Files")) return;
+    dragDepthRef.current += 1;
+    setDragActive(true);
+  };
+
+  const handleDragLeave = (event) => {
+    event.preventDefault();
+    if (dragDepthRef.current > 0) dragDepthRef.current -= 1;
+    if (dragDepthRef.current === 0) setDragActive(false);
+  };
+
+  const handleDragOver = (event) => {
+    event.preventDefault();
+    if (event.dataTransfer) event.dataTransfer.dropEffect = interactive ? "copy" : "none";
+  };
+
+  const handleDrop = (event) => {
+    event.preventDefault();
+    resetDragState();
+    if (!interactive) return;
+    playReceiveFeedback();
+    onFiles(event.dataTransfer.files);
+  };
+
+  const handlePaste = (event) => {
+    if (!interactive) return;
+    const clipboardFiles = getClipboardTicketPdfFiles(event.clipboardData);
+    if (clipboardFiles.length === 0) {
+      event.preventDefault();
+      onPasteError?.("剪贴板中没有可导入的铁路电子客票 PDF");
+      return;
+    }
+    event.preventDefault();
+    const timestamp = Date.now();
+    const normalizedFiles = clipboardFiles.map((file, index) => {
+      const filename = getClipboardTicketPdfFilename(file, index, timestamp);
+      if (!filename || filename === file.name || typeof File !== "function") return file;
+      return new File([file], filename, {
+        type: file.type,
+        lastModified: file.lastModified || timestamp,
+      });
+    });
+    playReceiveFeedback();
+    onFiles(normalizedFiles);
+  };
+
+  const selected = focused && interactive;
+  const activeVisual = dragActive || selected;
+  const primaryText = dragActive
+    ? "松开即可加入车票"
+    : disabled
+      ? "正在解析车票"
+      : selected
+        ? "已选中车票上传区域"
+        : "上传铁路电子客票 PDF";
+  const secondaryText = dragActive
+    ? "铁路电子客票将加入当前批次"
+    : selected
+      ? "按 Ctrl+V 粘贴车票 PDF，或选择文件"
+      : "拖入、Ctrl+V 或选择 PDF；图片车票暂不支持";
+
   return (
     <Stack spacing={1.25}>
       <Box
-        role="button"
-        tabIndex={disabled ? -1 : 0}
-        aria-label="选择或拖入铁路电子客票 PDF"
-        onDragEnter={(event) => {
-          event.preventDefault();
-          if (disabled) return;
-          dragDepthRef.current += 1;
-          setDragActive(true);
+        role="group"
+        tabIndex={interactive ? 0 : -1}
+        aria-label="车票上传区，可拖放、粘贴或选择铁路电子客票 PDF"
+        onDragEnter={handleDragEnter}
+        onDragLeave={handleDragLeave}
+        onDragOver={handleDragOver}
+        onDrop={handleDrop}
+        onPaste={handlePaste}
+        onFocus={() => {
+          if (interactive) setFocused(true);
         }}
-        onDragLeave={(event) => {
-          event.preventDefault();
-          if (dragDepthRef.current > 0) dragDepthRef.current -= 1;
-          if (dragDepthRef.current === 0) setDragActive(false);
+        onBlur={(event) => {
+          if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false);
         }}
-        onDragOver={(event) => {
-          event.preventDefault();
-          if (event.dataTransfer) event.dataTransfer.dropEffect = disabled ? "none" : "copy";
-        }}
-        onDrop={(event) => {
-          event.preventDefault();
-          resetDrag();
-          if (!disabled) onFiles(event.dataTransfer.files);
+        onMouseDown={(event) => {
+          if (!interactive || event.target.closest?.("button, label, input")) return;
+          event.currentTarget.focus();
         }}
         onKeyDown={(event) => {
-          if (!disabled && (event.key === "Enter" || event.key === " ")) {
+          if (interactive && (event.key === "Enter" || event.key === " ")) {
             event.preventDefault();
             event.currentTarget.querySelector("input")?.click();
           }
         }}
         sx={{
           border: 1,
-          borderStyle: "dashed",
-          borderColor: dragActive ? "primary.main" : "rgba(94, 131, 201, 0.72)",
-          borderRadius: 1.5,
-          bgcolor: dragActive ? "primary.50" : "rgba(233, 240, 251, 0.62)",
-          px: { xs: 2, sm: 3 },
-          py: { xs: 3, sm: 4 },
-          textAlign: "center",
+          borderStyle: activeVisual ? "solid" : "dashed",
+          borderColor: disabled
+            ? "divider"
+            : activeVisual
+              ? "primary.main"
+              : "rgba(94, 131, 201, 0.68)",
+          borderRadius: 1,
+          bgcolor: disabled
+            ? "action.hover"
+            : activeVisual
+              ? "primary.50"
+              : "rgba(233, 240, 251, 0.72)",
+          px: 1.5,
+          py: 1.25,
+          position: "relative",
+          overflow: "hidden",
           outline: "none",
-          transform: dragActive ? "translateY(-2px)" : "none",
-          transition: "border-color 160ms ease, background-color 160ms ease, transform 160ms ease",
-          "&:focus-visible": { boxShadow: "0 0 0 3px rgba(36, 84, 166, 0.18)" },
+          transition: "border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease",
+          transform: activeVisual ? "translateY(-2px)" : "translateY(0)",
+          boxShadow: activeVisual
+            ? "0 10px 24px rgba(36, 84, 166, 0.14)"
+            : "none",
+          animation: received ? `${dropzoneConfirm} 480ms ease-out` : "none",
+          "&::before": {
+            content: '\"\"',
+            position: "absolute",
+            inset: 0,
+            pointerEvents: "none",
+            background: "linear-gradient(105deg, transparent 18%, rgba(255,255,255,0.72) 48%, transparent 78%)",
+            transform: activeVisual ? "translateX(80%)" : "translateX(-120%)",
+            transition: activeVisual ? "transform 700ms ease" : "none",
+          },
         }}
       >
-        <TrainIcon color="primary" sx={{ fontSize: 38, mb: 0.75 }} />
-        <Typography fontWeight={900}>{dragActive ? "松开即可加入车票" : "拖入铁路电子客票 PDF"}</Typography>
-        <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5, mb: 1.5 }}>
-          可一次选择多张；图片车票暂不支持
-        </Typography>
-        <Button component="label" variant="outlined" startIcon={<UploadFileIcon />} disabled={disabled}>
-          选择 PDF
-          <input
-            hidden
-            multiple
-            type="file"
-            accept=".pdf,application/pdf"
-            onChange={(event) => {
-              onFiles(event.target.files);
-              event.target.value = "";
-            }}
-          />
-        </Button>
+        <Stack direction="row" alignItems="center" spacing={1} sx={{ position: "relative", zIndex: 1 }}>
+          <TrainIcon color="primary" sx={{ flex: "0 0 auto" }} />
+          <Box sx={{ minWidth: 0, flex: 1 }}>
+            <Typography variant="body2" fontWeight={800} color={activeVisual ? "primary.dark" : "primary.main"}>
+              {primaryText}
+            </Typography>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 0.15 }}>
+              {secondaryText}
+            </Typography>
+          </Box>
+
+          <Stack direction={{ xs: "column", sm: "row" }} alignItems="center" spacing={0.75} sx={{ flex: "0 0 auto" }}>
+            <Box
+              component="kbd"
+              sx={{
+                display: { xs: "none", sm: "inline-flex" },
+                alignItems: "center",
+                gap: 0.4,
+                px: 0.8,
+                py: 0.35,
+                border: 1,
+                borderColor: "divider",
+                borderRadius: 0.75,
+                bgcolor: "#F8FAFC",
+                color: "text.secondary",
+                fontFamily: "inherit",
+                fontSize: 11,
+                fontWeight: 800,
+                lineHeight: 1.2,
+                whiteSpace: "nowrap",
+              }}
+            >
+              Ctrl+V
+            </Box>
+            <Button
+              component="label"
+              size="small"
+              startIcon={<UploadFileIcon />}
+              disabled={!interactive}
+              sx={{ whiteSpace: "nowrap", fontWeight: 800 }}
+            >
+              选择 PDF
+              <input
+                hidden
+                multiple
+                type="file"
+                accept=".pdf,application/pdf,application/x-pdf"
+                onChange={(event) => {
+                  onFiles(event.target.files);
+                  event.target.value = "";
+                }}
+              />
+            </Button>
+          </Stack>
+        </Stack>
       </Box>
 
       {files.length > 0 && (
@@ -544,6 +691,7 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
                 files={files}
                 disabled={busy}
                 onFiles={addFiles}
+                onPasteError={setError}
                 onRemove={(target) => setFiles((current) => current.filter((file) => file !== target))}
               />
               <Alert severity="info">
