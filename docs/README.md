@@ -19,6 +19,7 @@
 - decisions/
 - ZIP 桌面升级路线：[decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md)
 - 发布治理与不可变 tag：[decisions/0003-release-governance.md](decisions/0003-release-governance.md)
+- 铁路客票文本解码与中转分组：[decisions/0004-rail-ticket-pdf-text-decoding.md](decisions/0004-rail-ticket-pdf-text-decoding.md)
 
 ## 测试依据
 - testing/

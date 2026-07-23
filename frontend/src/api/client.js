@@ -330,6 +330,31 @@ export const deleteInvoice = async (id) => {
 
 export const getInvoiceFileUrl = (id) => `${apiClient.defaults.baseURL}/api/invoices/${id}/file`;
 
+export const previewRailTickets = async ({ reportId, files }) => {
+  const formData = new FormData();
+  formData.append("report_id", String(reportId));
+  Array.from(files || []).forEach((file) => formData.append("files", file));
+  const response = await apiClient.post("/api/tickets/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const importRailTickets = async (reportId, payload) => {
+  const response = await apiClient.post(`/api/tickets/import/${encodeURIComponent(reportId)}`, payload, {
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const discardRailTicketPreview = async ({ reportId, token }) => {
+  const response = await apiClient.delete(`/api/tickets/preview/${encodeURIComponent(token)}`, {
+    params: { report_id: reportId },
+  });
+  return response.data;
+};
+
 const buildStatsRangeParams = ({ startMonth, endMonth } = {}) => ({
   ...(startMonth ? { start_month: startMonth } : {}),
   ...(endMonth ? { end_month: endMonth } : {}),

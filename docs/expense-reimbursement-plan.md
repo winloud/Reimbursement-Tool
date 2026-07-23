@@ -44,6 +44,7 @@
 
 - 支持 PDF 和图片发票上传；XML / OFD 发票当前不支持。
 - PDF 发票逐页识别二维码，多页多发票 PDF 可拆分为多条发票记录；图片发票也通过二维码识别。
+- 铁路电子客票 PDF 可批量解析为行程；同日或次日的连续站点默认合并，明显返程或路线回环自动拆分，并保留全部原始车票关联。
 - 新上传发票默认需要用户确认金额；未确认发票不计入汇总，也不允许生成 PDF。
 - 支持报销单页预览、报销单和发票附件合并下载、PDF 字体设置、增值税专用发票附件打印两遍设置。
 
@@ -88,6 +89,7 @@
 | 发票二维码识别路线 | 默认 `zxing-cpp`，OpenCV WeChatQRCode 作为可选兼容模式 | [decisions/0001-invoice-qr-engine.md](decisions/0001-invoice-qr-engine.md) |
 | ZIP 桌面升级路线 | 采用便携式安装根目录、根目录 launcher 和版本目录，不与 Linux server 强行合并升级执行链 | [decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md) |
 | 发布治理 | GitHub 是公开发布真源，正式远端 tag 不可变，发布失败从原 tag 续跑 | [decisions/0003-release-governance.md](decisions/0003-release-governance.md) |
+| 铁路客票解析 | 按 PDF 字体 CMap 解码原始字节，不使用 OCR 或英文站名回退；连续站点按日期相邻默认合并 | [decisions/0004-rail-ticket-pdf-text-decoding.md](decisions/0004-rail-ticket-pdf-text-decoding.md) |
 
 ---
 
