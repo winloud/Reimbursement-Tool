@@ -39,6 +39,7 @@ import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate, useParams } from "react-router-dom";
 import InvoiceViewer from "../components/InvoiceViewer";
+import TicketImportDialog from "../components/TicketImportDialog";
 import { useNavigationGuard } from "../navigationGuard";
 import {
   createReport,
@@ -429,6 +430,7 @@ export default function ReportEdit() {
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [pdfPreviewPages, setPdfPreviewPages] = useState([]);
   const [pdfBlockedOpen, setPdfBlockedOpen] = useState(false);
+  const [ticketImportOpen, setTicketImportOpen] = useState(false);
   const [autosaveDelaySeconds, setAutosaveDelaySeconds] = useState(DEFAULT_AUTOSAVE_DELAY_SECONDS);
 
   const creatingRef = useRef(false);
@@ -498,6 +500,7 @@ export default function ReportEdit() {
         );
         loadedRef.current = true;
         setSaveState("saved");
+        return report;
       } catch (err) {
         setError(err.response?.data?.message || err.message || "加载报销单失败");
       } finally {
@@ -719,6 +722,25 @@ export default function ReportEdit() {
 
   const addTrip = () => {
     setTrips((prev) => appendTripWithAutoStart(prev, makeBlankTrip(form.report_date)));
+  };
+
+  const handleOpenTicketImport = async () => {
+    if (readonly || !id) return;
+    if (!(await ensureSavedBeforeAction())) return;
+    setTicketImportOpen(true);
+  };
+
+  const handleTicketsImported = async (result) => {
+    const report = await loadForEdit({ quiet: true });
+    const importedIds = new Set((result?.invoice_ids || []).map(Number));
+    const importedInvoices = (report?.invoices || []).filter((invoice) => importedIds.has(Number(invoice.id)));
+    if (importedInvoices.length > 0) {
+      setInvoiceQueue(importedInvoices);
+      setSelectedInvoice(importedInvoices[0]);
+    }
+    const tripCount = result?.trip_ids?.length || 0;
+    const invoiceCount = result?.invoice_ids?.length || 0;
+    setToast(`已导入 ${tripCount} 段行程、${invoiceCount} 张车票，请逐张确认金额`);
   };
 
   const removeTrip = (index) => {
@@ -1225,13 +1247,18 @@ export default function ReportEdit() {
                     复制、返程和排序都会自动保存。
                   </Typography>
                 </Box>
-                <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
-                  添加行程
-                </Button>
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+                  <Button variant="contained" onClick={handleOpenTicketImport} disabled={readonly || saveState === "saving"}>
+                    从车票导入
+                  </Button>
+                  <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
+                    手动添加
+                  </Button>
+                </Stack>
               </Stack>
 
               {trips.length === 0 ? (
-                <Alert severity="info">暂无行程，添加第一段行程后即可上传车船费发票。</Alert>
+                <Alert severity="info">暂无行程。可以批量导入铁路电子客票自动生成，也可以手动添加第一段行程。</Alert>
               ) : (
                 <Box sx={repeatedCardGridSx}>
                   {trips.map((trip, index) => {
@@ -1718,6 +1745,13 @@ export default function ReportEdit() {
         }}
         onSkip={invoiceQueue.length > 0 ? handleInvoiceSkipped : undefined}
         onUpdated={handleInvoiceUpdated}
+      />
+
+      <TicketImportDialog
+        open={ticketImportOpen}
+        reportId={id}
+        onClose={() => setTicketImportOpen(false)}
+        onImported={handleTicketsImported}
       />
 
       <Dialog open={customDialogOpen} onClose={() => setCustomDialogOpen(false)} fullWidth maxWidth="xs">
