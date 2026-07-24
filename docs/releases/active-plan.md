@@ -31,10 +31,16 @@
 ## 完成记录
 
 ### 重要改动
-- 暂无。
+- fix(ui): 全站内容区由 1440 / 1680 / 1920 的阶梯式最大宽度改为连续插值，保留 1920px 上限与居中 gutter。窗口化与全屏状态不再因跨过 2560px CSS 视口断点而使行程卡片突然缩窄。
 
 ### 验证记录
-- 暂无。
+- 前端生产构建：`frontend` 下执行 `npm run build` 成功（Vite 6.4.2，1706 modules）。
+- 宽度公式检查：390、1440、1919、1920、2540、2560 CSS px 视口下，内容区宽度均不超过可用主区域和 1920px；1919→1920 为自然增加 1px，2540→2560 平滑增加约 8px，无阶梯跳变。
+- 本地预览包：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 001 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-001.zip`（45.05 MB）。
+- 预览包内容校验：263 个 ZIP 条目，启动器、版本目录和两个清单均存在；清单版本均为 `1.3.0-preview-20260725-001`，未包含 data、uploads、logs、browser-profile、vendor、window-state.json 等运行态内容；SHA-256 为 `8BC86419C6075C6E2DE40114C8BCC3D16B65EAB4673DAE6EC3E4D006E644630B`。
+- 定向后端发布/升级测试：`tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，9 passed（7 个既有弃用警告）；前端工具测试：`node --test src/**/*.test.js`，72 passed。
+- 完整 pytest 未通过：现有 `.release-venv` 未安装 `PyYAML`，`tests/test_publish_release_workflow.py` 在收集阶段报 `ModuleNotFoundError: yaml`；该测试依赖不属于预览包运行依赖，未修改环境或依赖清单。
+- `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG
-- 暂无。
+- 已在 `Unreleased` 的 `Fixed` 中记录全屏与窗口化内容区宽度跳变修复。
