@@ -38,6 +38,7 @@ from backend.services.report_batch_service import (
 from backend.services.report_service import (
     ReportFilters,
     create_report,
+    ensure_fuel_subsidy_printable,
     get_report_or_404,
     list_report_category_options,
     list_deleted_reports,
@@ -221,6 +222,7 @@ def get_report_pdf(
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
     try:
+        ensure_fuel_subsidy_printable(report)
         mark_report_pdf_exported(report, date.today(), mark_printed=True)
         db.flush()
         pdf_bytes = build_merged_report_pdf(

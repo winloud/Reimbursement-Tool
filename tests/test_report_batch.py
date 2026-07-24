@@ -11,10 +11,10 @@ from reportlab.pdfgen import canvas
 
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
-from backend.schemas.report import ReportCreate
+from backend.schemas.report import ReportCreate, ReportUpdate
 from backend.services import report_batch_service
 from backend.services.report_batch_service import batch_soft_delete_draft_reports, build_batch_report_pdf_zip
-from backend.services.report_service import create_report, update_report_status
+from backend.services.report_service import create_report, update_report, update_report_status
 
 
 def write_blank_pdf(path: Path, pages: int = 1, pagesize: tuple[int, int] = (595, 298)) -> None:
@@ -125,6 +125,36 @@ def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, d
     assert invalid.status == "draft"
     assert draft.report_date == date(2026, 6, 4)
     assert invalid.report_date == date(2026, 6, 5)
+
+
+def test_batch_pdf_rejects_insufficient_fuel_subsidy_without_marking_printed(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="燃油补助不足"))
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("100.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 4),
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        build_batch_report_pdf_zip(db, [report.id])
+
+    db.refresh(report)
+    assert exc.value.detail["failures"] == [{"report_id": report.id, "reason": "燃油补助发票金额不足，还差 ¥80.00，请补充足额发票后再打印"}]
+    assert report.status == "draft"
 
 
 def test_batch_delete_only_deletes_draft_reports(monkeypatch, db):

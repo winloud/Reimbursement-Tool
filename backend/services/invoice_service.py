@@ -21,6 +21,7 @@ from backend.services.report_service import (
     get_report_or_404,
     is_custom_category,
     recalculate_report_totals,
+    rollback_printed_report_for_fuel_shortfall,
     validate_expense_category,
 )
 
@@ -300,12 +301,17 @@ def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invo
     invoice = get_invoice_or_404(db, invoice_id)
     report = get_report_or_404(db, invoice.report_id)
     ensure_report_writable(report)
-    invoice.amount = payload.amount.quantize(Decimal("0.01"))
-    invoice.amount_confirmed = payload.amount_confirmed
-    if payload.invoice_type is not None:
-        invoice.invoice_type = payload.invoice_type
-    recalculate_report_totals(report)
-    db.commit()
+    try:
+        invoice.amount = payload.amount.quantize(Decimal("0.01"))
+        invoice.amount_confirmed = payload.amount_confirmed
+        if payload.invoice_type is not None:
+            invoice.invoice_type = payload.invoice_type
+        recalculate_report_totals(report)
+        rollback_printed_report_for_fuel_shortfall(db, report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(invoice)
     return invoice
 
@@ -324,6 +330,11 @@ def soft_delete_invoice(db: Session, invoice_id: int) -> None:
     invoice = get_invoice_or_404(db, invoice_id)
     report = get_report_or_404(db, invoice.report_id)
     ensure_report_writable(report)
-    invoice.deleted_at = datetime.utcnow()
-    recalculate_report_totals(report)
-    db.commit()
+    try:
+        invoice.deleted_at = datetime.utcnow()
+        recalculate_report_totals(report)
+        rollback_printed_report_for_fuel_shortfall(db, report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
