@@ -574,6 +574,16 @@ export default function ReportEdit() {
     [expenseItems, form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
   );
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
+  const visibleOtherExpenseItems = useMemo(
+    () =>
+      expenseCategoryOptions
+        .map((category) => ({
+          category,
+          item: expenseItems.find((expenseItem) => expenseItem.category === category.value),
+        }))
+        .filter(({ item }) => getExpenseItemAmount(item || {}) > 0),
+    [expenseCategoryOptions, expenseItems],
+  );
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
   const hasUnconfirmedInvoices = useMemo(
     () => invoices.some((invoice) => !invoice.amount_confirmed),
@@ -1721,42 +1731,49 @@ export default function ReportEdit() {
 
                 <Stack spacing={1.1}>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">补贴天数</Typography>
-                    <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
+                    <Typography fontWeight={800}>车船费</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.transportTotal)}</Typography>
                   </Stack>
+                </Stack>
+
+                <Divider />
+
+                <Stack spacing={1.1}>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">途中补贴</Typography>
+                    <Typography fontWeight={800}>途中补贴</Typography>
                     <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
                   </Stack>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">报销费用</Typography>
-                    <Typography fontWeight={800}>{formatAmount(summary.invoiceTotal)}</Typography>
+                    <Typography color="text.secondary">补贴天数</Typography>
+                    <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
                   </Stack>
                 </Stack>
 
                 <Divider />
 
                 <Stack spacing={0.8}>
-                  {expenseCategoryOptions.map((category) => {
-                    const item = expenseItems.find((expenseItem) => expenseItem.category === category.value);
-                    return (
-                      <Stack key={category.value} direction="row" justifyContent="space-between" spacing={1}>
-                        <Typography variant="body2" color="text.secondary">
-                          {category.label}
-                        </Typography>
-                        <Typography variant="body2" fontWeight={700}>
-                          {formatAmount(getExpenseItemAmount(item || {}))}
-                        </Typography>
-                      </Stack>
-                    );
-                  })}
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography fontWeight={800}>其他费用</Typography>
+                    <Typography fontWeight={800}>{formatAmount(summary.otherExpenseTotal)}</Typography>
+                  </Stack>
+                  {visibleOtherExpenseItems.map(({ category, item }) => (
+                    <Stack key={category.value} direction="row" justifyContent="space-between" spacing={1}>
+                      <Typography variant="body2" color="text.secondary">
+                        {category.label}
+                      </Typography>
+                      <Typography variant="body2" fontWeight={700}>
+                        {formatAmount(getExpenseItemAmount(item || {}))}
+                      </Typography>
+                    </Stack>
+                  ))}
                 </Stack>
 
                 <Divider />
 
                 <Stack spacing={1.25}>
+                  <Typography fontWeight={800}>汇总</Typography>
                   <Stack direction="row" justifyContent="space-between" alignItems="baseline">
-                    <Typography fontWeight={800}>报销总金额</Typography>
+                    <Typography color="text.secondary">报销总金额</Typography>
                     <Typography variant="h5" fontWeight={900} color="primary.main">
                       {formatAmount(summary.total)}
                     </Typography>

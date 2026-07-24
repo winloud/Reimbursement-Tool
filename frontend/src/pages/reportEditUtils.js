@@ -355,22 +355,36 @@ export const calculateSubsidyDays = (reportDate, trips) => {
 export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices, expenseItems = [] }) => {
   const subsidyDays = calculateSubsidyDays(reportDate, trips);
   const subsidyTotal = subsidyDays * Number(dailySubsidy || 0);
-  const invoiceTotal =
+  const transportTotal = invoices
+    .filter(
+      (invoice) =>
+        invoice.amount_confirmed &&
+        invoice.trip_id !== null &&
+        invoice.trip_id !== undefined &&
+        invoice.expense_category === "transport_fare",
+    )
+    .reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
+  const otherExpenseTotal =
     expenseItems.length > 0
-      ? invoices
-          .filter((invoice) => invoice.amount_confirmed && invoice.trip_id)
-          .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0) +
-        expenseItems
+      ? expenseItems
           .filter((item) => item.category !== "transport_fare")
           .reduce((sum, item) => sum + getExpenseItemAmount(item), 0)
       : invoices
-          .filter((invoice) => invoice.amount_confirmed)
-          .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+          .filter(
+            (invoice) =>
+              invoice.amount_confirmed &&
+              (invoice.trip_id === null || invoice.trip_id === undefined) &&
+              invoice.expense_category !== "transport_fare",
+          )
+          .reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
+  const invoiceTotal = transportTotal + otherExpenseTotal;
   const total = subsidyTotal + invoiceTotal;
   const advance = Number(advanceAmount || 0);
   return {
     subsidyDays,
     subsidyTotal,
+    transportTotal,
+    otherExpenseTotal,
     invoiceTotal,
     total,
     shortfall: Math.max(0, total - advance),
