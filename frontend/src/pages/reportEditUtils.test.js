@@ -14,6 +14,7 @@ import {
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
+  getExpenseItemAmount,
   getFuelSubsidyInvoiceShortfall,
   getTripYearRangeLabel,
   isEmptyDraft,
@@ -205,7 +206,7 @@ describe("report edit utilities", () => {
     assert.equal(returned[1].subsidy_end, true);
   });
 
-  it("summarizes only confirmed invoices plus trip-based subsidy", () => {
+  it("splits confirmed legacy invoices into transport and other expenses", () => {
     const summary = calculateSummary({
       reportDate: "2026-06-01",
       dailySubsidy: "80",
@@ -214,17 +215,21 @@ describe("report edit utilities", () => {
         normalizeTrip({ depart_month: 6, depart_day: 1, arrive_month: 6, arrive_day: 3 }, 0),
       ],
       invoices: [
-        { amount: "50.50", amount_confirmed: true },
-        { amount: "999.00", amount_confirmed: false },
+        { trip_id: 8, expense_category: "transport_fare", amount: "50.50", amount_confirmed: true },
+        { expense_category: "luggage", amount: "20.00", amount_confirmed: true },
+        { trip_id: 9, expense_category: "fuel_subsidy", amount: "300.00", amount_confirmed: true },
+        { trip_id: 10, expense_category: "transport_fare", amount: "999.00", amount_confirmed: false },
       ],
     });
 
     assert.deepEqual(summary, {
       subsidyDays: 3,
       subsidyTotal: 240,
-      invoiceTotal: 50.5,
-      total: 290.5,
-      shortfall: 190.5,
+      transportTotal: 50.5,
+      otherExpenseTotal: 20,
+      invoiceTotal: 70.5,
+      total: 310.5,
+      shortfall: 210.5,
       surplus: 0,
     });
   });
@@ -236,7 +241,7 @@ describe("report edit utilities", () => {
       advanceAmount: "0",
       trips: [],
       invoices: [
-        { trip_id: 8, amount: "50.00", amount_confirmed: true },
+        { trip_id: 8, expense_category: "transport_fare", amount: "50.00", amount_confirmed: true },
         { expense_category: "fuel_subsidy", amount: "300.00", amount_confirmed: true },
       ],
       expenseItems: [
@@ -249,12 +254,27 @@ describe("report edit utilities", () => {
       ],
     });
 
+    assert.equal(summary.transportTotal, 50);
+    assert.equal(summary.otherExpenseTotal, 180);
     assert.equal(summary.invoiceTotal, 230);
     assert.equal(summary.total, 230);
     const insufficientItem = { category: "fuel_subsidy", reimbursable_amount: "301.00", invoice_total: "300.00" };
     assert.equal(validateFuelSubsidyAmount(insufficientItem), "");
     assert.equal(getFuelSubsidyInvoiceShortfall(insufficientItem), 1);
     assert.equal(getFuelSubsidyInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
+  });
+
+  it("filters zero-valued other expense items from summary details", () => {
+    const expenseItems = [
+      { category: "luggage", amount: "0.00" },
+      { category: "fuel_subsidy", invoice_total: "300.00", reimbursable_amount: "0.00" },
+      { category: "accommodation", amount: "120.00" },
+    ];
+    const visibleItems = expenseItems.filter((item) => getExpenseItemAmount(item) > 0);
+    const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+
+    assert.deepEqual(visibleItems.map((item) => item.category), ["accommodation"]);
+    assert.match(source, /\.filter\(\(\{ item \}\) => getExpenseItemAmount\(item \|\| \{\}\) > 0\)/);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {
