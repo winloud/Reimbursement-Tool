@@ -173,22 +173,34 @@ def confirmed_invoice_total_for_category(report: ExpenseReport, category: str) -
     )
 
 
-def clamp_fuel_subsidy_reimbursable_amount(report: ExpenseReport) -> None:
+def fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> Decimal:
     for item in report.expense_items:
         if item.category != FUEL_SUBSIDY_CATEGORY or item.reimbursable_amount is None:
             continue
         invoice_total = confirmed_invoice_total_for_category(report, FUEL_SUBSIDY_CATEGORY)
-        if item.reimbursable_amount > invoice_total:
-            item.reimbursable_amount = invoice_total
+        return quantize_amount(max(Decimal("0.00"), Decimal(item.reimbursable_amount) - invoice_total))
+    return Decimal("0.00")
 
 
-def validate_fuel_subsidy_reimbursable_amount(report: ExpenseReport) -> None:
-    for item in report.expense_items:
-        if item.category != FUEL_SUBSIDY_CATEGORY or item.reimbursable_amount is None:
-            continue
-        invoice_total = confirmed_invoice_total_for_category(report, FUEL_SUBSIDY_CATEGORY)
-        if item.reimbursable_amount > invoice_total:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="燃油补助报销金额不能大于已确认发票合计")
+def has_fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> bool:
+    return fuel_subsidy_invoice_shortfall(report) > Decimal("0.00")
+
+
+def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
+    shortfall = fuel_subsidy_invoice_shortfall(report)
+    if shortfall > Decimal("0.00"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再打印",
+        )
+
+
+def rollback_printed_report_for_fuel_shortfall(db: Session, report: ExpenseReport) -> bool:
+    if report.status != "printed" or not has_fuel_subsidy_invoice_shortfall(report):
+        return False
+    create_safety_snapshot(db, reason="pre_fuel_subsidy_shortfall_rollback")
+    report.status = "draft"
+    return True
 
 
 def build_trip_date(year: int, month: int, day: int) -> date:
@@ -324,7 +336,6 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
     report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
-    clamp_fuel_subsidy_reimbursable_amount(report)
     transport_total = confirmed_transport_invoice_total(report)
     other_expense_total = sum((item.amount for item in report.expense_items if item.category != "transport_fare"), Decimal("0.00"))
     report.total_amount = quantize_amount(transport_total + other_expense_total + report.subsidy_total)
@@ -431,9 +442,6 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
         if active_invoices_for_category(report, item.category):
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先删除发票后再删除类别")
         report.expense_items.remove(item)
-    validate_fuel_subsidy_reimbursable_amount(report)
-
-
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     report = db.scalar(
         select(ExpenseReport).where(
@@ -710,16 +718,21 @@ def update_report(db: Session, report_id: int, payload: ReportUpdate) -> Expense
     report = get_report_or_404(db, report_id)
     ensure_report_writable(report)
 
-    data = payload.model_dump(exclude={"trips", "expense_items"})
-    for key, value in data.items():
-        setattr(report, key, value)
-    if payload.trips is not None:
-        replace_trips(report, payload.trips)
-    if payload.expense_items is not None:
-        update_expense_items(report, payload.expense_items)
-    db.flush()
-    recalculate_report_totals(report)
-    db.commit()
+    try:
+        data = payload.model_dump(exclude={"trips", "expense_items"})
+        for key, value in data.items():
+            setattr(report, key, value)
+        if payload.trips is not None:
+            replace_trips(report, payload.trips)
+        if payload.expense_items is not None:
+            update_expense_items(report, payload.expense_items)
+        db.flush()
+        recalculate_report_totals(report)
+        rollback_printed_report_for_fuel_shortfall(db, report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(report)
     return report
 
@@ -777,6 +790,8 @@ def purge_report(db: Session, report_id: int) -> int:
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     validate_status_transition(report.status, target_status)
+    if target_status in {"printed", "reimbursed"}:
+        ensure_fuel_subsidy_printable(report)
     if REPORT_STATUS_ORDER.get(target_status, 0) < REPORT_STATUS_ORDER.get(report.status, 0):
         create_safety_snapshot(db, reason="pre_status_rollback")
     report.status = target_status

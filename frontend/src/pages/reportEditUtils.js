@@ -185,13 +185,20 @@ export const getExpenseItemAmount = (item = {}) => {
   return toFiniteAmount(item.amount ?? item.invoice_total);
 };
 
+export const getFuelSubsidyInvoiceShortfall = (item = {}) => {
+  if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
+    return 0;
+  }
+  return Math.max(0, toFiniteAmount(item.reimbursable_amount) - getExpenseItemInvoiceTotal(item));
+};
+
 export const validateFuelSubsidyAmount = (item = {}) => {
   if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
     return "";
   }
   const reimbursableAmount = Number(item.reimbursable_amount);
-  if (!Number.isFinite(reimbursableAmount) || reimbursableAmount < 0) return "报销金额不能为负数";
-  if (reimbursableAmount > getExpenseItemInvoiceTotal(item)) return "报销金额不能大于发票合计";
+  if (!Number.isFinite(reimbursableAmount)) return "请输入有效的报销金额";
+  if (reimbursableAmount < 0) return "报销金额不能为负数";
   return "";
 };
 

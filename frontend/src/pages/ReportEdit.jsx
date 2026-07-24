@@ -67,6 +67,7 @@ import {
   getClipboardInvoiceFiles,
   getExpenseItemAmount,
   getExpenseCategoryOptions,
+  getFuelSubsidyInvoiceShortfall,
   getTripYearRangeLabel,
   isEmptyDraft,
   isCustomExpenseCategory,
@@ -582,12 +583,19 @@ export default function ReportEdit() {
     () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
     [invoices],
   );
+  const fuelSubsidyInvoiceShortfall = useMemo(() => {
+    const fuelItem = expenseItems.find((item) => item.category === "fuel_subsidy");
+    return getFuelSubsidyInvoiceShortfall(fuelItem);
+  }, [expenseItems]);
+  const hasFuelSubsidyInvoiceShortfall = fuelSubsidyInvoiceShortfall > 0;
   const confirmedInvoiceCount = useMemo(
     () => invoices.filter((invoice) => invoice.amount_confirmed).length,
     [invoices],
   );
   const pdfBlockMessage = hasUnconfirmedInvoices
     ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
+    : hasFuelSubsidyInvoiceShortfall
+      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已打印。`
     : confirmedInvoiceCount > 0
       ? "发票已确认，可生成 PDF。"
       : "暂无已确认发票，可先录入行程和费用。";
@@ -632,6 +640,7 @@ export default function ReportEdit() {
           setToast(message);
           return false;
         }
+        if (res.data?.status) setStatus(res.data.status);
         lastSavedPayloadRef.current = payloadKey;
         setError("");
         setSaveState("saved");
@@ -700,6 +709,7 @@ export default function ReportEdit() {
           setSaveState("error");
           return;
         }
+        if (res.data?.status) setStatus(res.data.status);
         lastSavedPayloadRef.current = currentPayloadKey;
         setError("");
         setSaveState("saved");
@@ -786,6 +796,10 @@ export default function ReportEdit() {
 
   const handleStatusAction = async (target) => {
     if (!(await ensureSavedBeforeAction())) return;
+    if (target === "printed" && hasFuelSubsidyInvoiceShortfall) {
+      setPdfBlockedOpen(true);
+      return;
+    }
     setSaveState("saving");
     setError("");
     try {
@@ -829,7 +843,7 @@ export default function ReportEdit() {
   };
 
   const handlePdfDownload = async () => {
-    if (hasUnconfirmedInvoices) {
+    if (hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall) {
       setPdfBlockedOpen(true);
       return;
     }
@@ -1610,6 +1624,7 @@ export default function ReportEdit() {
                   const isFuelSubsidy = category.value === "fuel_subsidy";
                   const invoiceTotal = Number(item.invoice_total ?? item.amount ?? 0);
                   const fuelAmountError = validateFuelSubsidyAmount(item);
+                  const fuelShortfall = getFuelSubsidyInvoiceShortfall(item);
                   return (
                     <Box key={category.value} sx={{ minWidth: 0 }}>
                       <Card sx={workCardSx}>
@@ -1646,13 +1661,18 @@ export default function ReportEdit() {
                                 value={item.reimbursable_amount ?? ""}
                                 disabled={readonly}
                                 error={Boolean(fuelAmountError)}
-                                helperText={fuelAmountError || "留空则按已确认发票合计报销"}
+                                helperText={
+                                  fuelAmountError ||
+                                  (fuelShortfall > 0
+                                    ? `发票金额不足 ${formatAmount(fuelShortfall)}；可保存和预览，补足后才能打印。`
+                                    : "留空则按已确认发票合计报销")
+                                }
                                 onChange={(event) =>
                                   updateExpenseItem(category.value, { reimbursable_amount: event.target.value })
                                 }
                                 InputProps={{
                                   startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                                  inputProps: { min: 0, max: invoiceTotal, step: "0.01" },
+                                  inputProps: { min: 0, step: "0.01" },
                                 }}
                               />
                             )}
@@ -1693,7 +1713,7 @@ export default function ReportEdit() {
                   </Typography>
                 </Box>
 
-                <Alert severity={hasUnconfirmedInvoices ? "warning" : "info"} sx={{ py: 0.75 }}>
+                <Alert severity={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? "warning" : "info"} sx={{ py: 0.75 }}>
                   {pdfBlockMessage}
                 </Alert>
 
@@ -1769,8 +1789,8 @@ export default function ReportEdit() {
                     variant="contained"
                     startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
                     onClick={handlePdfDownload}
-                    disabled={readonly || pdfBusy === "preview"}
-                    sx={hasUnconfirmedInvoices ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
+                    disabled={readonly || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
+                    sx={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
                   >
                     {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}
                   </Button>
@@ -1861,10 +1881,12 @@ export default function ReportEdit() {
       </Dialog>
 
       <Dialog open={pdfBlockedOpen} onClose={() => setPdfBlockedOpen(false)} fullWidth maxWidth="xs">
-        <DialogTitle>存在未确认发票</DialogTitle>
+        <DialogTitle>{hasUnconfirmedInvoices ? "存在未确认发票" : "燃油补助发票金额不足"}</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            当前报销单有 {unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。
+            {hasUnconfirmedInvoices
+              ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
+              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已打印。`}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

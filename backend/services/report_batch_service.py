@@ -17,7 +17,7 @@ from backend.schemas.report import (
 )
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.pdf_generator import build_merged_report_pdf, build_pdf_filename
-from backend.services.report_service import mark_report_pdf_exported, purge_report, restore_deleted_report
+from backend.services.report_service import ensure_fuel_subsidy_printable, mark_report_pdf_exported, purge_report, restore_deleted_report
 from backend.services.settings_service import get_or_create_settings
 
 
@@ -67,6 +67,7 @@ def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[byte
                 failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
                 continue
             try:
+                ensure_fuel_subsidy_printable(report)
                 mark_report_pdf_exported(report, exported_on, mark_printed=True)
                 db.flush()
                 pdf_items.append(

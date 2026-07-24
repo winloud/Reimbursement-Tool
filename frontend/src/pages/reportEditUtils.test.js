@@ -14,6 +14,7 @@ import {
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
+  getFuelSubsidyInvoiceShortfall,
   getTripYearRangeLabel,
   isEmptyDraft,
   isSupportedInvoiceFile,
@@ -228,7 +229,7 @@ describe("report edit utilities", () => {
     });
   });
 
-  it("summarizes fuel subsidy by reimbursable amount and validates invoice ceiling", () => {
+  it("summarizes fuel subsidy by reimbursable amount and reports an invoice shortfall without blocking save", () => {
     const summary = calculateSummary({
       reportDate: "2026-06-01",
       dailySubsidy: "0",
@@ -250,10 +251,10 @@ describe("report edit utilities", () => {
 
     assert.equal(summary.invoiceTotal, 230);
     assert.equal(summary.total, 230);
-    assert.equal(
-      validateFuelSubsidyAmount({ category: "fuel_subsidy", reimbursable_amount: "301.00", invoice_total: "300.00" }),
-      "报销金额不能大于发票合计",
-    );
+    const insufficientItem = { category: "fuel_subsidy", reimbursable_amount: "301.00", invoice_total: "300.00" };
+    assert.equal(validateFuelSubsidyAmount(insufficientItem), "");
+    assert.equal(getFuelSubsidyInvoiceShortfall(insufficientItem), 1);
+    assert.equal(getFuelSubsidyInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {

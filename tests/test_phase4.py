@@ -200,6 +200,32 @@ def test_pdf_export_rejects_unconfirmed_invoice(monkeypatch, tmp_path, db):
     assert "未确认发票" in exc.value.detail
 
 
+def test_pdf_preview_allows_insufficient_fuel_subsidy_but_download_rejects_it(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date="2026-06-04"))
+    add_confirmed_invoice(db, report, "fuel_subsidy", "100.00")
+    db.commit()
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date="2026-06-04",
+            expense_items=[ExpenseItemWrite(category="fuel_subsidy", reimbursable_amount=Decimal("180.00"))],
+        ),
+    )
+    monkeypatch.setattr(
+        "backend.routers.reports.render_report_preview_pages",
+        lambda _report, _fill_font_key: [{"page": 1, "image_url": "data:image/png;base64,abc"}],
+    )
+
+    preview = get_report_pdf_preview(report.id, db)
+    assert preview.data.pages[0].page == 1
+
+    with pytest.raises(HTTPException, match="发票金额不足"):
+        get_report_pdf(report.id, db)
+    db.refresh(report)
+    assert report.status == "draft"
+
+
 def test_merged_pdf_appends_all_invoice_pdf_pages(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
     invoice_path = tmp_path / "backend" / "uploads" / "1" / "invoice.pdf"
