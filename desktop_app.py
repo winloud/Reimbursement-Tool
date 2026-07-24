@@ -30,6 +30,9 @@ WINDOW_MAX_WIDTH = 10000
 WINDOW_MAX_HEIGHT = 10000
 WINDOW_POSITION_MIN = -32000
 WINDOW_POSITION_MAX = 32000
+# Win32 reports a minimized window near (-32000, -32000). DPI virtualization
+# can turn that into values such as (-21333, -21333), which must not be restored.
+WINDOW_MINIMIZED_POSITION_LIMIT = -16000
 DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 
 
@@ -55,6 +58,10 @@ def _coerce_int(value: object) -> int | None:
         return None
 
 
+def _is_minimized_window_position(x: int | None, y: int | None) -> bool:
+    return x is not None and y is not None and x == y and x <= WINDOW_MINIMIZED_POSITION_LIMIT
+
+
 def normalize_window_state(payload: object) -> dict[str, int | None]:
     state: dict[str, int | None] = {
         "width": WINDOW_DEFAULT_WIDTH,
@@ -73,10 +80,17 @@ def normalize_window_state(payload: object) -> dict[str, int | None]:
     if height is not None:
         state["height"] = min(max(height, WINDOW_MIN_HEIGHT), WINDOW_MAX_HEIGHT)
 
-    for key in ("x", "y"):
-        position = _coerce_int(payload.get(key))
-        if position is not None and WINDOW_POSITION_MIN <= position <= WINDOW_POSITION_MAX:
-            state[key] = position
+    x = _coerce_int(payload.get("x"))
+    y = _coerce_int(payload.get("y"))
+    if (
+        x is not None
+        and y is not None
+        and WINDOW_POSITION_MIN <= x <= WINDOW_POSITION_MAX
+        and WINDOW_POSITION_MIN <= y <= WINDOW_POSITION_MAX
+        and not _is_minimized_window_position(x, y)
+    ):
+        state["x"] = x
+        state["y"] = y
 
     return state
 
@@ -205,7 +219,7 @@ def capture_chromium_window_state() -> bool:
 
     def enum_handler(hwnd, _lparam):
         nonlocal matched_state
-        if matched_state is not None or not user32.IsWindowVisible(hwnd):
+        if matched_state is not None or not user32.IsWindowVisible(hwnd) or user32.IsIconic(hwnd):
             return True
 
         length = user32.GetWindowTextLengthW(hwnd)

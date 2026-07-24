@@ -32,15 +32,20 @@
 
 ### 重要改动
 - fix(ui): 全站内容区由 1440 / 1680 / 1920 的阶梯式最大宽度改为连续插值，保留 1920px 上限与居中 gutter。窗口化与全屏状态不再因跨过 2560px CSS 视口断点而使行程卡片突然缩窄。
+- fix(desktop): Chrome/Edge app-mode 捕获窗口状态时跳过最小化窗口；读取历史状态时自动丢弃 DPI 虚拟化后的最小化哨兵坐标，避免下次启动复用 `-21333/-21333` 等无效位置。
 
 ### 验证记录
 - 前端生产构建：`frontend` 下执行 `npm run build` 成功（Vite 6.4.2，1706 modules）。
 - 宽度公式检查：390、1440、1919、1920、2540、2560 CSS px 视口下，内容区宽度均不超过可用主区域和 1920px；1919→1920 为自然增加 1px，2540→2560 平滑增加约 8px，无阶梯跳变。
 - 本地预览包：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 001 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-001.zip`（45.05 MB）。
 - 预览包内容校验：263 个 ZIP 条目，启动器、版本目录和两个清单均存在；清单版本均为 `1.3.0-preview-20260725-001`，未包含 data、uploads、logs、browser-profile、vendor、window-state.json 等运行态内容；SHA-256 为 `8BC86419C6075C6E2DE40114C8BCC3D16B65EAB4673DAE6EC3E4D006E644630B`。
+- 本地预览包（含窗口状态修复）：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 002 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-002.zip`（45.05 MB）。
+- preview-002 内容校验：263 个 ZIP 条目，启动器、版本目录和两个清单均存在；清单版本均为 `1.3.0-preview-20260725-002`，未包含 data、uploads、logs、browser-profile、vendor、window-state.json 等运行态内容；SHA-256 为 `66D5863D5FBBC5735540B8BFE3BDCAF17D1BDCD543062C2DE419253BC6731D6B`。
 - 定向后端发布/升级测试：`tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，9 passed（7 个既有弃用警告）；前端工具测试：`node --test src/**/*.test.js`，72 passed。
+- 桌面窗口状态回归：`python -m pytest tests/test_desktop_dependencies.py -q`，13 passed（7 个既有弃用警告）；覆盖历史 `-21333/-21333` 状态清理和最小化 Chrome/Edge 窗口不再写入状态。
+- preview-002 打包前组合回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，22 passed（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，72 passed。
 - 完整 pytest 未通过：现有 `.release-venv` 未安装 `PyYAML`，`tests/test_publish_release_workflow.py` 在收集阶段报 `ModuleNotFoundError: yaml`；该测试依赖不属于预览包运行依赖，未修改环境或依赖清单。
 - `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG
-- 已在 `Unreleased` 的 `Fixed` 中记录全屏与窗口化内容区宽度跳变修复。
+- 已在 `Unreleased` 的 `Fixed` 中记录全屏与窗口化内容区宽度跳变、最小化窗口错误保存坐标修复。
