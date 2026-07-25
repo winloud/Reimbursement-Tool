@@ -534,7 +534,7 @@ def test_execute_update_refuses_unknown_data_compatibility(monkeypatch: pytest.M
 
 def test_execute_update_refuses_incompatible_data_schema(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
-    write_database(paths["database"], "current", data_schema_version=2)
+    write_database(paths["database"], "current", data_schema_version=maintenance_service.DATA_SCHEMA_VERSION + 1)
     paths["app_root"].mkdir(parents=True, exist_ok=True)
     (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
     (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.1.1"}', encoding="utf-8")
@@ -614,7 +614,7 @@ def test_switch_installed_version_refuses_incompatible_data_schema(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     paths = configure_runtime(monkeypatch, tmp_path)
-    write_database(paths["database"], "current", data_schema_version=2)
+    write_database(paths["database"], "current", data_schema_version=maintenance_service.DATA_SCHEMA_VERSION + 1)
     paths["app_root"].mkdir(parents=True, exist_ok=True)
     (paths["app_root"] / "versions" / "1.1.1").mkdir(parents=True)
     (paths["app_root"] / "versions" / "1.1.1" / "报销管理.exe").write_bytes(b"old exe")

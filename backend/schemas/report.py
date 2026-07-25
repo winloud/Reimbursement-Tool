@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 ReportStatus = Literal["draft", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
@@ -32,6 +32,16 @@ class TripWrite(BaseModel):
     transport: str | None = None
     subsidy_start: bool = False
     subsidy_end: bool = False
+    paper_invoice_amount: Decimal | None = Field(default=None, ge=0)
+    paper_invoice_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_paper_invoice_pair(self):
+        if (self.paper_invoice_amount is None) != (self.paper_invoice_count is None):
+            raise ValueError("纸质发票金额和张数需同时填写")
+        if bool(self.paper_invoice_amount) != bool(self.paper_invoice_count):
+            raise ValueError("纸质发票金额和张数需同时填写")
+        return self
 
 
 class ExpenseItemWrite(BaseModel):
@@ -39,6 +49,16 @@ class ExpenseItemWrite(BaseModel):
     category: str = Field(min_length=1)
     remark: str | None = None
     reimbursable_amount: Decimal | None = Field(default=None, ge=0)
+    paper_invoice_amount: Decimal | None = Field(default=None, ge=0)
+    paper_invoice_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def validate_paper_invoice_pair(self):
+        if (self.paper_invoice_amount is None) != (self.paper_invoice_count is None):
+            raise ValueError("纸质发票金额和张数需同时填写")
+        if bool(self.paper_invoice_amount) != bool(self.paper_invoice_count):
+            raise ValueError("纸质发票金额和张数需同时填写")
+        return self
 
 
 class ReportBase(BaseModel):
@@ -137,6 +157,8 @@ class TripRead(BaseModel):
     transport: str | None = None
     subsidy_start: bool = False
     subsidy_end: bool = False
+    paper_invoice_amount: Decimal = Decimal("0.00")
+    paper_invoice_count: int = 0
     invoice_count: int = 0
     amount: Decimal = Decimal("0.00")
 
@@ -151,6 +173,8 @@ class ExpenseItemRead(BaseModel):
     invoice_total: Decimal = Decimal("0.00")
     amount: Decimal = Decimal("0.00")
     reimbursable_amount: Decimal | None = None
+    paper_invoice_amount: Decimal = Decimal("0.00")
+    paper_invoice_count: int = 0
 
     model_config = ConfigDict(from_attributes=True)
 

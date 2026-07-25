@@ -142,35 +142,38 @@ def quantize_amount(value: Decimal) -> Decimal:
 
 
 def confirmed_transport_invoice_total(report: ExpenseReport) -> Decimal:
-    return quantize_amount(
-        sum(
-            (
-                invoice.amount
-                for invoice in report.invoices
-                if invoice.deleted_at is None
-                and invoice.amount_confirmed
-                and invoice.trip_id is not None
-                and invoice.expense_category == "transport_fare"
-            ),
-            Decimal("0.00"),
-        )
+    electronic_total = sum(
+        (
+            invoice.amount
+            for invoice in report.invoices
+            if invoice.deleted_at is None
+            and invoice.amount_confirmed
+            and invoice.trip_id is not None
+            and invoice.expense_category == "transport_fare"
+        ),
+        Decimal("0.00"),
     )
+    paper_total = sum((Decimal(trip.paper_invoice_amount or 0) for trip in report.trips), Decimal("0.00"))
+    return quantize_amount(electronic_total + paper_total)
 
 
 def confirmed_invoice_total_for_category(report: ExpenseReport, category: str) -> Decimal:
-    return quantize_amount(
-        sum(
-            (
-                invoice.amount
-                for invoice in report.invoices
-                if invoice.deleted_at is None
-                and invoice.amount_confirmed
-                and invoice.trip_id is None
-                and invoice.expense_category == category
-            ),
-            Decimal("0.00"),
-        )
+    electronic_total = sum(
+        (
+            invoice.amount
+            for invoice in report.invoices
+            if invoice.deleted_at is None
+            and invoice.amount_confirmed
+            and invoice.trip_id is None
+            and invoice.expense_category == category
+        ),
+        Decimal("0.00"),
     )
+    paper_total = sum(
+        (Decimal(item.paper_invoice_amount or 0) for item in report.expense_items if item.category == category),
+        Decimal("0.00"),
+    )
+    return quantize_amount(electronic_total + paper_total)
 
 
 def fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> Decimal:
@@ -398,7 +401,7 @@ def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None
     by_id = {trip.id: trip for trip in report.trips if trip.id is not None}
 
     for index, payload in enumerate(trip_payloads, start=1):
-        data = payload.model_dump(exclude={"id"})
+        data = payload.model_dump(exclude={"id"}, exclude_none=True)
         data["sort_order"] = index
         if payload.id is not None and payload.id in by_id:
             trip = by_id[payload.id]
@@ -435,12 +438,15 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
             if category == FUEL_SUBSIDY_CATEGORY and payload.reimbursable_amount is not None
             else None
         )
+        if payload.paper_invoice_amount is not None:
+            item.paper_invoice_amount = quantize_amount(payload.paper_invoice_amount)
+            item.paper_invoice_count = payload.paper_invoice_count
 
     for item in list(report.expense_items):
         if not is_custom_category(item.category) or item.category in requested_custom_categories:
             continue
-        if active_invoices_for_category(report, item.category):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先删除发票后再删除类别")
+        if active_invoices_for_category(report, item.category) or item.paper_invoice_count > 0:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先清空纸质发票或删除上传发票后再删除类别")
         report.expense_items.remove(item)
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     report = db.scalar(
@@ -550,20 +556,33 @@ def active_invoices(report: ExpenseReport, include_deleted: bool = False) -> lis
     return [invoice for invoice in report.invoices if invoice.deleted_at is None]
 
 
+def paper_invoice_count(report: ExpenseReport) -> int:
+    return sum(int(trip.paper_invoice_count or 0) for trip in report.trips) + sum(
+        int(item.paper_invoice_count or 0) for item in report.expense_items
+    )
+
+
+def has_paper_invoice_for_category(report: ExpenseReport, category: str) -> bool:
+    if category == "transport_fare":
+        return any(trip.paper_invoice_count > 0 for trip in report.trips)
+    return any(item.category == category and item.paper_invoice_count > 0 for item in report.expense_items)
+
+
 def report_matches_invoice_state(
     report: ExpenseReport,
     invoice_state: ReportInvoiceState,
     include_deleted_invoices: bool = False,
 ) -> bool:
     invoices = active_invoices(report, include_deleted=include_deleted_invoices)
+    paper_count = paper_invoice_count(report)
     if invoice_state == "all":
         return True
     if invoice_state == "no_invoice":
-        return not invoices
+        return not invoices and paper_count == 0
     if invoice_state == "has_unconfirmed":
         return any(not invoice.amount_confirmed for invoice in invoices)
     if invoice_state == "all_confirmed":
-        return bool(invoices) and all(invoice.amount_confirmed for invoice in invoices)
+        return bool(invoices or paper_count) and all(invoice.amount_confirmed for invoice in invoices)
     return True
 
 
@@ -572,7 +591,9 @@ def report_matches_category(report: ExpenseReport, category: str | None, include
     if not normalized:
         return True
     category_key = validate_expense_category(normalized)
-    return any(invoice.expense_category == category_key for invoice in active_invoices(report, include_deleted=include_deleted_invoices))
+    return has_paper_invoice_for_category(report, category_key) or any(
+        invoice.expense_category == category_key for invoice in active_invoices(report, include_deleted=include_deleted_invoices)
+    )
 
 
 def report_matches_filters(report: ExpenseReport, filters: ReportFilters, include_deleted_invoices: bool = False) -> bool:

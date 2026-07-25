@@ -16,6 +16,8 @@ import {
   getClipboardInvoiceFiles,
   getExpenseItemAmount,
   getFuelSubsidyInvoiceShortfall,
+  getPaperInvoiceCount,
+  hasPaperInvoice,
   getTripYearRangeLabel,
   isEmptyDraft,
   isSupportedInvoiceFile,
@@ -27,6 +29,7 @@ import {
   appendTripWithAutoStart,
   swapTripEndpoints,
   validateFuelSubsidyAmount,
+  validatePaperInvoice,
 } from "./reportEditUtils.js";
 
 describe("report edit utilities", () => {
@@ -48,6 +51,10 @@ describe("report edit utilities", () => {
     assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [] }), true);
     assert.equal(isEmptyDraft({ form: { ...form, purpose: "成都出差" }, defaults, trips: [], invoices: [] }), false);
     assert.equal(isEmptyDraft({ form, defaults, trips: [makeBlankTrip("2026-06-03")], invoices: [] }), false);
+    assert.equal(
+      isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ paper_invoice_amount: "18.00", paper_invoice_count: 1 }] }),
+      false,
+    );
   });
 
   it("saves pending report edits before uploading invoices", () => {
@@ -161,9 +168,13 @@ describe("report edit utilities", () => {
           transport: "高铁",
           subsidy_start: false,
           subsidy_end: false,
+          paper_invoice_amount: "0.00",
+          paper_invoice_count: 0,
         },
       ],
-      expense_items: [{ id: 2, category: "luggage", remark: "箱子", reimbursable_amount: null }],
+      expense_items: [
+        { id: 2, category: "luggage", remark: "箱子", reimbursable_amount: null, paper_invoice_amount: "0.00", paper_invoice_count: 0 },
+      ],
     });
 
     assert.deepEqual(
@@ -174,12 +185,15 @@ describe("report edit utilities", () => {
           { id: 3, category: "fuel_subsidy", remark: "", reimbursable_amount: "180.00" },
         ],
       }).expense_items,
-      [{ id: 3, category: "fuel_subsidy", remark: null, reimbursable_amount: "180.00" }],
+      [{ id: 3, category: "fuel_subsidy", remark: null, reimbursable_amount: "180.00", paper_invoice_amount: "0.00", paper_invoice_count: 0 }],
     );
   });
 
   it("supports trip reorder, copy, swap, and return trip generation", () => {
-    const first = normalizeTrip({ id: 1, depart_place: "深圳", arrive_place: "成都", transport: "高铁", subsidy_start: true, subsidy_end: true }, 0);
+    const first = normalizeTrip(
+      { id: 1, depart_place: "深圳", arrive_place: "成都", transport: "高铁", subsidy_start: true, subsidy_end: true, paper_invoice_amount: "88.00", paper_invoice_count: 2 },
+      0,
+    );
     const second = normalizeTrip({ id: 2, depart_place: "成都", arrive_place: "北京", transport: "飞机" }, 1);
 
     assert.deepEqual(moveTrip([first, second], 0, 1).map((trip) => trip.id), [2, 1]);
@@ -191,6 +205,8 @@ describe("report edit utilities", () => {
     assert.equal(cloned[2].depart_place, "深圳");
     assert.equal(cloned[2].subsidy_start, false);
     assert.equal(cloned[2].subsidy_end, false);
+    assert.equal(cloned[2].paper_invoice_amount, "0.00");
+    assert.equal(cloned[2].paper_invoice_count, 0);
 
     const swapped = swapTripEndpoints(first);
     assert.equal(swapped.depart_place, "成都");
@@ -204,6 +220,8 @@ describe("report edit utilities", () => {
     // 返程自动标「止」收尾，不继承源段的「起」
     assert.equal(returned[1].subsidy_start, false);
     assert.equal(returned[1].subsidy_end, true);
+    assert.equal(returned[1].paper_invoice_amount, "0.00");
+    assert.equal(returned[1].paper_invoice_count, 0);
   });
 
   it("splits confirmed legacy invoices into transport and other expenses", () => {
@@ -264,6 +282,36 @@ describe("report edit utilities", () => {
     assert.equal(getFuelSubsidyInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
   });
 
+  it("adds paper invoices to live summaries and validates their paired fields", () => {
+    const summary = calculateSummary({
+      reportDate: "2026-06-01",
+      dailySubsidy: "0",
+      advanceAmount: "0",
+      trips: [normalizeTrip({ paper_invoice_amount: "88.00", paper_invoice_count: 2 }, 0)],
+      invoices: [{ trip_id: 8, expense_category: "transport_fare", amount: "12.00", amount_confirmed: true }],
+      expenseItems: [
+        { category: "luggage", paper_invoice_amount: "30.00", paper_invoice_count: 3, amount: "0.00" },
+        { category: "fuel_subsidy", reimbursable_amount: "80.00", paper_invoice_amount: "80.00", paper_invoice_count: 1, amount: "0.00" },
+      ],
+    });
+
+    assert.equal(summary.transportTotal, 100);
+    assert.equal(summary.otherExpenseTotal, 110);
+    assert.equal(summary.total, 210);
+    assert.equal(
+      getFuelSubsidyInvoiceShortfall(
+        { category: "fuel_subsidy", reimbursable_amount: "81.00", paper_invoice_amount: "80.00", paper_invoice_count: 1 },
+        [],
+      ),
+      1,
+    );
+    assert.equal(getPaperInvoiceCount({ paper_invoice_count: 2 }), 2);
+    assert.equal(hasPaperInvoice({ paper_invoice_amount: "1.00", paper_invoice_count: 1 }), true);
+    assert.equal(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: 1 }), "");
+    assert.match(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: 0 }), /同时填写/);
+    assert.match(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: "1.5" }), /非负整数/);
+  });
+
   it("filters zero-valued other expense items from summary details", () => {
     const expenseItems = [
       { category: "luggage", amount: "0.00" },
@@ -274,7 +322,8 @@ describe("report edit utilities", () => {
     const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
 
     assert.deepEqual(visibleItems.map((item) => item.category), ["accommodation"]);
-    assert.match(source, /\.filter\(\(\{ item \}\) => getExpenseItemAmount\(item \|\| \{\}\) > 0\)/);
+    assert.match(source, /\.filter\(\(\{ amount \}\) => amount > 0\)/);
+    assert.match(source, /添加纸质发票/);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {

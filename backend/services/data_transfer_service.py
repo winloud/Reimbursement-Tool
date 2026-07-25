@@ -32,7 +32,8 @@ from backend.services.invoice_service import build_invoice_storage_path, calcula
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, SCHEMA_VERSION}
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -138,6 +139,8 @@ def _serialize_report(report: ExpenseReport) -> dict:
             "transport": trip.transport,
             "subsidy_start": trip.subsidy_start,
             "subsidy_end": trip.subsidy_end,
+            "paper_invoice_amount": _money(trip.paper_invoice_amount),
+            "paper_invoice_count": trip.paper_invoice_count,
         }
         for trip in sorted(report.trips, key=lambda item: item.sort_order)
     ]
@@ -147,6 +150,8 @@ def _serialize_report(report: ExpenseReport) -> dict:
             "category": item.category,
             "remark": item.remark,
             "reimbursable_amount": _money(item.reimbursable_amount) if item.reimbursable_amount is not None else None,
+            "paper_invoice_amount": _money(item.paper_invoice_amount),
+            "paper_invoice_count": item.paper_invoice_count,
         }
         for item in report.expense_items
     ]
@@ -242,7 +247,7 @@ def _read_manifest(package_path: Path) -> tuple[dict, zipfile.ZipFile]:
     except (json.JSONDecodeError, UnicodeDecodeError) as exc:
         archive.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="manifest.json 格式无效") from exc
-    if manifest.get("schema_version") != SCHEMA_VERSION:
+    if manifest.get("schema_version") not in SUPPORTED_IMPORT_SCHEMA_VERSIONS:
         archive.close()
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包版本不支持")
     return manifest, archive
@@ -445,6 +450,8 @@ def _create_or_overwrite_report(
             transport=trip_payload.get("transport"),
             subsidy_start=bool(trip_payload.get("subsidy_start", False)),
             subsidy_end=bool(trip_payload.get("subsidy_end", False)),
+            paper_invoice_amount=_decimal(trip_payload.get("paper_invoice_amount")),
+            paper_invoice_count=int(trip_payload.get("paper_invoice_count") or 0),
         )
         db.add(trip)
         db.flush()
@@ -458,6 +465,8 @@ def _create_or_overwrite_report(
                 category=item_payload["category"],
                 remark=item_payload.get("remark"),
                 reimbursable_amount=_optional_decimal(item_payload.get("reimbursable_amount")),
+                paper_invoice_amount=_decimal(item_payload.get("paper_invoice_amount")),
+                paper_invoice_count=int(item_payload.get("paper_invoice_count") or 0),
             )
         )
     db.flush()

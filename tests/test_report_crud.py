@@ -3,6 +3,7 @@ from datetime import date
 
 import pytest
 from fastapi import HTTPException
+from pydantic import ValidationError
 
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
@@ -14,6 +15,9 @@ from backend.services.report_service import (
     list_report_category_options,
     list_reports,
     recalculate_report_totals,
+    report_matches_category,
+    report_matches_filters,
+    report_matches_invoice_state,
     soft_delete_report,
     update_report,
     update_report_status,
@@ -23,6 +27,51 @@ from backend.services.report_service import (
 def test_create_report_seeds_expense_items(db):
     report = create_report(db, ReportCreate(purpose="出差"))
     assert {item.category for item in report.expense_items} == set(EXPENSE_CATEGORIES)
+
+
+def test_paper_invoice_values_are_persisted_and_included_in_totals(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 25),
+            daily_subsidy=Decimal("0.00"),
+            trips=[
+                TripWrite(
+                    sort_order=1,
+                    depart_month=7,
+                    depart_day=25,
+                    arrive_month=7,
+                    arrive_day=25,
+                    paper_invoice_amount=Decimal("12.50"),
+                    paper_invoice_count=1,
+                )
+            ],
+            expense_items=[ExpenseItemWrite(category="luggage", paper_invoice_amount=Decimal("25.00"), paper_invoice_count=2)],
+        ),
+    )
+    report.daily_subsidy = Decimal("0.00")
+    recalculate_report_totals(report)
+    luggage = next(item for item in report.expense_items if item.category == "luggage")
+
+    assert report.trips[0].amount == Decimal("12.50")
+    assert report.trips[0].invoice_count == 1
+    assert luggage.invoice_total == Decimal("25.00")
+    assert luggage.invoice_count == 2
+    assert report.total_amount == Decimal("37.50")
+    assert report_matches_invoice_state(report, "all_confirmed")
+    assert not report_matches_invoice_state(report, "no_invoice")
+    assert report_matches_category(report, "transport_fare")
+    assert report_matches_category(report, "luggage")
+    assert not report_matches_filters(report, ReportFilters(has_attachment=True))
+    assert report_matches_filters(report, ReportFilters(has_attachment=False))
+
+
+def test_paper_invoice_amount_and_count_must_be_filled_together():
+    with pytest.raises(ValidationError, match="纸质发票金额和张数需同时填写"):
+        TripWrite(sort_order=1, depart_month=7, depart_day=25, arrive_month=7, arrive_day=25, paper_invoice_amount=Decimal("10.00"))
+
+    with pytest.raises(ValidationError, match="纸质发票金额和张数需同时填写"):
+        ExpenseItemWrite(category="luggage", paper_invoice_count=1)
 
 
 def test_create_report_inherits_settings(db):

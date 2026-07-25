@@ -526,6 +526,45 @@ def test_trip_values_keep_actual_transport_invoice_values(db):
     assert values["transport_fare"] == "18.50"
 
 
+def test_pdf_values_include_paper_invoices_without_attachment_pages(monkeypatch, db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date="2026-06-04",
+            trips=[
+                TripWrite(
+                    sort_order=1,
+                    depart_month=6,
+                    depart_day=4,
+                    arrive_month=6,
+                    arrive_day=4,
+                    paper_invoice_amount=Decimal("18.50"),
+                    paper_invoice_count=1,
+                )
+            ],
+            expense_items=[ExpenseItemWrite(category="luggage", paper_invoice_amount=Decimal("20.00"), paper_invoice_count=2)],
+        ),
+    )
+    rows = _other_expense_rows(report)
+    calls = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
+    _build_overlay(report, list(report.trips), rows, rows, True, (595, 298), fill_font_name="CustomFill")
+
+    values = _trip_values(report.trips[0])
+    values_by_field = {name: value for name, value in calls}
+    assert values["invoice_count"] == 1
+    assert values["transport_fare"] == "18.50"
+    assert [(row.category, row.count, row.amount) for row in rows] == [("luggage", 2, Decimal("20.00"))]
+    assert values_by_field["total_invoice_count"] == 1
+    assert values_by_field["total_transport_fare"] == "18.50"
+    assert values_by_field["total_other_count"] == 2
+    assert values_by_field["total_other_amount"] == "20.00"
+
+
 def test_overlay_total_invoice_count_only_counts_transport_invoices(monkeypatch, db):
     report = create_report(
         db,

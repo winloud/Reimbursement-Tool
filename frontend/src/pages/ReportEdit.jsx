@@ -31,6 +31,7 @@ import CheckCircleIcon from "@mui/icons-material/CheckCircle";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
+import EditIcon from "@mui/icons-material/Edit";
 import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
 import DownloadIcon from "@mui/icons-material/Download";
@@ -63,12 +64,17 @@ import {
   cloneTripAfter,
   emptyForm,
   formatAmount,
+  getConfirmedInvoiceCount,
+  getConfirmedInvoiceTotal,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
   getExpenseItemAmount,
+  getExpenseItemInvoiceTotal,
   getExpenseCategoryOptions,
   getFuelSubsidyInvoiceShortfall,
+  getPaperInvoiceCount,
   getTripYearRangeLabel,
+  hasPaperInvoice,
   isEmptyDraft,
   isCustomExpenseCategory,
   makeBlankTrip,
@@ -82,6 +88,8 @@ import {
   todayStr,
   validateExpenseItems,
   validateFuelSubsidyAmount,
+  validatePaperInvoice,
+  validateTrips,
   validateCustomExpenseName,
 } from "./reportEditUtils";
 import {
@@ -412,6 +420,104 @@ function InvoiceDropzone({ disabled, uploading, onFiles, onPasteError, hint = "�
   );
 }
 
+function PaperInvoiceEntry({ value, editor, disabled, onOpen, onChange, onSave, onCancel, onClear }) {
+  const exists = hasPaperInvoice(value);
+
+  if (editor) {
+    return (
+      <Paper
+        variant="outlined"
+        sx={{
+          borderColor: "rgba(191, 135, 32, 0.52)",
+          borderLeft: 3,
+          borderLeftColor: "warning.main",
+          borderRadius: 1,
+          bgcolor: "rgba(255, 248, 232, 0.72)",
+          px: 1.25,
+          py: 1,
+        }}
+      >
+        <Stack spacing={1}>
+          <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={1}>
+            <Box>
+              <Typography variant="body2" fontWeight={800}>
+                纸质发票
+              </Typography>
+              <Typography variant="caption" color="text.secondary">
+                仅登记金额和张数，不上传附件。
+              </Typography>
+            </Box>
+            {exists && (
+              <Button size="small" color="error" onClick={onClear}>
+                清空
+              </Button>
+            )}
+          </Stack>
+          <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
+            <TextField
+              fullWidth
+              size="small"
+              label="合计金额"
+              type="number"
+              value={editor.paper_invoice_amount}
+              onChange={(event) => onChange("paper_invoice_amount", event.target.value)}
+              InputProps={{
+                startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+                inputProps: { min: 0, step: "0.01" },
+              }}
+            />
+            <TextField
+              fullWidth
+              size="small"
+              label="张数"
+              type="number"
+              value={editor.paper_invoice_count}
+              onChange={(event) => onChange("paper_invoice_count", event.target.value)}
+              inputProps={{ min: 0, step: 1 }}
+            />
+          </Stack>
+          <Stack direction="row" justifyContent="flex-end" spacing={0.75}>
+            <Button size="small" onClick={onCancel}>
+              取消
+            </Button>
+            <Button size="small" variant="contained" onClick={onSave}>
+              保存
+            </Button>
+          </Stack>
+        </Stack>
+      </Paper>
+    );
+  }
+
+  if (exists) {
+    return (
+      <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ minHeight: 30 }}>
+        <Typography variant="caption" color="text.secondary" fontWeight={700}>
+          纸质发票 {formatAmount(value.paper_invoice_amount)} / {getPaperInvoiceCount(value)} 张
+        </Typography>
+        {!disabled && (
+          <Button size="small" startIcon={<EditIcon />} onClick={onOpen}>
+            编辑
+          </Button>
+        )}
+      </Stack>
+    );
+  }
+
+  if (disabled) return null;
+
+  return (
+    <Stack direction="row" flexWrap="wrap" alignItems="center" columnGap={1} rowGap={0.1} sx={{ alignSelf: "flex-start" }}>
+      <Button size="small" variant="text" startIcon={<AddIcon />} onClick={onOpen} sx={{ alignSelf: "flex-start", px: 0.5 }}>
+        添加纸质发票
+      </Button>
+      <Typography variant="caption" color="text.secondary" sx={{ flex: "0 0 auto", whiteSpace: "nowrap" }}>
+        仅添加记录，请自行粘贴发票
+      </Typography>
+    </Stack>
+  );
+}
+
 export default function ReportEdit() {
   const { id } = useParams();
   const isEdit = Boolean(id);
@@ -438,6 +544,8 @@ export default function ReportEdit() {
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customNameError, setCustomNameError] = useState("");
+  const [paperInvoiceEditor, setPaperInvoiceEditor] = useState(null);
+  const [paperInvoiceClearTarget, setPaperInvoiceClearTarget] = useState(null);
   const [pdfBusy, setPdfBusy] = useState("");
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [pdfPreviewPages, setPdfPreviewPages] = useState([]);
@@ -461,7 +569,7 @@ export default function ReportEdit() {
   );
   const currentPayloadKey = useMemo(() => JSON.stringify(currentPayload), [currentPayload]);
   const hasUnsavedChanges = isEdit && loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
-  const expenseItemsError = useMemo(() => validateExpenseItems(expenseItems), [expenseItems]);
+  const expenseItemsError = useMemo(() => validateExpenseItems(expenseItems) || validateTrips(trips), [expenseItems, trips]);
 
   const loadForEdit = useCallback(
     async ({ quiet = false } = {}) => {
@@ -577,12 +685,13 @@ export default function ReportEdit() {
   const visibleOtherExpenseItems = useMemo(
     () =>
       expenseCategoryOptions
-        .map((category) => ({
-          category,
-          item: expenseItems.find((expenseItem) => expenseItem.category === category.value),
-        }))
-        .filter(({ item }) => getExpenseItemAmount(item || {}) > 0),
-    [expenseCategoryOptions, expenseItems],
+        .map((category) => {
+          const item = expenseItems.find((expenseItem) => expenseItem.category === category.value);
+          const categoryInvoices = invoices.filter((invoice) => invoice.expense_category === category.value && !invoice.trip_id);
+          return { category, item, amount: getExpenseItemAmount(item || {}, categoryInvoices) };
+        })
+        .filter(({ amount }) => amount > 0),
+    [expenseCategoryOptions, expenseItems, invoices],
   );
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
   const hasUnconfirmedInvoices = useMemo(
@@ -595,12 +704,16 @@ export default function ReportEdit() {
   );
   const fuelSubsidyInvoiceShortfall = useMemo(() => {
     const fuelItem = expenseItems.find((item) => item.category === "fuel_subsidy");
-    return getFuelSubsidyInvoiceShortfall(fuelItem);
-  }, [expenseItems]);
+    const fuelInvoices = invoices.filter((invoice) => invoice.expense_category === "fuel_subsidy" && !invoice.trip_id);
+    return getFuelSubsidyInvoiceShortfall(fuelItem, fuelInvoices);
+  }, [expenseItems, invoices]);
   const hasFuelSubsidyInvoiceShortfall = fuelSubsidyInvoiceShortfall > 0;
   const confirmedInvoiceCount = useMemo(
-    () => invoices.filter((invoice) => invoice.amount_confirmed).length,
-    [invoices],
+    () =>
+      invoices.filter((invoice) => invoice.amount_confirmed).length +
+      trips.reduce((sum, trip) => sum + getPaperInvoiceCount(trip), 0) +
+      expenseItems.reduce((sum, item) => sum + getPaperInvoiceCount(item), 0),
+    [expenseItems, invoices, trips],
   );
   const pdfBlockMessage = hasUnconfirmedInvoices
     ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
@@ -611,8 +724,8 @@ export default function ReportEdit() {
       : "暂无已确认发票，可先录入行程和费用。";
 
   const emptyDraft = useMemo(
-    () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices }),
-    [defaults, form, invoices, status, trips],
+    () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices, expenseItems }),
+    [defaults, expenseItems, form, invoices, status, trips],
   );
 
   const resolveLeave = useCallback((allowed) => {
@@ -629,7 +742,7 @@ export default function ReportEdit() {
         setSaveState("saved");
         return true;
       }
-      const validationError = validateExpenseItems(expenseItems);
+      const validationError = expenseItemsError;
       if (validationError) {
         setSaveState("error");
         if (!quiet) setError(validationError);
@@ -669,7 +782,7 @@ export default function ReportEdit() {
         return false;
       }
     },
-    [currentPayload, currentPayloadKey, expenseItems, id, isEdit, loadForEdit, loading, readonly],
+    [currentPayload, currentPayloadKey, expenseItemsError, id, isEdit, loadForEdit, loading, readonly],
   );
 
   const ensureSavedBeforeAction = useCallback(
@@ -802,6 +915,56 @@ export default function ReportEdit() {
     setExpenseItems((prev) =>
       prev.map((item) => (item.category === category ? { ...item, ...patch } : item)),
     );
+  };
+
+  const openPaperInvoiceEditor = (target, value) => {
+    if (readonly) return;
+    setPaperInvoiceEditor({
+      ...target,
+      paper_invoice_amount: toMoney(value.paper_invoice_amount),
+      paper_invoice_count: value.paper_invoice_count ?? 0,
+    });
+  };
+
+  const updatePaperInvoiceEditor = (field, value) => {
+    setPaperInvoiceEditor((prev) => (prev ? { ...prev, [field]: value } : prev));
+  };
+
+  const savePaperInvoiceEditor = () => {
+    if (!paperInvoiceEditor) return;
+    const validationError = validatePaperInvoice(paperInvoiceEditor);
+    if (validationError) {
+      setError(validationError);
+      setToast(validationError);
+      return;
+    }
+    const patch = {
+      paper_invoice_amount: toMoney(paperInvoiceEditor.paper_invoice_amount),
+      paper_invoice_count: Number(paperInvoiceEditor.paper_invoice_count || 0),
+    };
+    if (paperInvoiceEditor.kind === "trip") {
+      updateTrip(paperInvoiceEditor.index, "paper_invoice_amount", patch.paper_invoice_amount);
+      updateTrip(paperInvoiceEditor.index, "paper_invoice_count", patch.paper_invoice_count);
+    } else {
+      updateExpenseItem(paperInvoiceEditor.category, patch);
+    }
+    setPaperInvoiceEditor(null);
+    setError("");
+    setToast("纸质发票已录入，正在自动保存");
+  };
+
+  const confirmClearPaperInvoice = () => {
+    if (!paperInvoiceClearTarget) return;
+    const patch = { paper_invoice_amount: "0.00", paper_invoice_count: 0 };
+    if (paperInvoiceClearTarget.kind === "trip") {
+      updateTrip(paperInvoiceClearTarget.index, "paper_invoice_amount", patch.paper_invoice_amount);
+      updateTrip(paperInvoiceClearTarget.index, "paper_invoice_count", patch.paper_invoice_count);
+    } else {
+      updateExpenseItem(paperInvoiceClearTarget.category, patch);
+    }
+    setPaperInvoiceEditor(null);
+    setPaperInvoiceClearTarget(null);
+    setToast("纸质发票已清空，正在自动保存");
   };
 
   const handleStatusAction = async (target) => {
@@ -949,6 +1112,8 @@ export default function ReportEdit() {
         category,
         remark: "",
         reimbursable_amount: "",
+        paper_invoice_amount: "0.00",
+        paper_invoice_count: 0,
         invoice_total: "0.00",
         amount: "0.00",
         invoice_count: 0,
@@ -960,8 +1125,9 @@ export default function ReportEdit() {
 
   const handleDeleteCustomCategory = (category) => {
     const categoryInvoices = invoicesForCategory(category);
-    if (categoryInvoices.length > 0) {
-      setError("该自定义费用类别已有发票，请先删除发票后再删除类别");
+    const item = expenseItems.find((expenseItem) => expenseItem.category === category);
+    if (categoryInvoices.length > 0 || hasPaperInvoice(item)) {
+      setError("该自定义费用类别已有发票，请先清空纸质发票或删除上传发票后再删除类别");
       return;
     }
     setExpenseItems((prev) => prev.filter((item) => item.category !== category));
@@ -1334,9 +1500,10 @@ export default function ReportEdit() {
                   {trips.map((trip, index) => {
                     const tripInvoices = trip.id ? invoicesForTrip(trip.id) : [];
                     const uploadKey = `trip-${index}`;
-                    const confirmedAmount = tripInvoices
-                      .filter((invoice) => invoice.amount_confirmed)
-                      .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0);
+                    const paperInvoiceKey = `trip:${trip.id || index}`;
+                    const paperInvoiceCount = getPaperInvoiceCount(trip);
+                    const confirmedElectronicCount = getConfirmedInvoiceCount(tripInvoices);
+                    const confirmedAmount = getConfirmedInvoiceTotal(tripInvoices) + Number(trip.paper_invoice_amount || 0);
                     const uploading = uploadState?.key === uploadKey;
                     const uploadDisabled = readonly || !trip.id || saveState === "saving";
                     const isFirstTrip = index === 0;
@@ -1347,19 +1514,19 @@ export default function ReportEdit() {
                     const markerSuffix = effectiveEnd ? " 止" : "";
                     const unconfirmedTripInvoices = tripInvoices.filter((invoice) => !invoice.amount_confirmed).length;
                     const tripInvoiceLabel =
-                      tripInvoices.length === 0
+                      tripInvoices.length === 0 && paperInvoiceCount === 0
                         ? "无发票"
                         : unconfirmedTripInvoices > 0
                           ? `${unconfirmedTripInvoices} 张待确认`
-                          : `${tripInvoices.length} 张已确认`;
+                          : `${confirmedElectronicCount + paperInvoiceCount} 张已确认`;
                     const tripInvoiceColor =
-                      tripInvoices.length === 0 ? "default" : unconfirmedTripInvoices > 0 ? "warning" : "success";
+                      tripInvoices.length === 0 && paperInvoiceCount === 0 ? "default" : unconfirmedTripInvoices > 0 ? "warning" : "success";
                     const tripTitle = `${trip.depart_place || "出发地"} -> ${trip.arrive_place || "到达地"}`;
                     const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
                       trip.depart_place || "出发地"
                     } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
                       trip.arrive_place || "到达地"
-                    }${markerSuffix} · ${trip.transport || "交通工具"} · 发票 ${tripInvoices.length} 张 ${formatAmount(confirmedAmount)}`;
+                    }${markerSuffix} · ${trip.transport || "交通工具"} · 发票 ${confirmedElectronicCount + paperInvoiceCount} 张 ${formatAmount(confirmedAmount)}`;
 
                     return (
                       <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
@@ -1593,6 +1760,20 @@ export default function ReportEdit() {
                                   }
                                 />
                                 {renderInvoiceList(tripInvoices)}
+                                {(!readonly || hasPaperInvoice(trip)) && (
+                                  <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
+                                    <PaperInvoiceEntry
+                                      value={trip}
+                                      editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
+                                      disabled={readonly}
+                                      onOpen={() => openPaperInvoiceEditor({ key: paperInvoiceKey, kind: "trip", index }, trip)}
+                                      onChange={updatePaperInvoiceEditor}
+                                      onSave={savePaperInvoiceEditor}
+                                      onCancel={() => setPaperInvoiceEditor(null)}
+                                      onClear={() => setPaperInvoiceClearTarget(paperInvoiceEditor)}
+                                    />
+                                  </Box>
+                                )}
                               </Stack>
                         </Stack>
                       </CardContent>
@@ -1625,16 +1806,21 @@ export default function ReportEdit() {
                     category: category.value,
                     remark: "",
                     reimbursable_amount: "",
+                    paper_invoice_amount: "0.00",
+                    paper_invoice_count: 0,
                     invoice_total: "0.00",
                     amount: "0.00",
                     invoice_count: 0,
                   };
                   const uploadKey = `expense-${category.value}`;
+                  const paperInvoiceKey = `expense:${category.value}`;
                   const uploading = uploadState?.key === uploadKey;
                   const isFuelSubsidy = category.value === "fuel_subsidy";
-                  const invoiceTotal = Number(item.invoice_total ?? item.amount ?? 0);
+                  const categoryInvoices = invoicesForCategory(category.value);
+                  const invoiceTotal = getExpenseItemInvoiceTotal(item, categoryInvoices);
+                  const invoiceCount = getConfirmedInvoiceCount(categoryInvoices) + getPaperInvoiceCount(item);
                   const fuelAmountError = validateFuelSubsidyAmount(item);
-                  const fuelShortfall = getFuelSubsidyInvoiceShortfall(item);
+                  const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
                   return (
                     <Box key={category.value} sx={{ minWidth: 0 }}>
                       <Card sx={workCardSx}>
@@ -1644,7 +1830,7 @@ export default function ReportEdit() {
                               <Box sx={{ minWidth: 0 }}>
                                 <Typography fontWeight={800}>{category.label}</Typography>
                                 <Typography variant="body2" color="text.secondary">
-                                  报销 {formatAmount(getExpenseItemAmount(item))} / 发票 {formatAmount(invoiceTotal)} / {item.invoice_count || 0} 张
+                                  报销 {formatAmount(getExpenseItemAmount(item, categoryInvoices))} / 发票 {formatAmount(invoiceTotal)} / {invoiceCount} 张
                                 </Typography>
                               </Box>
                               {isCustomExpenseCategory(category.value) && (
@@ -1698,7 +1884,21 @@ export default function ReportEdit() {
                                 })
                               }
                             />
-                            {renderInvoiceList(invoicesForCategory(category.value))}
+                            {renderInvoiceList(categoryInvoices)}
+                            {(!readonly || hasPaperInvoice(item)) && (
+                              <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
+                                <PaperInvoiceEntry
+                                  value={item}
+                                  editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
+                                  disabled={readonly}
+                                  onOpen={() => openPaperInvoiceEditor({ key: paperInvoiceKey, kind: "expense", category: category.value }, item)}
+                                  onChange={updatePaperInvoiceEditor}
+                                  onSave={savePaperInvoiceEditor}
+                                  onCancel={() => setPaperInvoiceEditor(null)}
+                                  onClear={() => setPaperInvoiceClearTarget(paperInvoiceEditor)}
+                                />
+                              </Box>
+                            )}
                           </Stack>
                         </CardContent>
                       </Card>
@@ -1756,13 +1956,13 @@ export default function ReportEdit() {
                     <Typography fontWeight={800}>其他费用</Typography>
                     <Typography fontWeight={800}>{formatAmount(summary.otherExpenseTotal)}</Typography>
                   </Stack>
-                  {visibleOtherExpenseItems.map(({ category, item }) => (
+                  {visibleOtherExpenseItems.map(({ category, amount }) => (
                     <Stack key={category.value} direction="row" justifyContent="space-between" spacing={1}>
                       <Typography variant="body2" color="text.secondary">
                         {category.label}
                       </Typography>
                       <Typography variant="body2" fontWeight={700}>
-                        {formatAmount(getExpenseItemAmount(item || {}))}
+                        {formatAmount(amount)}
                       </Typography>
                     </Stack>
                   ))}
@@ -1869,6 +2069,19 @@ export default function ReportEdit() {
           <Button onClick={() => setCustomDialogOpen(false)}>取消</Button>
           <Button variant="contained" onClick={handleAddCustomCategory}>
             添加
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog open={Boolean(paperInvoiceClearTarget)} onClose={() => setPaperInvoiceClearTarget(null)} fullWidth maxWidth="xs">
+        <DialogTitle>清空纸质发票？</DialogTitle>
+        <DialogContent>
+          <DialogContentText>将清除当前卡片登记的纸质发票金额和张数，不影响已上传的电子发票。</DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={() => setPaperInvoiceClearTarget(null)}>取消</Button>
+          <Button color="error" variant="contained" onClick={confirmClearPaperInvoice}>
+            清空
           </Button>
         </DialogActions>
       </Dialog>
