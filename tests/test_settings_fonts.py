@@ -269,8 +269,11 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
     with engine.begin() as db:
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(settings)")).fetchall()}
         expense_item_columns = {row[1] for row in db.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
+        trip_columns = {row[1] for row in db.execute(text("PRAGMA table_info(trips)")).fetchall()}
     assert "pdf_fill_font_key" in columns
     assert "double_print_vat_special_invoices" in columns
     assert "invoice_qr_engine" in columns
     assert "autosave_delay_seconds" in columns
     assert "reimbursable_amount" in expense_item_columns
+    assert {"paper_invoice_amount", "paper_invoice_count"}.issubset(expense_item_columns)
+    assert {"paper_invoice_amount", "paper_invoice_count"}.issubset(trip_columns)

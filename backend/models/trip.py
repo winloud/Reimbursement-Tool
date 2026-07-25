@@ -1,6 +1,6 @@
 from decimal import Decimal
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String
+from sqlalchemy import Boolean, ForeignKey, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.connection import Base
@@ -23,6 +23,8 @@ class Trip(Base):
     transport: Mapped[str | None] = mapped_column(String, nullable=True)
     subsidy_start: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     subsidy_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    paper_invoice_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
+    paper_invoice_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     report = relationship("ExpenseReport", back_populates="trips")
     invoices = relationship("Invoice", back_populates="trip")
@@ -33,8 +35,9 @@ class Trip(Base):
 
     @property
     def invoice_count(self) -> int:
-        return len(self.active_confirmed_invoices)
+        return len(self.active_confirmed_invoices) + int(self.paper_invoice_count or 0)
 
     @property
     def amount(self) -> Decimal:
-        return sum((invoice.amount for invoice in self.active_confirmed_invoices), Decimal("0.00"))
+        electronic_total = sum((invoice.amount for invoice in self.active_confirmed_invoices), Decimal("0.00"))
+        return (electronic_total + Decimal(self.paper_invoice_amount or 0)).quantize(Decimal("0.01"))

@@ -1097,3 +1097,18 @@ def test_custom_category_without_invoice_can_be_deleted(db):
     updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
 
     assert "custom:宴请" not in {item.category for item in updated.expense_items}
+
+
+def test_custom_category_with_paper_invoice_cannot_be_deleted(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            expense_items=[{"category": "custom:宴请", "paper_invoice_amount": Decimal("20.00"), "paper_invoice_count": 1}],
+        ),
+    )
+
+    with pytest.raises(HTTPException, match="清空纸质发票"):
+        update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))

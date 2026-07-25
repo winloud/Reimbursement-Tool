@@ -143,6 +143,8 @@ export const normalizeTrip = (trip = {}, index = 0) => ({
   transport: trip.transport ?? "",
   subsidy_start: Boolean(trip.subsidy_start),
   subsidy_end: Boolean(trip.subsidy_end),
+  paper_invoice_amount: toMoney(trip.paper_invoice_amount),
+  paper_invoice_count: trip.paper_invoice_count ?? 0,
   collapsed: trip.collapsed ?? false,
 });
 
@@ -166,6 +168,8 @@ export const normalizeExpenseItem = (item = {}) => ({
   category: item.category,
   remark: item.remark ?? "",
   reimbursable_amount: item.reimbursable_amount ?? "",
+  paper_invoice_amount: toMoney(item.paper_invoice_amount),
+  paper_invoice_count: item.paper_invoice_count ?? 0,
   invoice_total: item.invoice_total ?? item.amount ?? "0.00",
   amount: item.amount ?? "0.00",
   invoice_count: item.invoice_count ?? 0,
@@ -176,20 +180,37 @@ const toFiniteAmount = (value) => {
   return Number.isFinite(amount) ? amount : 0;
 };
 
-export const getExpenseItemInvoiceTotal = (item = {}) => toFiniteAmount(item.invoice_total ?? item.amount);
+export const getPaperInvoiceAmount = (item = {}) => toFiniteAmount(item.paper_invoice_amount);
 
-export const getExpenseItemAmount = (item = {}) => {
+export const getPaperInvoiceCount = (item = {}) => {
+  const count = Number(item.paper_invoice_count ?? 0);
+  return Number.isInteger(count) && count > 0 ? count : 0;
+};
+
+export const hasPaperInvoice = (item = {}) => getPaperInvoiceAmount(item) > 0 || getPaperInvoiceCount(item) > 0;
+
+export const getConfirmedInvoiceTotal = (invoices = []) =>
+  invoices.filter((invoice) => invoice.amount_confirmed).reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
+
+export const getConfirmedInvoiceCount = (invoices = []) => invoices.filter((invoice) => invoice.amount_confirmed).length;
+
+export const getExpenseItemInvoiceTotal = (item = {}, invoices) =>
+  Array.isArray(invoices)
+    ? getConfirmedInvoiceTotal(invoices) + getPaperInvoiceAmount(item)
+    : toFiniteAmount(item.invoice_total ?? item.amount);
+
+export const getExpenseItemAmount = (item = {}, invoices) => {
   if (item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined) {
     return toFiniteAmount(item.reimbursable_amount);
   }
-  return toFiniteAmount(item.amount ?? item.invoice_total);
+  return Array.isArray(invoices) ? getExpenseItemInvoiceTotal(item, invoices) : toFiniteAmount(item.amount ?? item.invoice_total);
 };
 
-export const getFuelSubsidyInvoiceShortfall = (item = {}) => {
+export const getFuelSubsidyInvoiceShortfall = (item = {}, invoices) => {
   if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
     return 0;
   }
-  return Math.max(0, toFiniteAmount(item.reimbursable_amount) - getExpenseItemInvoiceTotal(item));
+  return Math.max(0, toFiniteAmount(item.reimbursable_amount) - getExpenseItemInvoiceTotal(item, invoices));
 };
 
 export const validateFuelSubsidyAmount = (item = {}) => {
@@ -202,10 +223,29 @@ export const validateFuelSubsidyAmount = (item = {}) => {
   return "";
 };
 
+export const validatePaperInvoice = (item = {}) => {
+  const amount = Number(item.paper_invoice_amount ?? 0);
+  const count = Number(item.paper_invoice_count ?? 0);
+  if (!Number.isFinite(amount) || amount < 0) return "请输入有效的纸质发票金额";
+  if (!Number.isInteger(count) || count < 0) return "纸质发票张数必须是非负整数";
+  if ((amount === 0) !== (count === 0)) return "纸质发票金额和张数需同时填写";
+  return "";
+};
+
 export const validateExpenseItems = (expenseItems = []) => {
   for (const item of expenseItems) {
     const error = validateFuelSubsidyAmount(item);
     if (error) return error;
+    const paperInvoiceError = validatePaperInvoice(item);
+    if (paperInvoiceError) return paperInvoiceError;
+  }
+  return "";
+};
+
+export const validateTrips = (trips = []) => {
+  for (const trip of trips) {
+    const paperInvoiceError = validatePaperInvoice(trip);
+    if (paperInvoiceError) return paperInvoiceError;
   }
   return "";
 };
@@ -355,7 +395,7 @@ export const calculateSubsidyDays = (reportDate, trips) => {
 export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices, expenseItems = [] }) => {
   const subsidyDays = calculateSubsidyDays(reportDate, trips);
   const subsidyTotal = subsidyDays * Number(dailySubsidy || 0);
-  const transportTotal = invoices
+  const transportElectronicTotal = invoices
     .filter(
       (invoice) =>
         invoice.amount_confirmed &&
@@ -364,11 +404,16 @@ export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trip
         invoice.expense_category === "transport_fare",
     )
     .reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
+  const transportTotal = transportElectronicTotal + trips.reduce((sum, trip) => sum + getPaperInvoiceAmount(trip), 0);
   const otherExpenseTotal =
     expenseItems.length > 0
       ? expenseItems
           .filter((item) => item.category !== "transport_fare")
-          .reduce((sum, item) => sum + getExpenseItemAmount(item), 0)
+          .reduce(
+            (sum, item) =>
+              sum + getExpenseItemAmount(item, invoices.filter((invoice) => invoice.expense_category === item.category && !invoice.trip_id)),
+            0,
+          )
       : invoices
           .filter(
             (invoice) =>
@@ -430,6 +475,11 @@ export const buildTripPayload = (trips) =>
     transport: nullableText(trip.transport),
     subsidy_start: Boolean(trip.subsidy_start),
     subsidy_end: Boolean(trip.subsidy_end),
+    paper_invoice_amount:
+      trip.paper_invoice_amount === "" || trip.paper_invoice_amount === null || trip.paper_invoice_amount === undefined
+        ? "0.00"
+        : trip.paper_invoice_amount,
+    paper_invoice_count: Number(trip.paper_invoice_count || 0),
   }));
 
 export const buildReportPayload = ({ form, trips, expenseItems }) => ({
@@ -443,6 +493,11 @@ export const buildReportPayload = ({ form, trips, expenseItems }) => ({
       item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined
         ? item.reimbursable_amount
         : null,
+      paper_invoice_amount:
+        item.paper_invoice_amount === "" || item.paper_invoice_amount === null || item.paper_invoice_amount === undefined
+          ? "0.00"
+          : item.paper_invoice_amount,
+      paper_invoice_count: Number(item.paper_invoice_count || 0),
   })),
 });
 
@@ -459,7 +514,7 @@ export const cloneTripAfter = (trips, index) => {
   if (!source) return trips.map(normalizeTrip);
   // 复制为新一段并追加到末尾（避免插在源行程后面、打乱后续行程顺序）；
   // 若末尾前一段是「止」，则自动接为新一次出差的「起」。
-  return appendTripWithAutoStart(trips, { ...source, id: null });
+  return appendTripWithAutoStart(trips, { ...source, id: null, paper_invoice_amount: "0.00", paper_invoice_count: 0 });
 };
 
 export const swapTripEndpoints = (trip) => ({
@@ -479,7 +534,10 @@ export const makeReturnTripAfter = (trips, index) => {
   if (!source) return trips.map(normalizeTrip);
   // 返程 = 一次出差结束，自动标「止」收尾（不继承源段的「起」）。
   // 之后若再「添加行程」，新段会因前一段是「止」而自动标「起」，形成新一次出差。
-  const returned = normalizeTrip({ ...swapTripEndpoints(source), id: null, subsidy_start: false, subsidy_end: true }, index + 1);
+  const returned = normalizeTrip(
+    { ...swapTripEndpoints(source), id: null, subsidy_start: false, subsidy_end: true, paper_invoice_amount: "0.00", paper_invoice_count: 0 },
+    index + 1,
+  );
   const next = [...trips];
   next.splice(index + 1, 0, returned);
   return next.map(normalizeTrip);
@@ -496,8 +554,9 @@ export const appendTripWithAutoStart = (trips, blankTrip) => {
 const textChanged = (current, initial) => String(current ?? "").trim() !== String(initial ?? "").trim();
 const moneyChanged = (current, initial) => Number(current || 0) !== Number(initial || 0);
 
-export const isEmptyDraft = ({ form, defaults, trips, invoices }) => {
+export const isEmptyDraft = ({ form, defaults, trips, invoices, expenseItems = [] }) => {
   if (trips.length > 0 || invoices.length > 0) return false;
+  if (expenseItems.some(hasPaperInvoice)) return false;
   if (textChanged(form.purpose, "")) return false;
   if (textChanged(form.report_date, defaults.report_date)) return false;
   if (textChanged(form.department, defaults.department)) return false;

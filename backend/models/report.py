@@ -40,6 +40,13 @@ class ExpenseReport(Base):
         return [invoice for invoice in self.invoices if invoice.deleted_at is None]
 
     @property
+    def invoice_count(self) -> int:
+        paper_count = sum(int(trip.paper_invoice_count or 0) for trip in self.trips) + sum(
+            int(item.paper_invoice_count or 0) for item in self.expense_items
+        )
+        return len(self.active_invoices) + paper_count
+
+    @property
     def trip_start_date(self) -> date | None:
         from backend.services.report_service import report_trip_date_bounds
 

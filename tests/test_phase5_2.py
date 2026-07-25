@@ -11,7 +11,7 @@ from fastapi import HTTPException
 
 from backend.models.invoice import Invoice
 from backend.schemas.data_transfer import DataExportRequest, ImportExecuteRequest
-from backend.schemas.report import ReportCreate
+from backend.schemas.report import ExpenseItemWrite, ReportCreate, TripWrite
 from backend.services import data_transfer_service
 from backend.services.data_transfer_service import build_export_zip, create_import_preview, execute_import
 from backend.services.report_service import create_report, recalculate_report_totals
@@ -94,6 +94,67 @@ def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_p
         assert exported_invoice["invoice_uid"] == invoice.invoice_uid
         assert exported_invoice["invoice_type"] == "vat_special"
         assert exported_invoice["attachment_path"] in archive.namelist()
+
+
+def test_export_import_preserves_paper_invoice_values_and_accepts_v1(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 1),
+            purpose="纸质发票导出",
+            trips=[
+                TripWrite(
+                    sort_order=1,
+                    depart_month=5,
+                    depart_day=1,
+                    arrive_month=5,
+                    arrive_day=1,
+                    paper_invoice_amount=Decimal("15.00"),
+                    paper_invoice_count=1,
+                )
+            ],
+            expense_items=[ExpenseItemWrite(category="accommodation", paper_invoice_amount=Decimal("88.00"), paper_invoice_count=2)],
+        ),
+    )
+    attach_invoice(db, project_root, report)
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["schema_version"] == data_transfer_service.SCHEMA_VERSION
+        assert manifest["reports"][0]["trips"][0]["paper_invoice_amount"] == "15.00"
+        exported_accommodation = next(item for item in manifest["reports"][0]["expense_items"] if item["category"] == "accommodation")
+        assert exported_accommodation["paper_invoice_amount"] == "88.00"
+        attachment_payloads = {name: archive.read(name) for name in archive.namelist() if name != "manifest.json"}
+
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(type(report)).order_by(type(report).id.desc()).first()
+    imported_accommodation = next(item for item in imported.expense_items if item.category == "accommodation")
+    assert imported.trips[0].paper_invoice_amount == Decimal("15.00")
+    assert imported.trips[0].paper_invoice_count == 1
+    assert imported_accommodation.paper_invoice_amount == Decimal("88.00")
+    assert imported_accommodation.paper_invoice_count == 2
+
+    manifest["schema_version"] = 1
+    manifest["reports"][0]["trips"][0].pop("paper_invoice_amount")
+    manifest["reports"][0]["trips"][0].pop("paper_invoice_count")
+    exported_accommodation.pop("paper_invoice_amount")
+    exported_accommodation.pop("paper_invoice_count")
+    v1_buffer = BytesIO()
+    with zipfile.ZipFile(v1_buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+        for name, payload in attachment_payloads.items():
+            archive.writestr(name, payload)
+    v1_preview = create_import_preview(db, upload_from_bytes(v1_buffer.getvalue()))
+    execute_import(db, ImportExecuteRequest(preview_id=v1_preview.preview_id, strategy="import_as_new"))
+    imported_v1 = db.query(type(report)).order_by(type(report).id.desc()).first()
+    imported_v1_accommodation = next(item for item in imported_v1.expense_items if item.category == "accommodation")
+    assert imported_v1.trips[0].paper_invoice_amount == Decimal("0.00")
+    assert imported_v1.trips[0].paper_invoice_count == 0
+    assert imported_v1_accommodation.paper_invoice_amount == Decimal("0.00")
+    assert imported_v1_accommodation.paper_invoice_count == 0
 
 
 def test_export_zip_respects_report_date_and_multi_status_filters(db, monkeypatch, tmp_path):

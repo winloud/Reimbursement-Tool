@@ -32,14 +32,12 @@ const NAV_ITEMS = [
   { label: "数据维护", to: "/maintenance", icon: <StorageIcon fontSize="small" /> },
 ];
 
-// 全站统一内容区宽度：随屏幕分级放宽，保证各页面左右边界对齐
-// 笔记本(14"/15.6") ~1440，27" ~1680，32" ~1920
+// 全站统一内容区宽度：平滑放宽，保证各页面左右边界对齐。
+// 1920px 视口对应 1680px，2560px 视口对应 1920px；避免窗口状态跨断点时突变。
 const APP_CONTENT_SX = {
   width: "100%",
   mx: "auto",
-  maxWidth: 1440,
-  "@media (min-width:1920px)": { maxWidth: 1680 },
-  "@media (min-width:2560px)": { maxWidth: 1920 },
+  maxWidth: "clamp(1440px, calc(37.5vw + 960px), 1920px)",
 };
 
 function Sidebar() {

@@ -153,6 +153,40 @@ def test_chromium_process_polling_captures_window_state_until_exit(monkeypatch):
     assert calls == ["capture", "sleep", "capture", "sleep", "capture"]
 
 
+def test_chromium_window_capture_skips_minimized_window(monkeypatch):
+    calls = []
+    saved_states = []
+
+    class FakeUser32:
+        @staticmethod
+        def IsWindowVisible(_hwnd):
+            calls.append("visible")
+            return True
+
+        @staticmethod
+        def IsIconic(_hwnd):
+            calls.append("iconic")
+            return True
+
+        @staticmethod
+        def EnumWindows(callback, _lparam):
+            callback(1, 0)
+
+    class FakeCtypes:
+        windll = type("FakeWindll", (), {"user32": FakeUser32()})()
+
+        @staticmethod
+        def WINFUNCTYPE(*_args):
+            return lambda callback: callback
+
+    monkeypatch.setitem(sys.modules, "ctypes", FakeCtypes)
+    monkeypatch.setattr(desktop_app, "_safe_save_window_state", lambda state: saved_states.append(state))
+
+    assert desktop_app.capture_chromium_window_state() is False
+    assert calls == ["visible", "iconic"]
+    assert saved_states == []
+
+
 def test_window_state_loads_defaults_for_missing_or_invalid_file(tmp_path):
     missing = tmp_path / "missing-window-state.json"
     invalid = tmp_path / "invalid-window-state.json"
@@ -182,6 +216,25 @@ def test_window_state_clamps_size_and_persists_position(tmp_path):
         "height": 700,
         "x": 120,
         "y": 80,
+    }
+
+
+def test_window_state_discards_dpi_virtualized_minimized_position(tmp_path):
+    state_path = tmp_path / "window-state.json"
+    state_path.write_text(json.dumps({"width": 1024, "height": 700, "x": -21333, "y": -21333}), encoding="utf-8")
+
+    assert desktop_app.load_window_state(state_path) == {
+        "width": 1024,
+        "height": 700,
+        "x": None,
+        "y": None,
+    }
+
+    desktop_app.save_window_state({"width": 1024, "height": 700, "x": -21333, "y": -21333}, state_path)
+
+    assert json.loads(state_path.read_text(encoding="utf-8")) == {
+        "width": 1024,
+        "height": 700,
     }
 
 

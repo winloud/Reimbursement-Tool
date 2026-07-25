@@ -39,6 +39,10 @@ def migrate_sqlite_schema() -> None:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_start BOOLEAN NOT NULL DEFAULT 0"))
         if "subsidy_end" not in trip_columns:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_end BOOLEAN NOT NULL DEFAULT 0"))
+        if "paper_invoice_amount" not in trip_columns:
+            connection.execute(text("ALTER TABLE trips ADD COLUMN paper_invoice_amount NUMERIC(18, 2) NOT NULL DEFAULT 0"))
+        if "paper_invoice_count" not in trip_columns:
+            connection.execute(text("ALTER TABLE trips ADD COLUMN paper_invoice_count INTEGER NOT NULL DEFAULT 0"))
         settings_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(settings)")).fetchall()}
         if "pdf_fill_font_key" not in settings_columns:
             connection.execute(text("ALTER TABLE settings ADD COLUMN pdf_fill_font_key VARCHAR DEFAULT 'system:simsun'"))
@@ -66,6 +70,10 @@ def migrate_sqlite_schema() -> None:
             expense_item_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
             if "reimbursable_amount" not in expense_item_columns:
                 connection.execute(text("ALTER TABLE expense_items ADD COLUMN reimbursable_amount NUMERIC(18, 2)"))
+            if "paper_invoice_amount" not in expense_item_columns:
+                connection.execute(text("ALTER TABLE expense_items ADD COLUMN paper_invoice_amount NUMERIC(18, 2) NOT NULL DEFAULT 0"))
+            if "paper_invoice_count" not in expense_item_columns:
+                connection.execute(text("ALTER TABLE expense_items ADD COLUMN paper_invoice_count INTEGER NOT NULL DEFAULT 0"))
         connection.execute(text(f"PRAGMA user_version = {DATA_SCHEMA_VERSION}"))
 
 

@@ -6,7 +6,7 @@
 - 预计版本类型：minor
 
 ## 目标
-- [ ] feat: 所有费用类别增加纸质发票填报入口，可手动添加发票金额和张数，不用考虑纸质发票的上传和保存。
+- [x] feat: 所有费用类别增加纸质发票填报入口，可手动添加发票金额和张数，不用考虑纸质发票的上传和保存。
 - [ ] feat: 需要适配短时外出不足以领取1天的途中补贴的情形。我不希望通过时间来判断，是否允许用户直接修改出差总天数和总补贴金额？
 - [ ] feat: 上传重复发票预警
 - [ ] 发票信息确认窗口打开原始文件按钮，可调用本地默认PDF浏览器。（适用本地版，服务器版仍保留浏览器打开）
@@ -31,10 +31,29 @@
 ## 完成记录
 
 ### 重要改动
-- 暂无。
+- feat(report): 行程车船费、固定费用和自定义费用均可按需展开“添加纸质发票”输入区；默认卡片仅显示按钮，已录入后收起为金额/张数摘要。纸质发票不保存附件，直接与已确认电子发票共同计入汇总、PDF、统计、筛选和燃油补助发票缺口。
+- feat(report): 报销单管理列表在“报销总金额”后显示“发票总数”，合并统计未删除电子发票与已登记纸质发票。
+- feat(data): 新增纸质发票金额与张数字段，SQLite 数据结构升级至 v2；v2 导出包保留纸票数据，仍可导入 v1 包并以零值补齐。旧版本不得回退操作 v2 数据库，避免忽略纸票数据。
+- fix(ui): 全站内容区由 1440 / 1680 / 1920 的阶梯式最大宽度改为连续插值，保留 1920px 上限与居中 gutter。窗口化与全屏状态不再因跨过 2560px CSS 视口断点而使行程卡片突然缩窄。
+- fix(desktop): Chrome/Edge app-mode 捕获窗口状态时跳过最小化窗口；读取历史状态时自动丢弃 DPI 虚拟化后的最小化哨兵坐标，避免下次启动复用 `-21333/-21333` 等无效位置。
 
 ### 验证记录
-- 暂无。
+- 报销单列表发票总数：`tests/test_report_crud.py`，19 passed；前端生产构建 `npm run build` 成功（Vite 6.4.2，1709 modules）。
+- 纸质发票定向后端回归：`tests/test_report_crud.py tests/test_phase3.py tests/test_phase4.py tests/test_phase5_2.py tests/test_settings_fonts.py tests/test_maintenance_service.py`，145 passed（5 个既有弃用警告）。
+- 数据结构兼容与发布回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py tests/test_release_publish_state_machine.py tests/test_changelog_release_metadata.py tests/test_changelog_release_notes.py`，44 passed（7 个既有弃用警告）。
+- 前端工具测试：`frontend` 下执行 `node --test src/**/*.test.js`，73 passed；前端生产构建 `npm run build` 成功（Vite 6.4.2，1709 modules）。
+- test(deps): 新增 `backend/requirements-dev.txt`，集中管理完整 pytest 所需的运行依赖、`pytest` 与 `PyYAML`；预览和正式发布工作流统一从该清单安装，运行时与打包依赖保持分离。
+- 前端生产构建：`frontend` 下执行 `npm run build` 成功（Vite 6.4.2，1706 modules）。
+- 宽度公式检查：390、1440、1919、1920、2540、2560 CSS px 视口下，内容区宽度均不超过可用主区域和 1920px；1919→1920 为自然增加 1px，2540→2560 平滑增加约 8px，无阶梯跳变。
+- 本地预览包：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 001 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-001.zip`（45.05 MB）。
+- 预览包内容校验：263 个 ZIP 条目，启动器、版本目录和两个清单均存在；清单版本均为 `1.3.0-preview-20260725-001`，未包含 data、uploads、logs、browser-profile、vendor、window-state.json 等运行态内容；SHA-256 为 `8BC86419C6075C6E2DE40114C8BCC3D16B65EAB4673DAE6EC3E4D006E644630B`。
+- 本地预览包（含窗口状态修复）：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 002 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-002.zip`（45.05 MB）。
+- preview-002 内容校验：263 个 ZIP 条目，启动器、版本目录和两个清单均存在；清单版本均为 `1.3.0-preview-20260725-002`，未包含 data、uploads、logs、browser-profile、vendor、window-state.json 等运行态内容；SHA-256 为 `66D5863D5FBBC5735540B8BFE3BDCAF17D1BDCD543062C2DE419253BC6731D6B`。
+- 定向后端发布/升级测试：`tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，9 passed（7 个既有弃用警告）；前端工具测试：`node --test src/**/*.test.js`，72 passed。
+- 桌面窗口状态回归：`python -m pytest tests/test_desktop_dependencies.py -q`，13 passed（7 个既有弃用警告）；覆盖历史 `-21333/-21333` 状态清理和最小化 Chrome/Edge 窗口不再写入状态。
+- preview-002 打包前组合回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，22 passed（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，72 passed。
+- `.release-venv` 已通过 `backend/requirements-dev.txt` 安装 `PyYAML 6.0.3`；完整 `pytest -q` 通过，304 passed、2 skipped（7 个既有弃用警告）。
+- `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG
-- 暂无。
+- 已在 `Unreleased` 的 `Fixed` 中记录全屏与窗口化内容区宽度跳变、最小化窗口错误保存坐标修复。
