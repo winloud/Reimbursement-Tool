@@ -596,6 +596,52 @@ def test_overlay_total_invoice_count_only_counts_transport_invoices(monkeypatch,
     assert values_by_field["total_other_amount"] == "60.00"
 
 
+def test_overlay_keeps_automatic_subsidy_days_and_amount(monkeypatch, db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date="2026-06-04",
+            daily_subsidy=Decimal("80.00"),
+            trips=[TripWrite(sort_order=1, depart_month=6, depart_day=4, arrive_month=6, arrive_day=4)],
+        ),
+    )
+    calls = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
+
+    _build_overlay(report, [], [], [], True, (595, 298), fill_font_name="CustomFill")
+
+    values_by_field = {name: value for name, value in calls}
+    assert report.manual_subsidy_total is None
+    assert values_by_field["subsidy_days"] == "1天"
+    assert values_by_field["subsidy_amount"] == "80.00"
+
+
+@pytest.mark.parametrize("manual_total", [Decimal("35.50"), Decimal("0.00")])
+def test_overlay_hides_days_and_uses_final_total_for_manual_subsidy(
+    monkeypatch, db, manual_total
+):
+    report = create_report(db, ReportCreate(report_date="2026-06-04"))
+    report.manual_subsidy_total = manual_total
+    report.subsidy_days = 3
+    report.subsidy_total = manual_total
+    calls = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
+
+    _build_overlay(report, [], [], [], True, (595, 298), fill_font_name="CustomFill")
+
+    values_by_field = {name: value for name, value in calls}
+    assert values_by_field["subsidy_days"] == ""
+    assert values_by_field["subsidy_amount"] == f"{manual_total:.2f}"
+
+
 def test_overlay_leaves_shortfall_and_surplus_blank_without_advance(monkeypatch, db):
     report = create_report(
         db,

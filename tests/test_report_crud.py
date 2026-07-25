@@ -5,6 +5,7 @@ import pytest
 from fastapi import HTTPException
 from pydantic import ValidationError
 
+from backend.database import connection
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
 from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportRead, ReportUpdate, TripWrite
@@ -129,6 +130,109 @@ def test_amount_normalization_keeps_two_decimals(db):
     assert report.total_amount == Decimal("100.00")
     assert report.shortfall == Decimal("20.00")
     assert report.surplus == Decimal("0.00")
+
+
+def test_manual_subsidy_total_overrides_days_and_switches_back_to_automatic(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 25),
+            daily_subsidy=Decimal("100.00"),
+            manual_subsidy_total=Decimal("75.555"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=20, arrive_month=7, arrive_day=22)],
+        ),
+    )
+
+    assert report.manual_subsidy_total == Decimal("75.56")
+    assert report.subsidy_days == 0
+    assert report.subsidy_total == Decimal("75.56")
+    assert report.total_amount == Decimal("75.56")
+    assert ReportRead.model_validate(report).manual_subsidy_total == Decimal("75.56")
+
+    report.daily_subsidy = Decimal("200.00")
+    report.trips[0].arrive_day = 23
+    recalculate_report_totals(report)
+    assert report.subsidy_days == 0
+    assert report.subsidy_total == Decimal("75.56")
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 7, 25),
+            daily_subsidy=Decimal("200.00"),
+            manual_subsidy_total=None,
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=20, arrive_month=7, arrive_day=23)],
+        ),
+    )
+    assert updated.manual_subsidy_total is None
+    assert updated.subsidy_days == 4
+    assert updated.subsidy_total == Decimal("800.00")
+
+
+def test_zero_manual_subsidy_is_not_treated_as_automatic(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 25),
+            daily_subsidy=Decimal("100.00"),
+            manual_subsidy_total=Decimal("0.00"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=20, arrive_month=7, arrive_day=22)],
+        ),
+    )
+
+    assert report.manual_subsidy_total == Decimal("0.00")
+    assert report.subsidy_days == 0
+    assert report.subsidy_total == Decimal("0.00")
+    assert report.total_amount == Decimal("0.00")
+
+
+def test_startup_recalculation_preserves_zero_manual_subsidy(db, monkeypatch):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 25),
+            daily_subsidy=Decimal("100.00"),
+            manual_subsidy_total=Decimal("0.00"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=20, arrive_month=7, arrive_day=22)],
+        ),
+    )
+    report.subsidy_days = 99
+    report.subsidy_total = Decimal("999.00")
+    report.total_amount = Decimal("999.00")
+    db.commit()
+
+    monkeypatch.setattr(connection, "engine", db.get_bind())
+    connection.recalculate_existing_reports()
+    db.expire_all()
+    reloaded = db.get(type(report), report.id)
+
+    assert reloaded.manual_subsidy_total == Decimal("0.00")
+    assert reloaded.subsidy_days == 0
+    assert reloaded.subsidy_total == Decimal("0.00")
+    assert reloaded.total_amount == Decimal("0.00")
+
+
+def test_manual_subsidy_still_validates_trip_chronology(db):
+    with pytest.raises(HTTPException, match="同日行程到达时间不能早于出发时间"):
+        create_report(
+            db,
+            ReportCreate(
+                report_date=date(2026, 7, 25),
+                manual_subsidy_total=Decimal("20.00"),
+                trips=[
+                    TripWrite(
+                        sort_order=1,
+                        depart_month=7,
+                        depart_day=20,
+                        depart_hour=12,
+                        arrive_month=7,
+                        arrive_day=20,
+                        arrive_hour=10,
+                    )
+                ],
+            ),
+        )
 
 
 def test_shortfall_and_surplus_are_decimal(db):
@@ -306,6 +410,35 @@ def test_list_reports_filters_by_keyword_amount_and_subsidy_days(db):
 
     assert total == 1
     assert items == [matched]
+
+
+def test_subsidy_days_filter_excludes_manual_subsidy_reports(db):
+    automatic = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 10),
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=2)],
+        ),
+    )
+    manual = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 10),
+            daily_subsidy=Decimal("100.00"),
+            manual_subsidy_total=Decimal("0.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=2)],
+        ),
+    )
+
+    items, total = list_reports(
+        db,
+        filters=ReportFilters(subsidy_days_min=0, subsidy_days_max=10),
+    )
+
+    assert total == 1
+    assert items == [automatic]
+    assert manual not in items
 
 
 def test_list_reports_filters_by_invoice_state_category_and_attachment(db):

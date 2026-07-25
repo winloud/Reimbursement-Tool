@@ -55,4 +55,9 @@ export const formatBatchPdfFailureMessage = (failures) =>
 
 export const isTrashStatus = (status) => status === "trash";
 
+export const getSubsidyDaysLabel = (report = {}) =>
+  report.manual_subsidy_total !== null && report.manual_subsidy_total !== undefined
+    ? "人工核定"
+    : String(report.subsidy_days ?? 0);
+
 export const deleteDialogActionLabels = ["彻底删除", "放入回收站"];

@@ -69,6 +69,7 @@ class ReportBase(BaseModel):
     daily_subsidy: Decimal = Field(default=Decimal("0.00"), ge=0)
     subsidy_days: int = Field(default=0, ge=0)
     subsidy_total: Decimal = Field(default=Decimal("0.00"), ge=0)
+    manual_subsidy_total: Decimal | None = Field(default=None, ge=0)
     advance_date_month: int | None = Field(default=None, ge=1, le=12)
     advance_date_day: int | None = Field(default=None, ge=1, le=31)
     advance_amount: Decimal = Field(default=Decimal("0.00"), ge=0)

@@ -334,11 +334,17 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
 
     report_reference = report.report_date or date.today()
     try:
-        report.subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
+        calculated_subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
     except TripDateError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
+    if report.manual_subsidy_total is not None:
+        report.manual_subsidy_total = quantize_amount(report.manual_subsidy_total)
+        report.subsidy_days = 0
+        report.subsidy_total = report.manual_subsidy_total
+    else:
+        report.subsidy_days = calculated_subsidy_days
+        report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
     transport_total = confirmed_transport_invoice_total(report)
     other_expense_total = sum((item.amount for item in report.expense_items if item.category != "transport_fare"), Decimal("0.00"))
     report.total_amount = quantize_amount(transport_total + other_expense_total + report.subsidy_total)
@@ -614,6 +620,9 @@ def report_matches_filters(report: ExpenseReport, filters: ReportFilters, includ
     if not report_matches_category(report, filters.category, include_deleted_invoices=include_deleted_invoices):
         return False
     if filters.has_attachment is not None and bool(active_invoices(report, include_deleted=include_deleted_invoices)) != filters.has_attachment:
+        return False
+    has_subsidy_days_filter = filters.subsidy_days_min is not None or filters.subsidy_days_max is not None
+    if has_subsidy_days_filter and report.manual_subsidy_total is not None:
         return False
     if filters.subsidy_days_min is not None and report.subsidy_days < filters.subsidy_days_min:
         return False

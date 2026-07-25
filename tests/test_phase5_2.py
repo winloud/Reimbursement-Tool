@@ -10,6 +10,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.models.invoice import Invoice
+from backend.models.report import ExpenseReport
 from backend.schemas.data_transfer import DataExportRequest, ImportExecuteRequest
 from backend.schemas.report import ExpenseItemWrite, ReportCreate, TripWrite
 from backend.services import data_transfer_service
@@ -96,6 +97,47 @@ def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_p
         assert exported_invoice["attachment_path"] in archive.namelist()
 
 
+def test_import_recalculation_includes_confirmed_transport_invoice(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 1),
+            daily_subsidy=Decimal("0.00"),
+            manual_subsidy_total=Decimal("0.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=1)],
+        ),
+    )
+    upload_dir = project_root / "backend" / "uploads" / str(report.id)
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    invoice_path = upload_dir / "transport.pdf"
+    invoice_path.write_bytes(b"transport-invoice")
+    report.invoices.append(
+        Invoice(
+            trip_id=report.trips[0].id,
+            expense_category="transport_fare",
+            file_path=f"uploads/{report.id}/transport.pdf",
+            file_type="pdf",
+            amount=Decimal("88.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.flush()
+    recalculate_report_totals(report)
+    db.commit()
+    assert report.total_amount == Decimal("88.00")
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(type(report)).order_by(type(report).id.desc()).first()
+
+    assert imported.invoices[0].trip_id == imported.trips[0].id
+    assert imported.subsidy_total == Decimal("0.00")
+    assert imported.total_amount == Decimal("88.00")
+    assert imported.shortfall == Decimal("88.00")
+
+
 def test_export_import_preserves_paper_invoice_values_and_accepts_v1(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(
@@ -155,6 +197,97 @@ def test_export_import_preserves_paper_invoice_values_and_accepts_v1(db, monkeyp
     assert imported_v1.trips[0].paper_invoice_count == 0
     assert imported_v1_accommodation.paper_invoice_amount == Decimal("0.00")
     assert imported_v1_accommodation.paper_invoice_count == 0
+    assert imported_v1.manual_subsidy_total is None
+
+
+def test_export_import_preserves_zero_manual_subsidy_and_accepts_v2_without_it(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 10),
+            daily_subsidy=Decimal("100.00"),
+            manual_subsidy_total=Decimal("0.00"),
+            trips=[TripWrite(sort_order=1, depart_month=5, depart_day=1, arrive_month=5, arrive_day=2)],
+        ),
+    )
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    exported_report = manifest["reports"][0]["report"]
+    assert manifest["schema_version"] == 3
+    assert exported_report["manual_subsidy_total"] == "0.00"
+
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(type(report)).order_by(type(report).id.desc()).first()
+    assert imported.manual_subsidy_total == Decimal("0.00")
+    assert imported.subsidy_days == 0
+    assert imported.subsidy_total == Decimal("0.00")
+
+    report.manual_subsidy_total = None
+    recalculate_report_totals(report)
+    db.commit()
+    assert report.subsidy_days == 2
+    assert report.subsidy_total == Decimal("200.00")
+
+    snapshot_path = tmp_path / "manual-subsidy-overwrite.zip"
+    snapshot_path.write_bytes(b"snapshot")
+    monkeypatch.setattr(
+        data_transfer_service,
+        "create_safety_snapshot",
+        lambda _db, reason: SimpleNamespace(path=snapshot_path.as_posix()),
+    )
+    overwrite_preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(
+        db,
+        ImportExecuteRequest(preview_id=overwrite_preview.preview_id, strategy="overwrite"),
+    )
+    db.refresh(report)
+    assert report.manual_subsidy_total == Decimal("0.00")
+    assert report.subsidy_days == 0
+    assert report.subsidy_total == Decimal("0.00")
+
+    manifest["schema_version"] = 2
+    exported_report.pop("manual_subsidy_total")
+    v2_buffer = BytesIO()
+    with zipfile.ZipFile(v2_buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    v2_preview = create_import_preview(db, upload_from_bytes(v2_buffer.getvalue()))
+    execute_import(db, ImportExecuteRequest(preview_id=v2_preview.preview_id, strategy="import_as_new"))
+    imported_v2 = db.query(type(report)).order_by(type(report).id.desc()).first()
+    assert imported_v2.manual_subsidy_total is None
+    assert imported_v2.subsidy_days == 2
+    assert imported_v2.subsidy_total == Decimal("200.00")
+
+
+@pytest.mark.parametrize("invalid_amount", ["-0.001", "NaN", "Infinity", "not-a-number"])
+def test_import_rejects_invalid_manual_subsidy_total(db, monkeypatch, tmp_path, invalid_amount):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 5, 10),
+            manual_subsidy_total=Decimal("0.00"),
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    manifest["reports"][0]["report"]["manual_subsidy_total"] = invalid_amount
+    invalid_buffer = BytesIO()
+    with zipfile.ZipFile(invalid_buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    preview = create_import_preview(db, upload_from_bytes(invalid_buffer.getvalue()))
+    with pytest.raises(HTTPException) as exc:
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "人工核定途中补贴总额必须是有限的非负金额"
+    assert db.query(ExpenseReport).count() == 1
 
 
 def test_export_zip_respects_report_date_and_multi_status_filters(db, monkeypatch, tmp_path):

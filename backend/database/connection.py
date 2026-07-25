@@ -56,6 +56,8 @@ def migrate_sqlite_schema() -> None:
             report_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_reports)")).fetchall()}
             if "report_uid" not in report_columns:
                 connection.execute(text("ALTER TABLE expense_reports ADD COLUMN report_uid VARCHAR"))
+            if "manual_subsidy_total" not in report_columns:
+                connection.execute(text("ALTER TABLE expense_reports ADD COLUMN manual_subsidy_total NUMERIC(18, 2)"))
             backfill_unique_uid(connection, "expense_reports", "report_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_expense_reports_report_uid ON expense_reports(report_uid)"))
         if "invoices" in tables:

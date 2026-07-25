@@ -57,6 +57,7 @@ import {
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 import {
   formatBatchPdfFailureMessage,
+  getSubsidyDaysLabel,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterCategorySx,
@@ -947,7 +948,7 @@ export default function ReportList() {
                       <TableCell>{formatDate(report.trip_end_date)}</TableCell>
                       <TableCell>{formatDate(report.report_date)}</TableCell>
                       <TableCell>{report.purpose || "—"}</TableCell>
-                      <TableCell align="center">{report.subsidy_days ?? 0}</TableCell>
+                      <TableCell align="center">{getSubsidyDaysLabel(report)}</TableCell>
                       <TableCell align="right" sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace', fontWeight: 800 }}>
                         {formatAmount(report.total_amount)}
                       </TableCell>
