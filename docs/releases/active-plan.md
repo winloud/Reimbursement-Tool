@@ -42,6 +42,7 @@
 - 纸质发票定向后端回归：`tests/test_report_crud.py tests/test_phase3.py tests/test_phase4.py tests/test_phase5_2.py tests/test_settings_fonts.py tests/test_maintenance_service.py`，145 passed（5 个既有弃用警告）。
 - 数据结构兼容与发布回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py tests/test_release_publish_state_machine.py tests/test_changelog_release_metadata.py tests/test_changelog_release_notes.py`，44 passed（7 个既有弃用警告）。
 - 前端工具测试：`frontend` 下执行 `node --test src/**/*.test.js`，73 passed；前端生产构建 `npm run build` 成功（Vite 6.4.2，1709 modules）。
+- test(deps): 新增 `backend/requirements-dev.txt`，集中管理完整 pytest 所需的运行依赖、`pytest` 与 `PyYAML`；预览和正式发布工作流统一从该清单安装，运行时与打包依赖保持分离。
 - 前端生产构建：`frontend` 下执行 `npm run build` 成功（Vite 6.4.2，1706 modules）。
 - 宽度公式检查：390、1440、1919、1920、2540、2560 CSS px 视口下，内容区宽度均不超过可用主区域和 1920px；1919→1920 为自然增加 1px，2540→2560 平滑增加约 8px，无阶梯跳变。
 - 本地预览包：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 001 -ReleaseDate 20260725 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260725-001.zip`（45.05 MB）。
@@ -51,7 +52,7 @@
 - 定向后端发布/升级测试：`tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，9 passed（7 个既有弃用警告）；前端工具测试：`node --test src/**/*.test.js`，72 passed。
 - 桌面窗口状态回归：`python -m pytest tests/test_desktop_dependencies.py -q`，13 passed（7 个既有弃用警告）；覆盖历史 `-21333/-21333` 状态清理和最小化 Chrome/Edge 窗口不再写入状态。
 - preview-002 打包前组合回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py`，22 passed（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，72 passed。
-- 完整 pytest 未通过：现有 `.release-venv` 未安装 `PyYAML`，`tests/test_publish_release_workflow.py` 在收集阶段报 `ModuleNotFoundError: yaml`；该测试依赖不属于预览包运行依赖，未修改环境或依赖清单。
+- `.release-venv` 已通过 `backend/requirements-dev.txt` 安装 `PyYAML 6.0.3`；完整 `pytest -q` 通过，304 passed、2 skipped（7 个既有弃用警告）。
 - `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG

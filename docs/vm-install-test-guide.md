@@ -51,10 +51,16 @@ cd F:\Documents\报销单开发
 python -m pip install --upgrade pip
 ```
 
-开发和测试时可安装后端运行依赖：
+开发和运行时可安装后端运行依赖：
 
 ```powershell
 python -m pip install -r backend\requirements.txt
+```
+
+完整开发/测试环境使用：
+
+```powershell
+python -m pip install -r backend\requirements-dev.txt
 ```
 
 开发和测试时可安装打包依赖：
