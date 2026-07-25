@@ -4,7 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ReportStatus = Literal["draft", "printed", "reimbursed"]
+REPORT_STATUS_VALUES = ("draft", "checked", "printed", "reimbursed")
+ReportStatus = Literal["draft", "checked", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
 ExpenseCategory = Literal[
     "transport_fare",
@@ -94,6 +95,23 @@ class ReportStatusUpdate(BaseModel):
 
 class ReportBatchRequest(BaseModel):
     report_ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class ReportBatchStatusRequest(ReportBatchRequest):
+    status: ReportStatus
+
+
+class ReportBatchStatusSkipped(BaseModel):
+    report_id: int
+    reason: str
+    status: ReportStatus | None = None
+
+
+class ReportBatchStatusResult(BaseModel):
+    target_status: ReportStatus
+    updated_count: int
+    skipped_count: int
+    skipped: list[ReportBatchStatusSkipped] = Field(default_factory=list)
 
 
 class ReportBatchPdfFailure(BaseModel):

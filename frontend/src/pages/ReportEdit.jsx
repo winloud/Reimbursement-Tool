@@ -57,8 +57,6 @@ import {
   uploadInvoice,
 } from "../api/client";
 import {
-  STATUS_ACTIONS,
-  STATUS_META,
   buildCustomExpenseCategory,
   buildDraftPayload,
   buildReportPayload,
@@ -95,6 +93,7 @@ import {
   validateTrips,
   validateCustomExpenseName,
 } from "./reportEditUtils";
+import { STATUS_ACTIONS, STATUS_META } from "./reportStatus";
 import {
   DEFAULT_AUTOSAVE_DELAY_SECONDS,
   normalizeAutosaveDelaySeconds,
@@ -732,7 +731,7 @@ export default function ReportEdit() {
   const pdfBlockMessage = hasUnconfirmedInvoices
     ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
     : hasFuelSubsidyInvoiceShortfall
-      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已打印。`
+      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已提交。`
     : confirmedInvoiceCount > 0
       ? "发票已确认，可生成 PDF。"
       : "暂无已确认发票，可先录入行程和费用。";
@@ -2264,7 +2263,7 @@ export default function ReportEdit() {
           <DialogContentText>
             {hasUnconfirmedInvoices
               ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
-              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已打印。`}
+              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已提交。`}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

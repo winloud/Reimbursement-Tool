@@ -107,21 +107,6 @@ export const getExpenseCategoryOptions = (expenseItems = []) => {
   return [...EXPENSE_CATEGORIES, ...uniqueCustomItems];
 };
 
-export const STATUS_META = {
-  draft: { label: "草稿", color: "default" },
-  printed: { label: "已打印", color: "info" },
-  reimbursed: { label: "已报销", color: "success" },
-};
-
-export const STATUS_ACTIONS = {
-  draft: [{ target: "printed", label: "标记为已打印", color: "primary" }],
-  printed: [
-    { target: "reimbursed", label: "标记为已报销", color: "success" },
-    { target: "draft", label: "退回草稿", color: "inherit" },
-  ],
-  reimbursed: [],
-};
-
 export const formatAmount = (value) =>
   `¥${Number(value ?? 0).toLocaleString("zh-CN", {
     minimumFractionDigits: 2,

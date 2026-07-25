@@ -14,10 +14,21 @@ from backend.schemas.report import (
     ReportBatchDeleteSkipped,
     ReportBatchPurgeResult,
     ReportBatchRestoreResult,
+    ReportBatchStatusResult,
+    ReportBatchStatusSkipped,
+    ReportStatus,
 )
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.pdf_generator import build_merged_report_pdf, build_pdf_filename
-from backend.services.report_service import ensure_fuel_subsidy_printable, mark_report_pdf_exported, purge_report, restore_deleted_report
+from backend.services.report_service import (
+    REPORT_STATUS_LABELS,
+    REPORT_STATUS_ORDER,
+    ensure_fuel_subsidy_printable,
+    mark_report_pdf_exported,
+    purge_report,
+    restore_deleted_report,
+    validate_status_transition,
+)
 from backend.services.settings_service import get_or_create_settings
 
 
@@ -130,6 +141,61 @@ def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> Repor
         db.commit()
 
     return ReportBatchDeleteResult(deleted_count=len(candidates), skipped_count=len(skipped), skipped=skipped)
+
+
+def batch_update_report_status(
+    db: Session,
+    report_ids: list[int],
+    target_status: ReportStatus,
+) -> ReportBatchStatusResult:
+    candidates: list[ExpenseReport] = []
+    skipped: list[ReportBatchStatusSkipped] = []
+
+    for report_id in unique_report_ids(report_ids):
+        report = _active_report_by_id(db, report_id)
+        if report is None:
+            skipped.append(ReportBatchStatusSkipped(report_id=report_id, reason="报销单不存在或已删除"))
+            continue
+        if report.status == target_status:
+            skipped.append(
+                ReportBatchStatusSkipped(
+                    report_id=report_id,
+                    reason=f"当前已是{REPORT_STATUS_LABELS[target_status]}",
+                    status=report.status,
+                )
+            )
+            continue
+        try:
+            validate_status_transition(report.status, target_status)
+            if target_status in {"printed", "reimbursed"}:
+                ensure_fuel_subsidy_printable(report)
+        except HTTPException as exc:
+            skipped.append(
+                ReportBatchStatusSkipped(report_id=report_id, reason=str(exc.detail), status=report.status)
+            )
+            continue
+        candidates.append(report)
+
+    try:
+        if any(
+            REPORT_STATUS_ORDER[target_status] < REPORT_STATUS_ORDER.get(report.status, 0)
+            for report in candidates
+        ):
+            create_safety_snapshot(db, reason="pre_batch_status_rollback")
+        for report in candidates:
+            report.status = target_status
+        if candidates:
+            db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return ReportBatchStatusResult(
+        target_status=target_status,
+        updated_count=len(candidates),
+        skipped_count=len(skipped),
+        skipped=skipped,
+    )
 
 
 def _purgeable_report_by_id(db: Session, report_id: int) -> ExpenseReport | None:

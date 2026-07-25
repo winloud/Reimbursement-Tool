@@ -113,6 +113,7 @@ def test_purge_deletes_database_rows_and_attachment_file(monkeypatch, tmp_path, 
 def test_purge_rejects_non_draft_report(monkeypatch, tmp_path, db):
     configure_upload_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="已打印"))
+    update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
 
     with pytest.raises(HTTPException) as exc:
@@ -154,6 +155,7 @@ def test_batch_restore_and_purge_return_counts(monkeypatch, tmp_path, db):
     restore_target = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="批量恢复"))
     purge_target = create_report(db, ReportCreate(report_date=date(2026, 6, 2), purpose="批量彻底删除"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 3), purpose="跳过已打印"))
+    update_report_status(db, printed.id, "checked")
     update_report_status(db, printed.id, "printed")
     soft_delete_report(db, restore_target.id)
     soft_delete_report(db, purge_target.id)

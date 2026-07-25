@@ -877,6 +877,7 @@ def test_fuel_subsidy_reimbursable_amount_can_exceed_invoice_total_before_printi
     fuel_item = next(item for item in updated.expense_items if item.category == "fuel_subsidy")
     assert fuel_item.reimbursable_amount == Decimal("301.00")
     assert updated.total_amount == Decimal("301.00")
+    update_report_status(db, report.id, "checked")
     with pytest.raises(HTTPException, match="发票金额不足"):
         update_report_status(db, report.id, "printed")
 
@@ -993,6 +994,7 @@ def test_printed_report_with_insufficient_fuel_invoice_returns_to_draft(monkeypa
             expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
         ),
     )
+    update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
 
     update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("120.00"), amount_confirmed=True))
@@ -1022,6 +1024,7 @@ def test_fuel_shortfall_rollback_aborts_when_snapshot_fails(monkeypatch, db):
             expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
         ),
     )
+    update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
 
     def fail_snapshot(_db, reason):

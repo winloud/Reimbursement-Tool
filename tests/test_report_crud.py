@@ -515,6 +515,7 @@ def test_report_category_options_include_custom_categories(db):
 
 def test_soft_delete_only_draft(db):
     report = create_report(db, ReportCreate(purpose="出差"))
+    update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
     # printed 不可删除
     with pytest.raises(HTTPException) as exc:
@@ -532,6 +533,7 @@ def test_soft_delete_hides_from_list(db):
 
 def test_update_reimbursed_report_forbidden(db):
     report = create_report(db, ReportCreate(purpose="出差"))
+    update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
     update_report_status(db, report.id, "reimbursed")
     with pytest.raises(HTTPException) as exc:

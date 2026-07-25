@@ -29,6 +29,7 @@ from backend.data_schema import (
     MIN_SUPPORTED_DATA_SCHEMA_VERSION,
 )
 from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
+from backend.schemas.report import REPORT_STATUS_VALUES
 from backend.schemas.maintenance import (
     BackupCleanupRead,
     BackupRead,
@@ -81,7 +82,7 @@ CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
 DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 LOG_TAIL_BYTES = 200 * 1024
-VALID_REPORT_STATUSES = {"draft", "printed", "reimbursed"}
+VALID_REPORT_STATUSES = set(REPORT_STATUS_VALUES)
 VALID_EXPENSE_CATEGORIES = {
     "transport_fare",
     "luggage",
@@ -712,8 +713,10 @@ def _append_business_integrity_checks(
     _append_duplicate_uid_checks(connection, tables, issues)
 
     if "expense_reports" in tables:
+        placeholders = ", ".join("?" for _item in REPORT_STATUS_VALUES)
         rows = connection.execute(
-            "SELECT id, status FROM expense_reports WHERE status NOT IN ('draft', 'printed', 'reimbursed')"
+            f"SELECT id, status FROM expense_reports WHERE status NOT IN ({placeholders})",
+            REPORT_STATUS_VALUES,
         ).fetchall()
         _rows_issue(
             issues,

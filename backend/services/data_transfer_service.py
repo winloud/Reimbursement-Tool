@@ -28,12 +28,13 @@ from backend.schemas.data_transfer import (
     ImportPreviewRead,
     ImportSummaryRead,
 )
+from backend.schemas.report import REPORT_STATUS_VALUES
 from backend.services.invoice_service import build_invoice_storage_path, calculate_file_hash
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
-SCHEMA_VERSION = 3
-SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, SCHEMA_VERSION}
+SCHEMA_VERSION = 4
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, SCHEMA_VERSION}
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -139,7 +140,7 @@ def _parse_export_statuses(value: str | None) -> set[str] | None:
     normalized = (value or "").strip()
     if not normalized:
         return None
-    valid_statuses = {"draft", "printed", "reimbursed"}
+    valid_statuses = set(REPORT_STATUS_VALUES)
     items = {item.strip() for item in normalized.split(",") if item.strip()}
     invalid = items - valid_statuses
     if invalid:
@@ -413,8 +414,11 @@ def _copy_zip_attachment_to_temp(archive: zipfile.ZipFile, attachment_path: str,
 
 
 def _report_field_payload(report_payload: dict) -> dict:
+    report_status = report_payload.get("status") or "draft"
+    if report_status not in REPORT_STATUS_VALUES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包包含无效报销单状态")
     return {
-        "status": report_payload.get("status") or "draft",
+        "status": report_status,
         "report_date": _parse_date(report_payload.get("report_date")),
         "department": report_payload.get("department"),
         "employee_name": report_payload.get("employee_name"),

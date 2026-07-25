@@ -216,7 +216,7 @@ def test_export_import_preserves_zero_manual_subsidy_and_accepts_v2_without_it(d
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
     exported_report = manifest["reports"][0]["report"]
-    assert manifest["schema_version"] == 3
+    assert manifest["schema_version"] == data_transfer_service.SCHEMA_VERSION
     assert exported_report["manual_subsidy_total"] == "0.00"
 
     preview = create_import_preview(db, upload_from_bytes(zip_bytes))
@@ -261,6 +261,30 @@ def test_export_import_preserves_zero_manual_subsidy_and_accepts_v2_without_it(d
     assert imported_v2.manual_subsidy_total is None
     assert imported_v2.subsidy_days == 2
     assert imported_v2.subsidy_total == Decimal("200.00")
+
+
+def test_export_import_preserves_checked_status_and_accepts_v3(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(db, ReportCreate(report_date=date(2026, 5, 12), purpose="已核对数据"))
+    report.status = "checked"
+    db.commit()
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(status="checked"))
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+
+    assert manifest["schema_version"] == 4
+    assert manifest["reports"][0]["report"]["status"] == "checked"
+
+    manifest["schema_version"] = 3
+    legacy_buffer = BytesIO()
+    with zipfile.ZipFile(legacy_buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    preview = create_import_preview(db, upload_from_bytes(legacy_buffer.getvalue()))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(ExpenseReport).order_by(ExpenseReport.id.desc()).first()
+    assert imported.status == "checked"
 
 
 @pytest.mark.parametrize("invalid_amount", ["-0.001", "NaN", "Infinity", "not-a-number"])

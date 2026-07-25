@@ -13,7 +13,11 @@ from backend.models.invoice import Invoice
 from backend.models.settings import Settings
 from backend.schemas.report import ReportCreate, ReportUpdate
 from backend.services import report_batch_service
-from backend.services.report_batch_service import batch_soft_delete_draft_reports, build_batch_report_pdf_zip
+from backend.services.report_batch_service import (
+    batch_soft_delete_draft_reports,
+    batch_update_report_status,
+    build_batch_report_pdf_zip,
+)
 from backend.services.report_service import create_report, update_report, update_report_status
 
 
@@ -33,6 +37,11 @@ def configure_pdf_paths(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.setattr("backend.services.pdf_generator.TEMPLATE_CANDIDATES", [template])
 
 
+def mark_submitted(db, report):
+    update_report_status(db, report.id, "checked")
+    return update_report_status(db, report.id, "printed")
+
+
 def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
     class FixedDate(date):
@@ -43,7 +52,7 @@ def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp
     monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印出差"))
-    update_report_status(db, printed.id, "printed")
+    mark_submitted(db, printed)
 
     zip_bytes, filename = build_batch_report_pdf_zip(db, [draft.id, printed.id])
 
@@ -153,7 +162,7 @@ def test_batch_pdf_rejects_insufficient_fuel_subsidy_without_marking_printed(db)
         build_batch_report_pdf_zip(db, [report.id])
 
     db.refresh(report)
-    assert exc.value.detail["failures"] == [{"report_id": report.id, "reason": "燃油补助发票金额不足，还差 ¥80.00，请补充足额发票后再打印"}]
+    assert exc.value.detail["failures"] == [{"report_id": report.id, "reason": "燃油补助发票金额不足，还差 ¥80.00，请补充足额发票后再下载或提交"}]
     assert report.status == "draft"
 
 
@@ -167,8 +176,8 @@ def test_batch_delete_only_deletes_draft_reports(monkeypatch, db):
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印"))
     reimbursed = create_report(db, ReportCreate(report_date=date(2026, 6, 6), purpose="已报销"))
-    update_report_status(db, printed.id, "printed")
-    update_report_status(db, reimbursed.id, "printed")
+    mark_submitted(db, printed)
+    mark_submitted(db, reimbursed)
     update_report_status(db, reimbursed.id, "reimbursed")
 
     result = batch_soft_delete_draft_reports(db, [draft.id, printed.id, reimbursed.id, 9999])
@@ -193,13 +202,68 @@ def test_batch_delete_skips_snapshot_when_no_report_will_be_deleted(monkeypatch,
         lambda _db, reason: snapshot_reasons.append(reason),
     )
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印"))
-    update_report_status(db, printed.id, "printed")
+    mark_submitted(db, printed)
 
     result = batch_soft_delete_draft_reports(db, [printed.id, 9999])
 
     assert result.deleted_count == 0
     assert result.skipped_count == 2
     assert snapshot_reasons == []
+
+
+def test_batch_status_updates_legal_items_and_skips_the_rest(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
+    draft = create_report(db, ReportCreate(purpose="草稿"))
+    checked = create_report(db, ReportCreate(purpose="已核对"))
+    submitted = create_report(db, ReportCreate(purpose="已提交"))
+    reimbursed = create_report(db, ReportCreate(purpose="已报销"))
+    update_report_status(db, checked.id, "checked")
+    mark_submitted(db, submitted)
+    mark_submitted(db, reimbursed)
+    update_report_status(db, reimbursed.id, "reimbursed")
+
+    result = batch_update_report_status(
+        db,
+        [draft.id, checked.id, submitted.id, reimbursed.id, 9999],
+        "checked",
+    )
+
+    for report in (draft, checked, submitted, reimbursed):
+        db.refresh(report)
+    assert result.target_status == "checked"
+    assert result.updated_count == 2
+    assert result.skipped_count == 3
+    assert {item.report_id for item in result.skipped} == {checked.id, reimbursed.id, 9999}
+    assert draft.status == "checked"
+    assert checked.status == "checked"
+    assert submitted.status == "checked"
+    assert reimbursed.status == "reimbursed"
+    assert snapshot_reasons == ["pre_batch_status_rollback"]
+
+
+def test_batch_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):
+    first = create_report(db, ReportCreate(purpose="提交一"))
+    second = create_report(db, ReportCreate(purpose="提交二"))
+    mark_submitted(db, first)
+    mark_submitted(db, second)
+
+    def fail_snapshot(_db, reason):
+        raise HTTPException(status_code=500, detail=f"{reason} failed")
+
+    monkeypatch.setattr(report_batch_service, "create_safety_snapshot", fail_snapshot)
+
+    with pytest.raises(HTTPException):
+        batch_update_report_status(db, [first.id, second.id], "checked")
+
+    db.refresh(first)
+    db.refresh(second)
+    assert first.status == "printed"
+    assert second.status == "printed"
 
 
 def test_batch_delete_aborts_when_snapshot_fails(monkeypatch, db):

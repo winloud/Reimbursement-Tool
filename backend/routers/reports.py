@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse, PaginationData
 from backend.schemas.report import (
+    REPORT_STATUS_VALUES,
     PdfPreviewRead,
     ReportBatchDeleteResult,
     ReportBatchPurgeResult,
     ReportBatchRequest,
     ReportBatchRestoreResult,
+    ReportBatchStatusRequest,
+    ReportBatchStatusResult,
     ReportCreate,
     ReportDetailRead,
     ReportFilterOptionsRead,
@@ -33,6 +36,7 @@ from backend.services.report_batch_service import (
     batch_purge_reports,
     batch_restore_deleted_reports,
     batch_soft_delete_draft_reports,
+    batch_update_report_status,
     build_batch_report_pdf_zip,
 )
 from backend.services.report_service import (
@@ -134,7 +138,7 @@ def parse_report_statuses(value: str | None) -> set[ReportStatus] | None:
     normalized = (value or "").strip()
     if not normalized:
         return None
-    valid_statuses = {"draft", "printed", "reimbursed"}
+    valid_statuses = set(REPORT_STATUS_VALUES)
     items = {item.strip() for item in normalized.split(",") if item.strip()}
     invalid = items - valid_statuses
     if invalid:
@@ -186,6 +190,17 @@ def post_batch_purge_reports(
     db: Session = Depends(get_db),
 ) -> ApiResponse[ReportBatchPurgeResult]:
     return ApiResponse(data=batch_purge_reports(db, payload.report_ids), message="批量彻底删除已处理")
+
+
+@router.patch("/batch/status", response_model=ApiResponse[ReportBatchStatusResult])
+def patch_batch_report_status(
+    payload: ReportBatchStatusRequest,
+    db: Session = Depends(get_db),
+) -> ApiResponse[ReportBatchStatusResult]:
+    return ApiResponse(
+        data=batch_update_report_status(db, payload.report_ids, payload.status),
+        message="批量状态修改已处理",
+    )
 
 
 @router.get("/{report_id}", response_model=ApiResponse[ReportDetailRead])

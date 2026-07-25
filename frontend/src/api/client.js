@@ -240,6 +240,11 @@ export const batchRestoreReports = async (reportIds) => {
   return response.data;
 };
 
+export const batchUpdateReportStatus = async (reportIds, status) => {
+  const response = await apiClient.patch("/api/reports/batch/status", { report_ids: reportIds, status });
+  return response.data;
+};
+
 export const updateReportStatus = async (id, status) => {
   const response = await apiClient.patch(`/api/reports/${id}/status`, { status });
   return response.data;
