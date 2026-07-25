@@ -66,6 +66,38 @@ def test_paper_invoice_values_are_persisted_and_included_in_totals(db):
     assert report_matches_filters(report, ReportFilters(has_attachment=False))
 
 
+def test_report_read_invoice_count_includes_electronic_and_paper_invoices(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 25),
+            trips=[
+                TripWrite(
+                    sort_order=1,
+                    depart_month=7,
+                    depart_day=25,
+                    arrive_month=7,
+                    arrive_day=25,
+                    paper_invoice_amount=Decimal("12.50"),
+                    paper_invoice_count=1,
+                )
+            ],
+        ),
+    )
+    report.invoices.append(
+        Invoice(
+            expense_category="luggage",
+            file_path="uploads/1/invoice.pdf",
+            file_type="application/pdf",
+            amount=Decimal("10.00"),
+            amount_confirmed=False,
+        )
+    )
+    db.flush()
+    assert report.invoice_count == 2
+    assert ReportRead.model_validate(report).invoice_count == 2
+
+
 def test_paper_invoice_amount_and_count_must_be_filled_together():
     with pytest.raises(ValidationError, match="纸质发票金额和张数需同时填写"):
         TripWrite(sort_order=1, depart_month=7, depart_day=25, arrive_month=7, arrive_day=25, paper_invoice_amount=Decimal("10.00"))

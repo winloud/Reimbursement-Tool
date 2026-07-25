@@ -32,11 +32,13 @@
 
 ### 重要改动
 - feat(report): 行程车船费、固定费用和自定义费用均可按需展开“添加纸质发票”输入区；默认卡片仅显示按钮，已录入后收起为金额/张数摘要。纸质发票不保存附件，直接与已确认电子发票共同计入汇总、PDF、统计、筛选和燃油补助发票缺口。
+- feat(report): 报销单管理列表在“报销总金额”后显示“发票总数”，合并统计未删除电子发票与已登记纸质发票。
 - feat(data): 新增纸质发票金额与张数字段，SQLite 数据结构升级至 v2；v2 导出包保留纸票数据，仍可导入 v1 包并以零值补齐。旧版本不得回退操作 v2 数据库，避免忽略纸票数据。
 - fix(ui): 全站内容区由 1440 / 1680 / 1920 的阶梯式最大宽度改为连续插值，保留 1920px 上限与居中 gutter。窗口化与全屏状态不再因跨过 2560px CSS 视口断点而使行程卡片突然缩窄。
 - fix(desktop): Chrome/Edge app-mode 捕获窗口状态时跳过最小化窗口；读取历史状态时自动丢弃 DPI 虚拟化后的最小化哨兵坐标，避免下次启动复用 `-21333/-21333` 等无效位置。
 
 ### 验证记录
+- 报销单列表发票总数：`tests/test_report_crud.py`，19 passed；前端生产构建 `npm run build` 成功（Vite 6.4.2，1709 modules）。
 - 纸质发票定向后端回归：`tests/test_report_crud.py tests/test_phase3.py tests/test_phase4.py tests/test_phase5_2.py tests/test_settings_fonts.py tests/test_maintenance_service.py`，145 passed（5 个既有弃用警告）。
 - 数据结构兼容与发布回归：`tests/test_desktop_dependencies.py tests/test_phase6_release.py tests/test_zip_upgrade_script.py tests/test_release_publish_state_machine.py tests/test_changelog_release_metadata.py tests/test_changelog_release_notes.py`，44 passed（7 个既有弃用警告）。
 - 前端工具测试：`frontend` 下执行 `node --test src/**/*.test.js`，73 passed；前端生产构建 `npm run build` 成功（Vite 6.4.2，1709 modules）。

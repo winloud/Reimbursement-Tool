@@ -199,7 +199,7 @@ export default function ReportList() {
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
   const isTrash = isTrashStatus(status);
-  const tableColumnCount = isTrash ? 10 : 9;
+  const tableColumnCount = isTrash ? 11 : 10;
 
   useEffect(() => {
     const nextState = reportListStateFromSearch(location.search);
@@ -886,7 +886,7 @@ export default function ReportList() {
         )}
 
         <TableContainer>
-          <Table sx={{ minWidth: isTrash ? 1040 : 960 }}>
+          <Table sx={{ minWidth: isTrash ? 1130 : 1050 }}>
             <TableHead>
               <TableRow>
                 <TableCell padding="checkbox">
@@ -904,6 +904,7 @@ export default function ReportList() {
                 <TableCell>出差事由</TableCell>
                 <TableCell align="center">补贴天数</TableCell>
                 <TableCell align="right">报销总金额</TableCell>
+                <TableCell align="center">发票总数</TableCell>
                 <TableCell align="center">状态</TableCell>
                 {isTrash && <TableCell>删除时间</TableCell>}
                 <TableCell align="right">操作</TableCell>
@@ -950,6 +951,7 @@ export default function ReportList() {
                       <TableCell align="right" sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace', fontWeight: 800 }}>
                         {formatAmount(report.total_amount)}
                       </TableCell>
+                      <TableCell align="center">{report.invoice_count ?? 0}</TableCell>
                       <TableCell align="center">
                         <Chip size="small" color={meta.color} label={meta.label} />
                       </TableCell>

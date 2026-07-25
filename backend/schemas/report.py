@@ -199,6 +199,7 @@ class ReportRead(ReportBase):
     id: int
     trip_start_date: date | None = None
     trip_end_date: date | None = None
+    invoice_count: int = 0
     status: ReportStatus
     created_at: datetime
     updated_at: datetime
