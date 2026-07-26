@@ -1,4 +1,7 @@
+import ipaddress
+import os
 import shutil
+import sys
 from datetime import datetime
 from decimal import Decimal
 from hashlib import sha1
@@ -30,6 +33,23 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
 def _invoice_file_path(relative_path: str | Path) -> Path:
     return uploaded_path(relative_path, UPLOAD_ROOT)
+
+
+def _is_loopback_host(host: str | None) -> bool:
+    normalized = (host or "").strip().lower().rstrip(".")
+    if normalized == "localhost":
+        return True
+    try:
+        address = ipaddress.ip_address(normalized.split("%", 1)[0])
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped is not None:
+        address = address.ipv4_mapped
+    return address.is_loopback
+
+
+def local_pdf_open_supported(client_host: str | None, request_host: str | None) -> bool:
+    return sys.platform == "win32" and _is_loopback_host(client_host) and _is_loopback_host(request_host)
 
 
 def detect_file_type(filename: str) -> str:
@@ -295,6 +315,25 @@ def get_invoice_or_404(db: Session, invoice_id: int) -> Invoice:
     if invoice is None or invoice.deleted_at is not None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="发票不存在")
     return invoice
+
+
+def open_invoice_pdf_locally(db: Session, invoice_id: int) -> None:
+    invoice = get_invoice_or_404(db, invoice_id)
+    if invoice.file_type != "pdf":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="仅 PDF 发票可使用系统默认程序打开")
+
+    file_path = _invoice_file_path(invoice.file_path)
+    if not file_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="发票原始文件不存在")
+
+    try:
+        startfile = getattr(os, "startfile")
+        startfile(str(file_path))
+    except (AttributeError, OSError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="无法调用系统默认 PDF 程序，请检查 Windows 的 PDF 文件关联设置",
+        ) from exc
 
 
 def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invoice:

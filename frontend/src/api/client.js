@@ -328,6 +328,16 @@ export const parseInvoice = async (id) => {
   return response.data;
 };
 
+export const getInvoiceOpenCapability = async () => {
+  const response = await apiClient.get("/api/invoices/open-capability");
+  return response.data;
+};
+
+export const openInvoiceLocally = async (id) => {
+  const response = await apiClient.post(`/api/invoices/${encodeURIComponent(id)}/open-local`);
+  return response.data;
+};
+
 export const deleteInvoice = async (id) => {
   const response = await apiClient.delete(`/api/invoices/${id}`);
   return response.data;

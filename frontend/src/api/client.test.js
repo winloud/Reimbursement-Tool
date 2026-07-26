@@ -1,7 +1,15 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { apiClient, discardRailTicketPreview, getInvoiceFileUrl, importRailTickets, previewRailTickets } from "./client.js";
+import {
+  apiClient,
+  discardRailTicketPreview,
+  getInvoiceFileUrl,
+  getInvoiceOpenCapability,
+  importRailTickets,
+  openInvoiceLocally,
+  previewRailTickets,
+} from "./client.js";
 
 describe("api client release defaults", () => {
   it("uses same-origin requests when VITE_API_BASE_URL is not set", () => {
@@ -35,6 +43,29 @@ describe("api client release defaults", () => {
       assert.deepEqual(JSON.parse(requests[1].data), { token: "ticket-token", tickets: [], groups: [] });
       assert.equal(requests[2].url, "/api/tickets/preview/ticket-token");
       assert.equal(requests[2].params.report_id, 17);
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("queries local PDF capability and requests a system open", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return { data: { success: true, data: { opened: true } }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    try {
+      const capability = await getInvoiceOpenCapability();
+      const opened = await openInvoiceLocally(27);
+
+      assert.equal(capability.success, true);
+      assert.equal(opened.success, true);
+      assert.equal(requests[0].method, "get");
+      assert.equal(requests[0].url, "/api/invoices/open-capability");
+      assert.equal(requests[1].method, "post");
+      assert.equal(requests[1].url, "/api/invoices/27/open-local");
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

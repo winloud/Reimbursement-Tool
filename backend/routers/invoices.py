@@ -1,13 +1,28 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, File, Form, Path, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Path, Request, UploadFile, status
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse
-from backend.schemas.invoice import InvoiceParsedData, InvoiceRead, InvoiceUpdate, InvoiceUploadResult
-from backend.services.invoice_service import get_invoice_or_404, parse_existing_invoice, soft_delete_invoice, update_invoice, upload_invoices
+from backend.schemas.invoice import (
+    InvoiceLocalOpenRead,
+    InvoiceOpenCapabilityRead,
+    InvoiceParsedData,
+    InvoiceRead,
+    InvoiceUpdate,
+    InvoiceUploadResult,
+)
+from backend.services.invoice_service import (
+    get_invoice_or_404,
+    local_pdf_open_supported,
+    open_invoice_pdf_locally,
+    parse_existing_invoice,
+    soft_delete_invoice,
+    update_invoice,
+    upload_invoices,
+)
 from backend.runtime_paths import uploaded_path
 
 router = APIRouter(prefix="/api/invoices", tags=["invoices"])
@@ -28,6 +43,28 @@ def post_invoice_upload(
     ]
     message = "发票已上传" if len(results) <= 1 else f"已从文件中识别并上传 {len(results)} 张发票"
     return ApiResponse(data=results, message=message)
+
+
+def _request_allows_local_pdf_open(request: Request) -> bool:
+    client_host = request.client.host if request.client else None
+    return local_pdf_open_supported(client_host, request.url.hostname)
+
+
+@router.get("/open-capability", response_model=ApiResponse[InvoiceOpenCapabilityRead])
+def get_invoice_open_capability(request: Request) -> ApiResponse[InvoiceOpenCapabilityRead]:
+    return ApiResponse(data=InvoiceOpenCapabilityRead(local_pdf_open_supported=_request_allows_local_pdf_open(request)))
+
+
+@router.post("/{invoice_id}/open-local", response_model=ApiResponse[InvoiceLocalOpenRead])
+def post_invoice_open_local(
+    invoice_id: Annotated[int, Path(ge=1)],
+    request: Request,
+    db: Session = Depends(get_db),
+) -> ApiResponse[InvoiceLocalOpenRead]:
+    if not _request_allows_local_pdf_open(request):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="本地 PDF 打开仅可用于 Windows 本机访问")
+    open_invoice_pdf_locally(db, invoice_id)
+    return ApiResponse(data=InvoiceLocalOpenRead(opened=True), message="已调用系统默认 PDF 程序")
 
 
 @router.get("/{invoice_id}/file")
