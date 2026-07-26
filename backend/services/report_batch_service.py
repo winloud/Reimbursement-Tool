@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import date, datetime
+from datetime import datetime
 from io import BytesIO
 import zipfile
 
@@ -24,7 +24,6 @@ from backend.services.report_service import (
     REPORT_STATUS_LABELS,
     REPORT_STATUS_ORDER,
     ensure_fuel_subsidy_printable,
-    mark_report_pdf_exported,
     purge_report,
     restore_deleted_report,
     validate_status_transition,
@@ -67,48 +66,39 @@ def _unique_zip_filename(filename: str, report_id: int, used_names: set[str]) ->
 def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[bytes, str]:
     selected_ids = unique_report_ids(report_ids)
     settings = get_or_create_settings(db)
-    exported_on = date.today()
     failures: list[dict[str, object]] = []
     pdf_items: list[tuple[ExpenseReport, bytes]] = []
 
-    try:
-        for report_id in selected_ids:
-            report = _active_report_by_id(db, report_id)
-            if report is None:
-                failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
-                continue
-            try:
-                ensure_fuel_subsidy_printable(report)
-                mark_report_pdf_exported(report, exported_on, mark_printed=True)
-                db.flush()
-                pdf_items.append(
-                    (
+    for report_id in selected_ids:
+        report = _active_report_by_id(db, report_id)
+        if report is None:
+            failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
+            continue
+        try:
+            ensure_fuel_subsidy_printable(report)
+            pdf_items.append(
+                (
+                    report,
+                    build_merged_report_pdf(
                         report,
-                        build_merged_report_pdf(
-                            report,
-                            settings.pdf_fill_font_key,
-                            settings.double_print_vat_special_invoices,
-                        ),
-                    )
+                        settings.pdf_fill_font_key,
+                        settings.double_print_vat_special_invoices,
+                    ),
                 )
-            except HTTPException as exc:
-                failures.append({"report_id": report_id, "reason": str(exc.detail)})
+            )
+        except HTTPException as exc:
+            failures.append({"report_id": report_id, "reason": str(exc.detail)})
 
-        if failures:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"failures": failures})
+    if failures:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail={"failures": failures})
 
-        buffer = BytesIO()
-        used_names: set[str] = set()
-        with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
-            for report, pdf_bytes in pdf_items:
-                filename = _unique_zip_filename(build_pdf_filename(report), report.id, used_names)
-                used_names.add(filename)
-                archive.writestr(filename, pdf_bytes)
-
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    buffer = BytesIO()
+    used_names: set[str] = set()
+    with zipfile.ZipFile(buffer, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        for report, pdf_bytes in pdf_items:
+            filename = _unique_zip_filename(build_pdf_filename(report), report.id, used_names)
+            used_names.add(filename)
+            archive.writestr(filename, pdf_bytes)
 
     filename = f"报销单批量下载-{datetime.now().strftime('%Y%m%d%H%M%S')}.zip"
     return buffer.getvalue(), filename

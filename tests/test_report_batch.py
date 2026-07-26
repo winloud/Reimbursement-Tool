@@ -42,14 +42,8 @@ def mark_submitted(db, report):
     return update_report_status(db, report.id, "printed")
 
 
-def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp_path, db):
+def test_batch_pdf_success_returns_zip_without_mutating_reports(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
-    class FixedDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 6, 24)
-
-    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印出差"))
     mark_submitted(db, printed)
@@ -60,14 +54,14 @@ def test_batch_pdf_success_returns_zip_and_marks_drafts_printed(monkeypatch, tmp
     db.refresh(printed)
     assert filename.startswith("报销单批量下载-")
     assert filename.endswith(".zip")
-    assert draft.status == "printed"
+    assert draft.status == "draft"
     assert printed.status == "printed"
-    assert draft.report_date == date(2026, 6, 24)
+    assert draft.report_date == date(2026, 6, 4)
     assert printed.report_date == date(2026, 6, 5)
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         names = archive.namelist()
         assert len(names) == 2
-        assert any(name.startswith("2026-06-24-草稿出差-") for name in names)
+        assert any(name.startswith("2026-06-04-草稿出差-") for name in names)
         assert any(name.startswith("2026-06-05-已打印出差-") for name in names)
         for name in names:
             assert name.endswith(".pdf")
@@ -102,12 +96,6 @@ def test_batch_pdf_uses_vat_special_double_print_setting(monkeypatch, db):
 
 def test_batch_pdf_failure_keeps_all_statuses_unchanged(monkeypatch, tmp_path, db):
     configure_pdf_paths(monkeypatch, tmp_path)
-    class FixedDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 6, 24)
-
-    monkeypatch.setattr("backend.services.report_batch_service.date", FixedDate)
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     invalid = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="未确认发票"))
     db.add(

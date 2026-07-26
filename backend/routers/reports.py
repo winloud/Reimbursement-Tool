@@ -47,7 +47,6 @@ from backend.services.report_service import (
     list_report_category_options,
     list_deleted_reports,
     list_reports,
-    mark_report_pdf_exported,
     purge_report,
     restore_deleted_report,
     soft_delete_report,
@@ -218,14 +217,7 @@ def get_report_pdf_preview(
 ) -> ApiResponse[PdfPreviewRead]:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    try:
-        mark_report_pdf_exported(report, date.today())
-        db.flush()
-        pages = render_report_preview_pages(report, settings.pdf_fill_font_key)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    pages = render_report_preview_pages(report, settings.pdf_fill_font_key)
     return ApiResponse(data=PdfPreviewRead(pages=pages), message="PDF 预览已生成")
 
 
@@ -236,20 +228,13 @@ def get_report_pdf(
 ) -> Response:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    try:
-        ensure_fuel_subsidy_printable(report)
-        mark_report_pdf_exported(report, date.today(), mark_printed=True)
-        db.flush()
-        pdf_bytes = build_merged_report_pdf(
-            report,
-            settings.pdf_fill_font_key,
-            settings.double_print_vat_special_invoices,
-        )
-        filename = build_pdf_filename(report)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    ensure_fuel_subsidy_printable(report)
+    pdf_bytes = build_merged_report_pdf(
+        report,
+        settings.pdf_fill_font_key,
+        settings.double_print_vat_special_invoices,
+    )
+    filename = build_pdf_filename(report)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

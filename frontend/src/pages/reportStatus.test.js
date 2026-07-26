@@ -3,6 +3,9 @@ import test from "node:test";
 
 import {
   canAccessReportPdf,
+  getBatchReportStatusActions,
+  getHomogeneousReportStatus,
+  getReportStatusActions,
   getReportStatusLabel,
   REPORT_STATUS_OPTIONS,
   STATUS_ACTIONS,
@@ -35,4 +38,31 @@ test("all report workflow statuses allow PDF preview and download", () => {
     assert.equal(canAccessReportPdf(value), true, `${value} should allow PDF access`);
   }
   assert.equal(canAccessReportPdf("unknown"), false);
+});
+
+test("status action helpers expose only legal adjacent targets", () => {
+  assert.deepEqual(getReportStatusActions("checked").map((item) => item.target), ["printed", "draft"]);
+  assert.deepEqual(getReportStatusActions("unknown"), []);
+  assert.equal(getHomogeneousReportStatus([{ status: "draft" }, { status: "draft" }]), "draft");
+  assert.equal(getHomogeneousReportStatus([{ status: "draft" }, { status: "checked" }]), null);
+  assert.equal(getHomogeneousReportStatus([]), null);
+});
+
+test("mixed batch actions report eligible and skipped counts", () => {
+  const actions = getBatchReportStatusActions([
+    { status: "draft" },
+    { status: "checked" },
+    { status: "printed" },
+    { status: "reimbursed" },
+  ]);
+
+  assert.deepEqual(
+    actions.map((action) => [action.target, action.eligibleCount, action.skippedCount]),
+    [
+      ["draft", 1, 3],
+      ["checked", 2, 2],
+      ["printed", 1, 3],
+      ["reimbursed", 1, 3],
+    ],
+  );
 });

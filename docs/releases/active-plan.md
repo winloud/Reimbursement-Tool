@@ -33,10 +33,11 @@
 - 用户可见流程为“草稿 → 已核对 → 已提交 → 已报销”；已报销表示打款完成、流程结案，不允许回退。
 - 手工状态操作按相邻节点流转：草稿可标记为已核对；已核对可提交或退回草稿；已提交可标记为已报销或退回已核对。
 - 原内部状态值 `printed` 继续保留，仅将用户可见名称由“已打印”调整为“已提交”；既有记录无需转换即可显示为已提交。
-- 沿用既有 PDF 下载兼容行为：草稿单张或批量下载成功后仍自动写入内部 `printed` 状态，界面显示为已提交。
+- PDF 预览、单张下载和批量下载均为纯输出操作，不修改报销单状态或报销日期；状态由用户手工流转，为后续自动化 workflow 保留清晰边界。
 
 ### 批量操作与数据兼容
-- 报销单管理列表可勾选多张报销单并选择目标状态；只更新符合状态机规则的记录，同状态、非法跨级、已报销、已删除或不存在的记录逐条提示并跳过。
+- 列表中的可流转状态徽标可直接打开相邻状态操作；单一状态的批量选择直接显示主要下一步，混合状态选择按目标展示可更新与跳过数量。只更新符合状态机规则的记录，同状态、非法跨级、已报销、已删除或不存在的记录逐条提示并跳过。
+- 流转到“已报销”前必须二次确认，确认框默认聚焦“取消”；已报销状态保持只读，不提供回退操作。
 - 批量回退只创建一次安全快照；快照失败时整批中止，不产生部分回退。
 - 新增状态值会使旧版本无法完整识别新版数据，SQLite 数据域版本由 v3 升级至 v4；升级保留全部旧数据，继续兼容 v1-v3 数据包导入。
 - 数据域版本 `v4` 与应用版本号相互独立：本功能是兼容旧记录的新增能力，应用版本仍按 minor 发布为 `v1.3.0`，不升级到 `v2.0.0`。
@@ -96,6 +97,9 @@
 ## 完成记录
 
 ### 重要改动
+- feat(report): 报销单列表将状态徽标改为就地流转入口；同状态批量选择直接展示主要下一步，混合状态选择展示各目标的可更新/跳过数量，结案操作保留二次确认。
+- fix(report): PDF 预览、单张下载和批量下载不再联动状态或报销日期，下载一次即可触发文件保存，状态完全由用户手工修改。
+- fix(release): Windows 本地包的 `portable-release.json` 与 `current-version.json` 改为从后端数据结构常量读取兼容版本，避免应用已升级至 v4 时打包清单仍错误标记为 v1。
 - fix(report): 报销单录入页将 PDF 预览、下载权限与“已报销不可编辑”解耦；草稿、已核对、已提交、已报销均可使用 PDF 操作，未确认发票和燃油补助发票不足的既有校验保持不变。
 - fix(pdf): PDF“其他费用-项目”列最大字号由 10.2pt 限制为 9.7pt，较长项目名称继续沿用现有宽度自适应缩小逻辑。
 - feat(report): 报销流程扩展为“草稿、已核对、已提交、已报销”；原内部 `printed` 值保持兼容并统一显示为“已提交”，录入页按相邻节点提供前进和退回操作，已报销继续作为不可回退的结案状态。
@@ -111,6 +115,15 @@
 - fix(desktop): Chrome/Edge app-mode 捕获窗口状态时跳过最小化窗口；读取历史状态时自动丢弃 DPI 虚拟化后的最小化哨兵坐标，避免下次启动复用 `-21333/-21333` 等无效位置。
 
 ### 验证记录
+- 最终本地预览包（含单行状态更新后的选择清理）：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 003 -ReleaseDate 20260726 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260726-003.zip`（45.97 MB）；`002` 按不覆盖、不删除既有 ZIP 的发布规则保留为中间验证产物。
+- preview-20260726-003 内容校验：264 个 ZIP 条目，启动器、版本目录和清单均存在；应用版本为 `1.3.0-preview-20260726-003`，数据结构为 v4、支持 v1-v4；未包含 data、uploads、logs、browser-profile、vendor、window-state.json、测试目录或既有 release 产物；SHA-256 为 `7FEF66A8425F12D4C4EB524B974262F016F02814A443E66ABE972452E18A1FFC`。
+- 本地预览包（PDF 与状态解耦、列表状态交互简化）：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 002 -ReleaseDate 20260726 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260726-002.zip`（45.97 MB）。
+- preview-20260726-002 内容校验：264 个 ZIP 条目，启动器、版本目录和清单均存在；应用版本为 `1.3.0-preview-20260726-002`，数据结构为 v4、支持 v1-v4；未包含 data、uploads、logs、browser-profile、vendor、window-state.json、测试目录或既有 release 产物；SHA-256 为 `AD1BD1CE873F0E43F7AD7A3378B955ADCD60A950335EFFF6368D2DC71B444E69`。
+- PDF 与状态解耦完整回归：`python -m pytest -q`，331 passed、2 skipped（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，83 passed；`npm run build` 成功（Vite 6.4.2，1710 modules，仅有既有大 chunk 提示）。
+- 状态交互浏览器验收：单张状态徽标仅展示合法相邻流转；同状态批量选择直达主要下一步，混合选择正确显示可更新/跳过数量；“已报销”结案确认在过渡结束后默认聚焦“取消”；草稿下载后状态仍为 `draft`、报销日期仍为空。桌面与 390×844 下无页面级横向溢出，控制台仅有既有 React Router v7 future flag 提示。
+- 本地预览包（PDF 操作、字号及 v4 清单修复）：`scripts/build_release.ps1 -PreviewBuild -Version 1.3.0 -PreviewSerial 001 -ReleaseDate 20260726 -SkipDependencyInstall -ReuseReleaseVenv` 成功，生成 `release/报销管理-v1.3.0-preview-20260726-001.zip`（45.22 MB）。
+- preview-20260726-001 内容校验：264 个 ZIP 条目，启动器、版本目录和清单均存在；应用版本为 `1.3.0-preview-20260726-001`，数据结构为 v4、支持 v1-v4；未包含 data、uploads、logs、browser-profile、vendor、window-state.json、测试目录或既有 release 产物；SHA-256 为 `22AB110AA94ED709EB313505926F98086C60842A81240822AF5EB14C5B6D9D21`。
+- 发布清单定向回归：`python -m pytest tests/test_phase6_release.py tests/test_zip_upgrade_script.py -q`，9 passed（7 个既有弃用警告）；`build_release.ps1` PowerShell 语法检查通过。
 - PDF 操作浏览器验收：草稿、已核对、已提交、已报销四种录入页的“预览”“下载”按钮均可用；已报销页面仍保持字段只读，浏览器控制台无错误。
 - PDF 状态与字号定向回归：`python -m pytest tests/test_phase4.py -q`，30 passed（5 个既有弃用警告）；覆盖已核对、已报销状态下预览和下载成功且状态/日期不变，并断言“其他费用-项目”列最大字号为 9.7pt。
 - 本轮完整回归：`python -m pytest -q`，331 passed、2 skipped（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，81 passed；`npm run build` 成功（Vite 6.4.2，1710 modules，仅有既有大 chunk 提示）。
@@ -141,6 +154,8 @@
 - `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG
+- 已在 `Unreleased / Changed` 中记录 PDF 输出与状态流转解耦，以及列表单张/批量状态操作简化。
+- 已在 `Unreleased / Fixed` 中记录本地发布包数据兼容清单与应用数据结构版本不同步的问题。
 - 已在 `Unreleased / Fixed` 中记录四种报销状态均可预览和下载 PDF，以及“其他费用-项目”列最大字号限制为 9.7pt。
 - 已在 `Unreleased` 的 `Added` / `Changed` 中记录四段报销状态、批量修改状态，以及“已打印”更名为“已提交”的兼容策略。
 - 已在 `Unreleased` 的 `Added` 中记录途中补贴自动计算 / 人工核定总额，以及人工模式 PDF 仅输出最终总额。

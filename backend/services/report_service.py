@@ -521,19 +521,6 @@ def report_trip_date_bounds(report: ExpenseReport) -> tuple[date | None, date | 
     return min(item.depart for item in trip_ranges), max(item.arrive for item in trip_ranges)
 
 
-def mark_report_pdf_exported(
-    report: ExpenseReport,
-    exported_on: date | None = None,
-    *,
-    mark_printed: bool = False,
-) -> None:
-    if report.status != "draft":
-        return
-    report.report_date = exported_on or date.today()
-    if mark_printed:
-        report.status = "printed"
-
-
 def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
     if trip_start is None and trip_end is None:
         return True

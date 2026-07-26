@@ -28,3 +28,24 @@ export const STATUS_ACTIONS = {
 export const canAccessReportPdf = (status) => Object.prototype.hasOwnProperty.call(STATUS_META, status);
 
 export const getReportStatusLabel = (status) => STATUS_META[status]?.label || status;
+
+export const getReportStatusActions = (status) => STATUS_ACTIONS[status] || [];
+
+export const getHomogeneousReportStatus = (reports) => {
+  if (reports.length === 0) return null;
+  const firstStatus = reports[0].status;
+  return reports.every((report) => report.status === firstStatus) ? firstStatus : null;
+};
+
+export const getBatchReportStatusActions = (reports) =>
+  REPORT_STATUS_OPTIONS.map((option) => {
+    const eligibleCount = reports.filter((report) =>
+      getReportStatusActions(report.status).some((action) => action.target === option.value),
+    ).length;
+    return {
+      target: option.value,
+      label: `改为${option.label}`,
+      eligibleCount,
+      skippedCount: reports.length - eligibleCount,
+    };
+  }).filter((action) => action.eligibleCount > 0);
