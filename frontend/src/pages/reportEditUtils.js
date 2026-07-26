@@ -6,6 +6,7 @@ export const emptyForm = {
   employee_name: "",
   purpose: "",
   daily_subsidy: "0.00",
+  manual_subsidy_total: null,
   advance_date_month: "",
   advance_date_day: "",
   advance_amount: "0.00",
@@ -104,21 +105,6 @@ export const getExpenseCategoryOptions = (expenseItems = []) => {
     return true;
   });
   return [...EXPENSE_CATEGORIES, ...uniqueCustomItems];
-};
-
-export const STATUS_META = {
-  draft: { label: "草稿", color: "default" },
-  printed: { label: "已打印", color: "info" },
-  reimbursed: { label: "已报销", color: "success" },
-};
-
-export const STATUS_ACTIONS = {
-  draft: [{ target: "printed", label: "标记为已打印", color: "primary" }],
-  printed: [
-    { target: "reimbursed", label: "标记为已报销", color: "success" },
-    { target: "draft", label: "退回草稿", color: "inherit" },
-  ],
-  reimbursed: [],
 };
 
 export const formatAmount = (value) =>
@@ -229,6 +215,16 @@ export const validatePaperInvoice = (item = {}) => {
   if (!Number.isFinite(amount) || amount < 0) return "请输入有效的纸质发票金额";
   if (!Number.isInteger(count) || count < 0) return "纸质发票张数必须是非负整数";
   if ((amount === 0) !== (count === 0)) return "纸质发票金额和张数需同时填写";
+  return "";
+};
+
+export const validateManualSubsidyTotal = (value) => {
+  const text = String(value ?? "").trim();
+  if (!text) return "请输入人工核定补贴总额";
+  const amount = Number(text);
+  if (!Number.isFinite(amount)) return "请输入有效的人工核定补贴总额";
+  if (amount < 0) return "人工核定补贴总额不能为负数";
+  if (!/^\d+(?:\.\d{1,2})?$/.test(text)) return "人工核定补贴总额最多保留两位小数";
   return "";
 };
 
@@ -392,9 +388,18 @@ export const calculateSubsidyDays = (reportDate, trips) => {
   return merged.reduce((sum, interval) => sum + daysBetween(interval.start, interval.end) + 1, 0);
 };
 
-export const calculateSummary = ({ reportDate, dailySubsidy, advanceAmount, trips, invoices, expenseItems = [] }) => {
+export const calculateSummary = ({
+  reportDate,
+  dailySubsidy,
+  manualSubsidyTotal = null,
+  advanceAmount,
+  trips,
+  invoices,
+  expenseItems = [],
+}) => {
   const subsidyDays = calculateSubsidyDays(reportDate, trips);
-  const subsidyTotal = subsidyDays * Number(dailySubsidy || 0);
+  const hasManualSubsidy = manualSubsidyTotal !== null && manualSubsidyTotal !== undefined;
+  const subsidyTotal = hasManualSubsidy ? toFiniteAmount(manualSubsidyTotal) : subsidyDays * Number(dailySubsidy || 0);
   const transportElectronicTotal = invoices
     .filter(
       (invoice) =>
@@ -453,6 +458,8 @@ const buildBasePayload = (form, { includePurpose = true } = {}) => ({
   employee_name: nullableText(form.employee_name),
   purpose: includePurpose ? nullableText(form.purpose) : null,
   daily_subsidy: form.daily_subsidy === "" ? "0.00" : form.daily_subsidy,
+  manual_subsidy_total:
+    form.manual_subsidy_total === null || form.manual_subsidy_total === undefined ? null : form.manual_subsidy_total,
   advance_date_month: nullableNumber(form.advance_date_month),
   advance_date_day: nullableNumber(form.advance_date_day),
   advance_amount: form.advance_amount === "" ? "0.00" : form.advance_amount,
@@ -557,6 +564,9 @@ const moneyChanged = (current, initial) => Number(current || 0) !== Number(initi
 export const isEmptyDraft = ({ form, defaults, trips, invoices, expenseItems = [] }) => {
   if (trips.length > 0 || invoices.length > 0) return false;
   if (expenseItems.some(hasPaperInvoice)) return false;
+  const hasCurrentManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
+  const hadDefaultManualSubsidy = defaults.manual_subsidy_total !== null && defaults.manual_subsidy_total !== undefined;
+  if (hasCurrentManualSubsidy || hadDefaultManualSubsidy) return false;
   if (textChanged(form.purpose, "")) return false;
   if (textChanged(form.report_date, defaults.report_date)) return false;
   if (textChanged(form.department, defaults.department)) return false;

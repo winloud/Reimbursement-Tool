@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -15,6 +15,7 @@ import {
   DialogTitle,
   FormControlLabel,
   InputAdornment,
+  Menu,
   MenuItem,
   Stack,
   Tab,
@@ -36,11 +37,13 @@ import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import {
   batchDeleteReports,
   batchPurgeReports,
   batchRestoreReports,
+  batchUpdateReportStatus,
   deleteReport,
   downloadDataExport,
   downloadReportBatchPdf,
@@ -53,10 +56,12 @@ import {
   previewDataImport,
   purgeReport,
   restoreReport,
+  updateReportStatus,
 } from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 import {
   formatBatchPdfFailureMessage,
+  getSubsidyDaysLabel,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterCategorySx,
@@ -68,20 +73,22 @@ import {
   toggleCurrentPageSelection,
   toggleReportSelection,
 } from "./reportListUtils";
+import {
+  getBatchReportStatusActions,
+  getHomogeneousReportStatus,
+  getReportStatusActions,
+  getReportStatusLabel,
+  STATUS_META,
+} from "./reportStatus";
 
 const STATUS_TABS = [
   { value: "all", label: "全部" },
   { value: "draft", label: "草稿" },
-  { value: "printed", label: "已打印" },
+  { value: "checked", label: "已核对" },
+  { value: "printed", label: "已提交" },
   { value: "reimbursed", label: "已报销" },
   { value: "trash", label: "回收站" },
 ];
-
-const STATUS_META = {
-  draft: { label: "草稿", color: "default" },
-  printed: { label: "已打印", color: "info" },
-  reimbursed: { label: "已报销", color: "success" },
-};
 
 const INVOICE_STATE_OPTIONS = [
   { value: "all", label: "全部发票" },
@@ -189,6 +196,13 @@ export default function ReportList() {
   });
   const [downloadingId, setDownloadingId] = useState(null);
   const [batchLoading, setBatchLoading] = useState(false);
+  const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
+  const [statusUpdatingId, setStatusUpdatingId] = useState(null);
+  const [statusMenuAnchor, setStatusMenuAnchor] = useState(null);
+  const [statusMenuReport, setStatusMenuReport] = useState(null);
+  const [batchStatusMenuAnchor, setBatchStatusMenuAnchor] = useState(null);
+  const [pendingFinalStatus, setPendingFinalStatus] = useState(null);
+  const finalStatusCancelRef = useRef(null);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -300,6 +314,21 @@ export default function ReportList() {
   const selectedCount = selectedIds.length;
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedSet.has(id));
   const somePageSelected = pageIds.some((id) => selectedSet.has(id));
+  const selectedReports = items.filter((item) => selectedSet.has(item.id));
+  const selectedReportsComplete = selectedReports.length === selectedCount;
+  const homogeneousSelectedStatus = selectedReportsComplete ? getHomogeneousReportStatus(selectedReports) : null;
+  const homogeneousStatusActions = homogeneousSelectedStatus
+    ? getReportStatusActions(homogeneousSelectedStatus)
+    : [];
+  const primaryBatchStatusAction = homogeneousStatusActions[0] || null;
+  const batchStatusMenuActions = homogeneousSelectedStatus
+    ? homogeneousStatusActions.slice(1).map((action) => ({
+        ...action,
+        eligibleCount: selectedCount,
+        skippedCount: 0,
+      }))
+    : getBatchReportStatusActions(selectedReports);
+  const statusMenuActions = getReportStatusActions(statusMenuReport?.status);
 
   const handleToggleReport = (reportId) => {
     setSelectedIds((current) => toggleReportSelection(current, reportId));
@@ -353,7 +382,6 @@ export default function ReportList() {
       const res = await getReportPdfPreview(report.id);
       if (res.success) {
         setPreviewState({ open: true, report, pages: res.data.pages || [], loading: false, error: "" });
-        await fetchReports();
       } else {
         setPreviewState({ open: true, report, pages: [], loading: false, error: res.message || "预览失败" });
       }
@@ -369,7 +397,6 @@ export default function ReportList() {
     try {
       const { blob, filename } = await downloadReportPdf(report.id);
       saveBlob(blob, filename || "expense-report.pdf");
-      await fetchReports();
     } catch (err) {
       setError(errorMessage(err, "下载失败"));
     } finally {
@@ -386,13 +413,110 @@ export default function ReportList() {
       const { blob, filename } = await downloadReportBatchPdf(selectedIds);
       saveBlob(blob, filename || "expense-reports.zip");
       setBatchResult({ severity: "success", message: `已下载 ${selectedIds.length} 张报销单 PDF。` });
-      setSelectedIds([]);
-      await fetchReports();
     } catch (err) {
       setError(errorMessage(err, "批量下载失败"));
     } finally {
       setBatchLoading(false);
     }
+  };
+
+  const handleStatusMenuOpen = (event, report) => {
+    event.stopPropagation();
+    setStatusMenuAnchor(event.currentTarget);
+    setStatusMenuReport(report);
+  };
+
+  const handleStatusMenuClose = () => {
+    setStatusMenuAnchor(null);
+    setStatusMenuReport(null);
+  };
+
+  const handleSingleStatusUpdate = async (report, target) => {
+    if (!report || !target) return;
+    setStatusUpdatingId(report.id);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await updateReportStatus(report.id, target);
+      if (res.success) {
+        setBatchResult({
+          severity: "success",
+          message: `报销单「${report.purpose || `#${report.id}`}」已改为${getReportStatusLabel(target)}`,
+        });
+        setSelectedIds((current) => current.filter((id) => id !== report.id));
+        await fetchReports();
+      } else {
+        setError(res.message || "修改状态失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "修改状态失败"));
+    } finally {
+      setStatusUpdatingId(null);
+    }
+  };
+
+  const handleSingleStatusRequest = (report, target) => {
+    handleStatusMenuClose();
+    if (target === "reimbursed") {
+      setPendingFinalStatus({ mode: "single", report, target });
+      return;
+    }
+    handleSingleStatusUpdate(report, target);
+  };
+
+  const handleBatchStatusUpdate = async (target, reportIds = selectedIds) => {
+    if (reportIds.length === 0 || !target) return;
+    setBatchStatusUpdating(true);
+    setError("");
+    setBatchResult(null);
+    try {
+      const res = await batchUpdateReportStatus(reportIds, target);
+      if (res.success) {
+        const skippedText = res.data.skipped_count
+          ? `，跳过 ${res.data.skipped_count} 张：${res.data.skipped
+              .map((item) => `${item.report_id} ${item.reason}`)
+              .join("；")}`
+          : "";
+        setBatchResult({
+          severity: res.data.skipped_count ? "warning" : "success",
+          message: `已将 ${res.data.updated_count} 张报销单改为${getReportStatusLabel(target)}${skippedText}`,
+        });
+        setSelectedIds([]);
+        await fetchReports();
+      } else {
+        setError(res.message || "批量修改状态失败");
+      }
+    } catch (err) {
+      setError(errorMessage(err, "批量修改状态失败"));
+    } finally {
+      setBatchStatusUpdating(false);
+    }
+  };
+
+  const handleBatchStatusRequest = (action) => {
+    if (!action) return;
+    setBatchStatusMenuAnchor(null);
+    if (action.target === "reimbursed") {
+      setPendingFinalStatus({
+        mode: "batch",
+        target: action.target,
+        reportIds: [...selectedIds],
+        eligibleCount: action.eligibleCount,
+        skippedCount: action.skippedCount,
+      });
+      return;
+    }
+    handleBatchStatusUpdate(action.target);
+  };
+
+  const handleConfirmFinalStatus = async () => {
+    if (!pendingFinalStatus) return;
+    if (pendingFinalStatus.mode === "single") {
+      await handleSingleStatusUpdate(pendingFinalStatus.report, pendingFinalStatus.target);
+    } else {
+      await handleBatchStatusUpdate(pendingFinalStatus.target, pendingFinalStatus.reportIds);
+    }
+    setPendingFinalStatus(null);
   };
 
   const handleConfirmBatchDelete = async (action) => {
@@ -638,7 +762,14 @@ export default function ReportList() {
       {batchResult && <Alert severity={batchResult.severity}>{batchResult.message}</Alert>}
 
       <Card>
-        <Tabs value={status} onChange={handleStatusChange} sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}>
+        <Tabs
+          value={status}
+          onChange={handleStatusChange}
+          variant="scrollable"
+          scrollButtons="auto"
+          allowScrollButtonsMobile
+          sx={{ px: 2, borderBottom: 1, borderColor: "divider" }}
+        >
           {STATUS_TABS.map((tab) => (
             <Tab key={tab.value} value={tab.value} label={tab.label} />
           ))}
@@ -857,12 +988,48 @@ export default function ReportList() {
                 </>
               ) : (
                 <>
+                  {primaryBatchStatusAction && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color={primaryBatchStatusAction.color}
+                      startIcon={<SwapHorizIcon />}
+                      onClick={() =>
+                        handleBatchStatusRequest({
+                          ...primaryBatchStatusAction,
+                          eligibleCount: selectedCount,
+                          skippedCount: 0,
+                        })
+                      }
+                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+                    >
+                      {batchStatusUpdating ? "修改中..." : primaryBatchStatusAction.label}
+                    </Button>
+                  )}
+                  {batchStatusMenuActions.length > 0 && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      endIcon={<ExpandMoreIcon />}
+                      onClick={(event) => setBatchStatusMenuAnchor(event.currentTarget)}
+                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+                      aria-haspopup="menu"
+                      aria-expanded={Boolean(batchStatusMenuAnchor)}
+                    >
+                      {homogeneousSelectedStatus ? "更多状态" : "修改状态..."}
+                    </Button>
+                  )}
+                  {!primaryBatchStatusAction && batchStatusMenuActions.length === 0 && (
+                    <Typography variant="body2" color="text.secondary" sx={{ alignSelf: "center" }}>
+                      所选状态不可修改
+                    </Typography>
+                  )}
                   <Button
                     size="small"
                     variant="contained"
                     startIcon={<FileDownloadIcon />}
                     onClick={handleBatchDownload}
-                    disabled={batchLoading || deleting}
+                    disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
                   >
                     {batchLoading ? "下载中..." : "批量下载"}
                   </Button>
@@ -872,13 +1039,18 @@ export default function ReportList() {
                     color="error"
                     startIcon={<DeleteOutlineIcon />}
                     onClick={() => setPendingBatchDelete(true)}
-                    disabled={batchLoading || deleting}
+                    disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
                   >
                     删除草稿
                   </Button>
                 </>
               )}
-              <Button size="small" variant="text" onClick={() => setSelectedIds([])} disabled={batchLoading || deleting}>
+              <Button
+                size="small"
+                variant="text"
+                onClick={() => setSelectedIds([])}
+                disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+              >
                 清除选择
               </Button>
             </Stack>
@@ -896,6 +1068,7 @@ export default function ReportList() {
                     indeterminate={!allPageSelected && somePageSelected}
                     onChange={handleToggleCurrentPage}
                     disabled={items.length === 0 || loading}
+                    inputProps={{ "aria-label": "选择当前页全部报销单" }}
                   />
                 </TableCell>
                 <TableCell>出差开始日期</TableCell>
@@ -926,6 +1099,9 @@ export default function ReportList() {
               ) : (
                 items.map((report) => {
                   const meta = STATUS_META[report.status] || { label: report.status, color: "default" };
+                  const reportStatusActions = getReportStatusActions(report.status);
+                  const canChangeReportStatus = reportStatusActions.length > 0;
+                  const reportStatusUpdating = statusUpdatingId === report.id;
                   return (
                     <TableRow
                       key={report.id}
@@ -941,19 +1117,45 @@ export default function ReportList() {
                           size="small"
                           checked={selectedSet.has(report.id)}
                           onChange={() => handleToggleReport(report.id)}
+                          inputProps={{
+                            "aria-label": `选择报销单 ${report.id}，${report.purpose || "未命名"}`,
+                          }}
                         />
                       </TableCell>
                       <TableCell>{formatDate(report.trip_start_date)}</TableCell>
                       <TableCell>{formatDate(report.trip_end_date)}</TableCell>
                       <TableCell>{formatDate(report.report_date)}</TableCell>
                       <TableCell>{report.purpose || "—"}</TableCell>
-                      <TableCell align="center">{report.subsidy_days ?? 0}</TableCell>
+                      <TableCell align="center">{getSubsidyDaysLabel(report)}</TableCell>
                       <TableCell align="right" sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace', fontWeight: 800 }}>
                         {formatAmount(report.total_amount)}
                       </TableCell>
                       <TableCell align="center">{report.invoice_count ?? 0}</TableCell>
                       <TableCell align="center">
-                        <Chip size="small" color={meta.color} label={meta.label} />
+                        <Chip
+                          id={`report-status-${report.id}`}
+                          component={canChangeReportStatus ? "button" : "div"}
+                          type={canChangeReportStatus ? "button" : undefined}
+                          size="small"
+                          color={meta.color}
+                          clickable={canChangeReportStatus}
+                          disabled={reportStatusUpdating || batchStatusUpdating}
+                          onClick={canChangeReportStatus ? (event) => handleStatusMenuOpen(event, report) : undefined}
+                          aria-label={
+                            canChangeReportStatus
+                              ? `修改报销单 ${report.id} 状态，当前${meta.label}`
+                              : `报销单 ${report.id} 状态：${meta.label}`
+                          }
+                          aria-haspopup={canChangeReportStatus ? "menu" : undefined}
+                          aria-expanded={statusMenuReport?.id === report.id && Boolean(statusMenuAnchor)}
+                          label={
+                            <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.25 }}>
+                              {reportStatusUpdating ? <CircularProgress size={12} color="inherit" /> : meta.label}
+                              {canChangeReportStatus && !reportStatusUpdating && <ExpandMoreIcon sx={{ fontSize: 15 }} />}
+                            </Box>
+                          }
+                          sx={canChangeReportStatus ? { border: 0, font: "inherit" } : undefined}
+                        />
                       </TableCell>
                       {isTrash && <TableCell>{formatDateTime(report.deleted_at)}</TableCell>}
                       <TableCell align="right" onClick={(event) => event.stopPropagation()}>
@@ -1018,6 +1220,48 @@ export default function ReportList() {
         />
       </Card>
 
+      <Menu
+        anchorEl={statusMenuAnchor}
+        open={Boolean(statusMenuAnchor && statusMenuReport)}
+        onClose={handleStatusMenuClose}
+        MenuListProps={{
+          "aria-labelledby": statusMenuReport ? `report-status-${statusMenuReport.id}` : undefined,
+        }}
+      >
+        {statusMenuActions.map((action) => (
+          <MenuItem
+            key={action.target}
+            onClick={() => handleSingleStatusRequest(statusMenuReport, action.target)}
+            disabled={statusUpdatingId !== null || batchStatusUpdating}
+          >
+            {action.label}
+          </MenuItem>
+        ))}
+      </Menu>
+
+      <Menu
+        anchorEl={batchStatusMenuAnchor}
+        open={Boolean(batchStatusMenuAnchor)}
+        onClose={() => setBatchStatusMenuAnchor(null)}
+      >
+        {batchStatusMenuActions.map((action) => (
+          <MenuItem
+            key={action.target}
+            onClick={() => handleBatchStatusRequest(action)}
+            disabled={batchStatusUpdating || statusUpdatingId !== null}
+          >
+            <Box>
+              <Typography variant="body2">{action.label}</Typography>
+              {!homogeneousSelectedStatus && (
+                <Typography variant="caption" color="text.secondary">
+                  可更新 {action.eligibleCount} 张，跳过 {action.skippedCount} 张
+                </Typography>
+              )}
+            </Box>
+          </MenuItem>
+        ))}
+      </Menu>
+
       <Dialog open={Boolean(pendingDelete)} onClose={() => !deleting && setPendingDelete(null)}>
         <DialogTitle>确认删除</DialogTitle>
         <DialogContent>
@@ -1043,7 +1287,7 @@ export default function ReportList() {
         <DialogTitle>删除草稿</DialogTitle>
         <DialogContent>
           <DialogContentText>
-            将处理已勾选项中的草稿报销单；已打印和已报销报销单会自动跳过。当前已选 {selectedCount} 张。
+            将处理已勾选项中的草稿报销单；已核对、已提交和已报销报销单会自动跳过。当前已选 {selectedCount} 张。
             {DELETE_WARNING_TEXT}
           </DialogContentText>
         </DialogContent>
@@ -1056,6 +1300,44 @@ export default function ReportList() {
           </Button>
           <Button onClick={() => handleConfirmBatchDelete("trash")} variant="contained" disabled={deleting}>
             放入回收站
+          </Button>
+        </DialogActions>
+      </Dialog>
+
+      <Dialog
+        open={Boolean(pendingFinalStatus)}
+        onClose={() =>
+          !batchStatusUpdating && statusUpdatingId === null && setPendingFinalStatus(null)
+        }
+        TransitionProps={{ onEntered: () => finalStatusCancelRef.current?.focus() }}
+      >
+        <DialogTitle>
+          {pendingFinalStatus?.mode === "single" ? "确认标记为已报销" : "确认批量标记为已报销"}
+        </DialogTitle>
+        <DialogContent>
+          <DialogContentText>
+            已报销表示报销款已打款、流程结案，状态更新后不可回退。
+            {pendingFinalStatus?.mode === "single"
+              ? `确定将报销单「${pendingFinalStatus.report?.purpose || `#${pendingFinalStatus.report?.id || ""}`}」标记为已报销吗？`
+              : `当前可更新 ${pendingFinalStatus?.eligibleCount || 0} 张，将跳过 ${pendingFinalStatus?.skippedCount || 0} 张。`}
+          </DialogContentText>
+        </DialogContent>
+        <DialogActions>
+          <Button
+            autoFocus
+            ref={finalStatusCancelRef}
+            onClick={() => setPendingFinalStatus(null)}
+            disabled={batchStatusUpdating || statusUpdatingId !== null}
+          >
+            取消
+          </Button>
+          <Button
+            variant="contained"
+            color="success"
+            onClick={handleConfirmFinalStatus}
+            disabled={batchStatusUpdating || statusUpdatingId !== null}
+          >
+            {batchStatusUpdating || statusUpdatingId !== null ? "修改中..." : "确认结案"}
           </Button>
         </DialogActions>
       </Dialog>

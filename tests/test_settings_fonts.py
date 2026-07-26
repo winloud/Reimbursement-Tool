@@ -252,6 +252,7 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
     with engine.begin() as db:
         db.execute(text("CREATE TABLE trips (id INTEGER PRIMARY KEY)"))
         db.execute(text("CREATE TABLE expense_items (id INTEGER PRIMARY KEY)"))
+        db.execute(text("CREATE TABLE expense_reports (id INTEGER PRIMARY KEY, report_uid VARCHAR)"))
         db.execute(
             text(
                 "CREATE TABLE settings ("
@@ -270,6 +271,8 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
         columns = {row[1] for row in db.execute(text("PRAGMA table_info(settings)")).fetchall()}
         expense_item_columns = {row[1] for row in db.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
         trip_columns = {row[1] for row in db.execute(text("PRAGMA table_info(trips)")).fetchall()}
+        report_columns = {row[1] for row in db.execute(text("PRAGMA table_info(expense_reports)")).fetchall()}
+        data_schema_version = db.execute(text("PRAGMA user_version")).scalar_one()
     assert "pdf_fill_font_key" in columns
     assert "double_print_vat_special_invoices" in columns
     assert "invoice_qr_engine" in columns
@@ -277,3 +280,5 @@ def test_migrate_sqlite_schema_adds_missing_settings_columns(monkeypatch):
     assert "reimbursable_amount" in expense_item_columns
     assert {"paper_invoice_amount", "paper_invoice_count"}.issubset(expense_item_columns)
     assert {"paper_invoice_amount", "paper_invoice_count"}.issubset(trip_columns)
+    assert "manual_subsidy_total" in report_columns
+    assert data_schema_version == connection.DATA_SCHEMA_VERSION

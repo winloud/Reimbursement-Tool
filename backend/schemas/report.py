@@ -4,7 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-ReportStatus = Literal["draft", "printed", "reimbursed"]
+REPORT_STATUS_VALUES = ("draft", "checked", "printed", "reimbursed")
+ReportStatus = Literal["draft", "checked", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
 ExpenseCategory = Literal[
     "transport_fare",
@@ -69,6 +70,7 @@ class ReportBase(BaseModel):
     daily_subsidy: Decimal = Field(default=Decimal("0.00"), ge=0)
     subsidy_days: int = Field(default=0, ge=0)
     subsidy_total: Decimal = Field(default=Decimal("0.00"), ge=0)
+    manual_subsidy_total: Decimal | None = Field(default=None, ge=0)
     advance_date_month: int | None = Field(default=None, ge=1, le=12)
     advance_date_day: int | None = Field(default=None, ge=1, le=31)
     advance_amount: Decimal = Field(default=Decimal("0.00"), ge=0)
@@ -93,6 +95,23 @@ class ReportStatusUpdate(BaseModel):
 
 class ReportBatchRequest(BaseModel):
     report_ids: list[int] = Field(min_length=1, max_length=100)
+
+
+class ReportBatchStatusRequest(ReportBatchRequest):
+    status: ReportStatus
+
+
+class ReportBatchStatusSkipped(BaseModel):
+    report_id: int
+    reason: str
+    status: ReportStatus | None = None
+
+
+class ReportBatchStatusResult(BaseModel):
+    target_status: ReportStatus
+    updated_count: int
+    skipped_count: int
+    skipped: list[ReportBatchStatusSkipped] = Field(default_factory=list)
 
 
 class ReportBatchPdfFailure(BaseModel):

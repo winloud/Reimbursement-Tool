@@ -5,7 +5,7 @@ import shutil
 import zipfile
 from datetime import datetime
 from datetime import date as date_type
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
@@ -28,12 +28,13 @@ from backend.schemas.data_transfer import (
     ImportPreviewRead,
     ImportSummaryRead,
 )
+from backend.schemas.report import REPORT_STATUS_VALUES
 from backend.services.invoice_service import build_invoice_storage_path, calculate_file_hash
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
-SCHEMA_VERSION = 2
-SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, SCHEMA_VERSION}
+SCHEMA_VERSION = 4
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, SCHEMA_VERSION}
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -62,6 +63,30 @@ def _optional_decimal(value) -> Decimal | None:
     if value is None:
         return None
     return _decimal(value)
+
+
+def _optional_nonnegative_money(value, field_label: str) -> Decimal | None:
+    if value is None:
+        return None
+    try:
+        amount = Decimal(str(value))
+    except (InvalidOperation, TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}必须是有限的非负金额",
+        ) from exc
+    if not amount.is_finite() or amount < Decimal("0"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}必须是有限的非负金额",
+        )
+    try:
+        return amount.quantize(Decimal("0.01"))
+    except InvalidOperation as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}必须是有限的非负金额",
+        ) from exc
 
 
 def _parse_date(value: str | None) -> date_type | None:
@@ -115,7 +140,7 @@ def _parse_export_statuses(value: str | None) -> set[str] | None:
     normalized = (value or "").strip()
     if not normalized:
         return None
-    valid_statuses = {"draft", "printed", "reimbursed"}
+    valid_statuses = set(REPORT_STATUS_VALUES)
     items = {item.strip() for item in normalized.split(",") if item.strip()}
     invalid = items - valid_statuses
     if invalid:
@@ -193,6 +218,9 @@ def _serialize_report(report: ExpenseReport) -> dict:
             "daily_subsidy": _money(report.daily_subsidy),
             "subsidy_days": report.subsidy_days,
             "subsidy_total": _money(report.subsidy_total),
+            "manual_subsidy_total": (
+                _money(report.manual_subsidy_total) if report.manual_subsidy_total is not None else None
+            ),
             "advance_date_month": report.advance_date_month,
             "advance_date_day": report.advance_date_day,
             "advance_amount": _money(report.advance_amount),
@@ -386,8 +414,11 @@ def _copy_zip_attachment_to_temp(archive: zipfile.ZipFile, attachment_path: str,
 
 
 def _report_field_payload(report_payload: dict) -> dict:
+    report_status = report_payload.get("status") or "draft"
+    if report_status not in REPORT_STATUS_VALUES:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包包含无效报销单状态")
     return {
-        "status": report_payload.get("status") or "draft",
+        "status": report_status,
         "report_date": _parse_date(report_payload.get("report_date")),
         "department": report_payload.get("department"),
         "employee_name": report_payload.get("employee_name"),
@@ -395,6 +426,10 @@ def _report_field_payload(report_payload: dict) -> dict:
         "daily_subsidy": _decimal(report_payload.get("daily_subsidy")),
         "subsidy_days": int(report_payload.get("subsidy_days") or 0),
         "subsidy_total": _decimal(report_payload.get("subsidy_total")),
+        "manual_subsidy_total": _optional_nonnegative_money(
+            report_payload.get("manual_subsidy_total"),
+            "人工核定途中补贴总额",
+        ),
         "advance_date_month": report_payload.get("advance_date_month"),
         "advance_date_day": report_payload.get("advance_date_day"),
         "advance_amount": _decimal(report_payload.get("advance_amount")),
@@ -437,7 +472,6 @@ def _create_or_overwrite_report(
     trip_id_map: dict[int, int] = {}
     for trip_payload in report_item.get("trips", []):
         trip = Trip(
-            report_id=target_report.id,
             sort_order=trip_payload["sort_order"],
             depart_month=trip_payload["depart_month"],
             depart_day=trip_payload["depart_day"],
@@ -453,15 +487,14 @@ def _create_or_overwrite_report(
             paper_invoice_amount=_decimal(trip_payload.get("paper_invoice_amount")),
             paper_invoice_count=int(trip_payload.get("paper_invoice_count") or 0),
         )
-        db.add(trip)
+        target_report.trips.append(trip)
         db.flush()
         if trip_payload.get("original_id") is not None:
             trip_id_map[int(trip_payload["original_id"])] = trip.id
 
     for item_payload in report_item.get("expense_items", []):
-        db.add(
+        target_report.expense_items.append(
             ExpenseItem(
-                report_id=target_report.id,
                 category=item_payload["category"],
                 remark=item_payload.get("remark"),
                 reimbursable_amount=_optional_decimal(item_payload.get("reimbursable_amount")),
@@ -520,7 +553,6 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                     invoice_uid = uuid4().hex
                 invoice = Invoice(
                     invoice_uid=invoice_uid,
-                    report_id=report.id,
                     trip_id=trip_id_map.get(invoice_payload.get("trip_original_id")),
                     expense_category=invoice_payload["expense_category"],
                     file_path="",
@@ -531,7 +563,7 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                     amount=_decimal(invoice_payload.get("amount")),
                     amount_confirmed=bool(invoice_payload.get("amount_confirmed")),
                 )
-                db.add(invoice)
+                report.invoices.append(invoice)
                 db.flush()
                 temp_file = _copy_zip_attachment_to_temp(archive, invoice_payload["attachment_path"], staging_dir)
                 final_relative = build_invoice_storage_path(

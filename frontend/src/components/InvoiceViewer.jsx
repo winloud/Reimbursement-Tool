@@ -22,7 +22,14 @@ import {
 import FactCheckIcon from "@mui/icons-material/FactCheck";
 import ImageIcon from "@mui/icons-material/Image";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
-import { getInvoiceFileUrl, parseInvoice, updateInvoice } from "../api/client";
+import {
+  getInvoiceFileUrl,
+  getInvoiceOpenCapability,
+  openInvoiceLocally,
+  parseInvoice,
+  updateInvoice,
+} from "../api/client";
+import { shouldOpenInvoiceLocally } from "./invoiceViewerUtils";
 
 const formatAmount = (value) =>
   `¥${Number(value ?? 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
@@ -210,6 +217,9 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
   const [diagnosticsParsed, setDiagnosticsParsed] = useState(null);
   const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
   const [diagnosticsError, setDiagnosticsError] = useState("");
+  const [openCapabilityResolved, setOpenCapabilityResolved] = useState(false);
+  const [localPdfOpenSupported, setLocalPdfOpenSupported] = useState(false);
+  const [openingOriginal, setOpeningOriginal] = useState(false);
 
   const fileUrl = invoice ? getInvoiceFileUrl(invoice.id) : "";
   const parsed = diagnosticsParsed || invoice?.parsed || {};
@@ -247,8 +257,32 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
       setDiagnosticsOpen(false);
       setDiagnosticsParsed(invoice.parsed || null);
       setDiagnosticsError("");
+      setOpeningOriginal(false);
     }
   }, [invoice]);
+
+  useEffect(() => {
+    if (!open || openCapabilityResolved) return undefined;
+
+    let cancelled = false;
+    const loadOpenCapability = async () => {
+      try {
+        const res = await getInvoiceOpenCapability();
+        if (!cancelled) {
+          setLocalPdfOpenSupported(Boolean(res.success && res.data?.local_pdf_open_supported));
+        }
+      } catch {
+        if (!cancelled) setLocalPdfOpenSupported(false);
+      } finally {
+        if (!cancelled) setOpenCapabilityResolved(true);
+      }
+    };
+
+    loadOpenCapability();
+    return () => {
+      cancelled = true;
+    };
+  }, [open, openCapabilityResolved]);
 
   useEffect(() => {
     if (invoice?.file_type === "pdf" && !previewImage) {
@@ -279,6 +313,40 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
     setDiagnosticsOpen(true);
     setDiagnosticsError("");
     if (!hasDiagnostics) await fetchParsed();
+  };
+
+  const handleOpenOriginal = async () => {
+    setOpeningOriginal(true);
+    setError("");
+    try {
+      const res = await openInvoiceLocally(invoice.id);
+      if (!res.success) {
+        setError(res.message || "无法打开发票原始文件");
+      }
+    } catch (err) {
+      setError(err.response?.data?.detail || err.response?.data?.message || err.message || "无法打开发票原始文件");
+    } finally {
+      setOpeningOriginal(false);
+    }
+  };
+
+  const renderOriginalFileButton = (variant) => {
+    const openLocally = shouldOpenInvoiceLocally(invoice.file_type, localPdfOpenSupported);
+    const capabilityPending = invoice.file_type === "pdf" && !openCapabilityResolved;
+    const navigationProps = openLocally
+      ? { onClick: handleOpenOriginal }
+      : { href: fileUrl, target: "_blank", rel: "noreferrer" };
+
+    return (
+      <Button
+        {...navigationProps}
+        variant={variant}
+        startIcon={openingOriginal || capabilityPending ? <CircularProgress size={18} /> : <OpenInNewIcon />}
+        disabled={openingOriginal || capabilityPending}
+      >
+        打开原始文件
+      </Button>
+    );
   };
 
   return (
@@ -384,9 +452,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
                 解析依据
               </Button>
 
-              <Button href={fileUrl} target="_blank" rel="noreferrer" variant="outlined" startIcon={<OpenInNewIcon />}>
-                打开原始文件
-              </Button>
+              {renderOriginalFileButton("outlined")}
             </Stack>
           </Grid>
           <Grid item xs={12} md={8}>
@@ -443,9 +509,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
                   <Typography variant="body2" color="text.secondary" align="center">
                     此类型以关键字段确认为主，可打开原始文件核对内容。
                   </Typography>
-                  <Button href={fileUrl} target="_blank" rel="noreferrer" variant="contained" startIcon={<OpenInNewIcon />}>
-                    打开原始文件
-                  </Button>
+                  {renderOriginalFileButton("contained")}
                 </Stack>
               )}
             </Box>

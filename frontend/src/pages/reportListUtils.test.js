@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   deleteDialogActionLabels,
   formatBatchPdfFailureMessage,
+  getSubsidyDaysLabel,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterMoreButtonSx,
@@ -46,4 +47,10 @@ test("report filter toolbar wraps controls without squeezing button content", ()
   assert.equal(reportFilterActionsSx.flexWrap, "wrap");
   assert.equal(reportFilterMoreButtonSx.flexShrink, 0);
   assert.equal(reportFilterMoreButtonSx.minWidth, "max-content");
+});
+
+test("getSubsidyDaysLabel distinguishes manual subsidy including zero", () => {
+  assert.equal(getSubsidyDaysLabel({ subsidy_days: 3, manual_subsidy_total: null }), "3");
+  assert.equal(getSubsidyDaysLabel({ subsidy_days: 0, manual_subsidy_total: "0.00" }), "人工核定");
+  assert.equal(getSubsidyDaysLabel({ subsidy_days: 5, manual_subsidy_total: 0 }), "人工核定");
 });

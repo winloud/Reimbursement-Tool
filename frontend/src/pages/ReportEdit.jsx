@@ -15,12 +15,14 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   LinearProgress,
   Paper,
   Snackbar,
   Stack,
+  Switch,
   TextField,
   Tooltip,
   Typography,
@@ -55,8 +57,6 @@ import {
   uploadInvoice,
 } from "../api/client";
 import {
-  STATUS_ACTIONS,
-  STATUS_META,
   buildCustomExpenseCategory,
   buildDraftPayload,
   buildReportPayload,
@@ -88,10 +88,12 @@ import {
   todayStr,
   validateExpenseItems,
   validateFuelSubsidyAmount,
+  validateManualSubsidyTotal,
   validatePaperInvoice,
   validateTrips,
   validateCustomExpenseName,
 } from "./reportEditUtils";
+import { canAccessReportPdf, STATUS_ACTIONS, STATUS_META } from "./reportStatus";
 import {
   DEFAULT_AUTOSAVE_DELAY_SECONDS,
   normalizeAutosaveDelaySeconds,
@@ -180,6 +182,38 @@ const editSectionNavSx = {
 
 const sectionAnchorSx = {
   scrollMarginTop: 24,
+};
+
+const subsidyModeSwitchSx = {
+  width: 40,
+  height: 22,
+  p: 0,
+  "& .MuiSwitch-switchBase": {
+    p: "3px",
+    color: "common.white",
+    "&.Mui-disabled": { color: "common.white" },
+  },
+  "& .MuiSwitch-switchBase.Mui-checked": {
+    color: "common.white",
+    transform: "translateX(18px)",
+  },
+  "& .MuiSwitch-thumb": {
+    width: 16,
+    height: 16,
+    boxShadow: "0 1px 3px rgba(23, 32, 42, 0.28)",
+  },
+  "& .MuiSwitch-track": {
+    borderRadius: 11,
+    bgcolor: "primary.light",
+    opacity: 1,
+  },
+  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+    bgcolor: "warning.main",
+    opacity: 1,
+  },
+  "& .MuiSwitch-switchBase.Mui-disabled + .MuiSwitch-track": {
+    opacity: 0.45,
+  },
 };
 
 const tripSegmentGridSx = {
@@ -546,6 +580,9 @@ export default function ReportEdit() {
   const [customNameError, setCustomNameError] = useState("");
   const [paperInvoiceEditor, setPaperInvoiceEditor] = useState(null);
   const [paperInvoiceClearTarget, setPaperInvoiceClearTarget] = useState(null);
+  const [subsidyDialogOpen, setSubsidyDialogOpen] = useState(false);
+  const [manualSubsidyDraft, setManualSubsidyDraft] = useState("");
+  const [manualSubsidyError, setManualSubsidyError] = useState("");
   const [pdfBusy, setPdfBusy] = useState("");
   const [pdfPreviewOpen, setPdfPreviewOpen] = useState(false);
   const [pdfPreviewPages, setPdfPreviewPages] = useState([]);
@@ -592,6 +629,10 @@ export default function ReportEdit() {
           employee_name: report.employee_name || "",
           purpose: report.purpose || "",
           daily_subsidy: toMoney(report.daily_subsidy),
+          manual_subsidy_total:
+            report.manual_subsidy_total === null || report.manual_subsidy_total === undefined
+              ? null
+              : toMoney(report.manual_subsidy_total),
           advance_date_month: report.advance_date_month || "",
           advance_date_day: report.advance_date_day || "",
           advance_amount: toMoney(report.advance_amount),
@@ -674,13 +715,22 @@ export default function ReportEdit() {
       calculateSummary({
         reportDate: form.report_date,
         dailySubsidy: form.daily_subsidy,
+        manualSubsidyTotal: form.manual_subsidy_total,
         advanceAmount: form.advance_amount,
         trips,
         invoices,
         expenseItems,
       }),
-    [expenseItems, form.advance_amount, form.daily_subsidy, form.report_date, invoices, trips],
+    [expenseItems, form.advance_amount, form.daily_subsidy, form.manual_subsidy_total, form.report_date, invoices, trips],
   );
+  const hasManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
+  const subsidyModeLabel = hasManualSubsidy ? "人工核定" : "自动计算";
+  const subsidyModeToggleTooltip = readonly
+    ? subsidyModeLabel
+    : hasManualSubsidy
+      ? "切换为自动计算"
+      : "切换为人工核定";
+  const automaticSubsidyTotal = summary.subsidyDays * Number(form.daily_subsidy || 0);
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
   const visibleOtherExpenseItems = useMemo(
     () =>
@@ -708,6 +758,7 @@ export default function ReportEdit() {
     return getFuelSubsidyInvoiceShortfall(fuelItem, fuelInvoices);
   }, [expenseItems, invoices]);
   const hasFuelSubsidyInvoiceShortfall = fuelSubsidyInvoiceShortfall > 0;
+  const canAccessPdf = canAccessReportPdf(status);
   const confirmedInvoiceCount = useMemo(
     () =>
       invoices.filter((invoice) => invoice.amount_confirmed).length +
@@ -718,7 +769,7 @@ export default function ReportEdit() {
   const pdfBlockMessage = hasUnconfirmedInvoices
     ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
     : hasFuelSubsidyInvoiceShortfall
-      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已打印。`
+      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已提交。`
     : confirmedInvoiceCount > 0
       ? "发票已确认，可生成 PDF。"
       : "暂无已确认发票，可先录入行程和费用。";
@@ -854,6 +905,34 @@ export default function ReportEdit() {
 
   const handleChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const closeSubsidyDialog = () => {
+    setSubsidyDialogOpen(false);
+    setManualSubsidyError("");
+  };
+
+  const openManualSubsidyDialog = () => {
+    setManualSubsidyDraft(toMoney(form.manual_subsidy_total));
+    setManualSubsidyError("");
+    setSubsidyDialogOpen(true);
+  };
+
+  const handleSubsidyModeToggle = (manual) => {
+    setForm((prev) => ({
+      ...prev,
+      manual_subsidy_total: manual ? toMoney(automaticSubsidyTotal) : null,
+    }));
+  };
+
+  const applyManualSubsidyTotal = () => {
+    const validationError = validateManualSubsidyTotal(manualSubsidyDraft);
+    if (validationError) {
+      setManualSubsidyError(validationError);
+      return;
+    }
+    setForm((prev) => ({ ...prev, manual_subsidy_total: toMoney(manualSubsidyDraft) }));
+    closeSubsidyDialog();
   };
 
   const scrollToSection = (sectionId) => {
@@ -1405,6 +1484,11 @@ export default function ReportEdit() {
                             value={form.daily_subsidy}
                             onChange={handleChange("daily_subsidy")}
                             disabled={readonly}
+                            helperText={
+                              hasManualSubsidy
+                                ? "当前使用人工核定总额，修改行程或日标准不会改变补贴总额。"
+                                : undefined
+                            }
                             InputProps={{
                               startAdornment: <InputAdornment position="start">¥</InputAdornment>,
                               inputProps: { min: 0, step: "0.01" },
@@ -1939,14 +2023,74 @@ export default function ReportEdit() {
                 <Divider />
 
                 <Stack spacing={1.1}>
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography fontWeight={800}>途中补贴</Typography>
-                    <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
+                  <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0, flex: "1 1 auto" }}>
+                      <Typography fontWeight={800} sx={{ flexShrink: 0 }}>
+                        途中补贴
+                      </Typography>
+                      <Tooltip title={subsidyModeToggleTooltip} arrow>
+                        <Box component="span" sx={{ display: "inline-flex", minWidth: 0 }}>
+                          <FormControlLabel
+                            disabled={readonly}
+                            control={
+                              <Switch
+                                checked={hasManualSubsidy}
+                                onChange={(_event, checked) => handleSubsidyModeToggle(checked)}
+                                size="small"
+                                inputProps={{
+                                  "aria-label": `途中补贴计算方式：${subsidyModeLabel}`,
+                                }}
+                                sx={subsidyModeSwitchSx}
+                              />
+                            }
+                            label={subsidyModeLabel}
+                            sx={{
+                              m: 0,
+                              gap: 0.75,
+                              minWidth: 0,
+                              cursor: readonly ? "default" : "pointer",
+                              "& .MuiFormControlLabel-label": {
+                                color: hasManualSubsidy ? "warning.dark" : "primary.main",
+                                fontSize: 12,
+                                fontWeight: 800,
+                                lineHeight: 1,
+                                whiteSpace: "nowrap",
+                              },
+                              "& .MuiFormControlLabel-label.Mui-disabled": {
+                                color: "text.disabled",
+                              },
+                            }}
+                          />
+                        </Box>
+                      </Tooltip>
+                    </Stack>
+                    <Stack direction="row" alignItems="center" spacing={0.25} sx={{ flex: "0 0 auto" }}>
+                      <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
+                      {hasManualSubsidy && !readonly && (
+                        <Tooltip title="编辑人工核定金额" arrow>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            aria-label="编辑人工核定金额"
+                            onClick={openManualSubsidyDialog}
+                            sx={{ p: 0.5, borderRadius: 0.75 }}
+                          >
+                            <EditIcon sx={{ fontSize: 18 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
                   </Stack>
-                  <Stack direction="row" justifyContent="space-between">
-                    <Typography color="text.secondary">补贴天数</Typography>
-                    <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
-                  </Stack>
+                  {hasManualSubsidy ? (
+                    <Typography variant="caption" color="text.secondary">
+                      最终总额不随行程或日标准变化
+                    </Typography>
+                  ) : (
+                    <Stack direction="row" justifyContent="space-between">
+                      <Typography color="text.secondary">补贴天数</Typography>
+                      <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
+                    </Stack>
+                  )}
                 </Stack>
 
                 <Divider />
@@ -1996,7 +2140,7 @@ export default function ReportEdit() {
                     variant="outlined"
                     startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />}
                     onClick={handlePdfPreview}
-                    disabled={readonly || pdfBusy === "download"}
+                    disabled={!canAccessPdf || pdfBusy === "download"}
                     sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
                   >
                     {pdfBusy === "preview" ? "生成中" : hasUnconfirmedInvoices ? "待确认后预览" : "预览"}
@@ -2006,7 +2150,7 @@ export default function ReportEdit() {
                     variant="contained"
                     startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
                     onClick={handlePdfDownload}
-                    disabled={readonly || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
+                    disabled={!canAccessPdf || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
                     sx={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
                   >
                     {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}
@@ -2036,6 +2180,39 @@ export default function ReportEdit() {
         onClose={() => setTicketImportOpen(false)}
         onImported={handleTicketsImported}
       />
+
+      <Dialog open={subsidyDialogOpen} onClose={closeSubsidyDialog} fullWidth maxWidth="xs">
+        <DialogTitle>编辑人工核定金额</DialogTitle>
+        <DialogContent>
+          <TextField
+            autoFocus
+            fullWidth
+            label="人工核定补贴总额"
+            type="number"
+            value={manualSubsidyDraft}
+            error={Boolean(manualSubsidyError)}
+            helperText={manualSubsidyError || "保存后作为最终总额，不再按补贴天数计算。"}
+            onChange={(event) => {
+              setManualSubsidyDraft(event.target.value);
+              if (manualSubsidyError) setManualSubsidyError("");
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") applyManualSubsidyTotal();
+            }}
+            InputProps={{
+              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              inputProps: { min: 0, step: "0.01" },
+            }}
+            sx={{ mt: 1.5 }}
+          />
+        </DialogContent>
+        <DialogActions>
+          <Button onClick={closeSubsidyDialog}>取消</Button>
+          <Button variant="contained" onClick={applyManualSubsidyTotal}>
+            保存
+          </Button>
+        </DialogActions>
+      </Dialog>
 
       <Dialog open={customDialogOpen} onClose={() => setCustomDialogOpen(false)} fullWidth maxWidth="xs">
         <DialogTitle>添加自定义费用</DialogTitle>
@@ -2116,7 +2293,7 @@ export default function ReportEdit() {
           <DialogContentText>
             {hasUnconfirmedInvoices
               ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
-              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已打印。`}
+              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已提交。`}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

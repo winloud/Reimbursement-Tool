@@ -50,6 +50,14 @@ class InvoiceUpdate(BaseModel):
     invoice_type: InvoiceType | None = None
 
 
+class InvoiceOpenCapabilityRead(BaseModel):
+    local_pdf_open_supported: bool
+
+
+class InvoiceLocalOpenRead(BaseModel):
+    opened: bool
+
+
 class InvoiceRead(BaseModel):
     id: int
     report_id: int

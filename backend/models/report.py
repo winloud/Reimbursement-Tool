@@ -21,6 +21,7 @@ class ExpenseReport(Base):
     daily_subsidy: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     subsidy_days: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     subsidy_total: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
+    manual_subsidy_total: Mapped[Decimal | None] = mapped_column(Numeric(18, 2), nullable=True)
     advance_date_month: Mapped[int | None] = mapped_column(Integer, nullable=True)
     advance_date_day: Mapped[int | None] = mapped_column(Integer, nullable=True)
     advance_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)

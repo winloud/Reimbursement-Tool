@@ -8,11 +8,14 @@ from sqlalchemy.orm import Session
 from backend.database.session import get_db
 from backend.schemas.common import ApiResponse, PaginationData
 from backend.schemas.report import (
+    REPORT_STATUS_VALUES,
     PdfPreviewRead,
     ReportBatchDeleteResult,
     ReportBatchPurgeResult,
     ReportBatchRequest,
     ReportBatchRestoreResult,
+    ReportBatchStatusRequest,
+    ReportBatchStatusResult,
     ReportCreate,
     ReportDetailRead,
     ReportFilterOptionsRead,
@@ -33,6 +36,7 @@ from backend.services.report_batch_service import (
     batch_purge_reports,
     batch_restore_deleted_reports,
     batch_soft_delete_draft_reports,
+    batch_update_report_status,
     build_batch_report_pdf_zip,
 )
 from backend.services.report_service import (
@@ -43,7 +47,6 @@ from backend.services.report_service import (
     list_report_category_options,
     list_deleted_reports,
     list_reports,
-    mark_report_pdf_exported,
     purge_report,
     restore_deleted_report,
     soft_delete_report,
@@ -134,7 +137,7 @@ def parse_report_statuses(value: str | None) -> set[ReportStatus] | None:
     normalized = (value or "").strip()
     if not normalized:
         return None
-    valid_statuses = {"draft", "printed", "reimbursed"}
+    valid_statuses = set(REPORT_STATUS_VALUES)
     items = {item.strip() for item in normalized.split(",") if item.strip()}
     invalid = items - valid_statuses
     if invalid:
@@ -188,6 +191,17 @@ def post_batch_purge_reports(
     return ApiResponse(data=batch_purge_reports(db, payload.report_ids), message="批量彻底删除已处理")
 
 
+@router.patch("/batch/status", response_model=ApiResponse[ReportBatchStatusResult])
+def patch_batch_report_status(
+    payload: ReportBatchStatusRequest,
+    db: Session = Depends(get_db),
+) -> ApiResponse[ReportBatchStatusResult]:
+    return ApiResponse(
+        data=batch_update_report_status(db, payload.report_ids, payload.status),
+        message="批量状态修改已处理",
+    )
+
+
 @router.get("/{report_id}", response_model=ApiResponse[ReportDetailRead])
 def get_report(
     report_id: Annotated[int, Path(ge=1)],
@@ -203,14 +217,7 @@ def get_report_pdf_preview(
 ) -> ApiResponse[PdfPreviewRead]:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    try:
-        mark_report_pdf_exported(report, date.today())
-        db.flush()
-        pages = render_report_preview_pages(report, settings.pdf_fill_font_key)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    pages = render_report_preview_pages(report, settings.pdf_fill_font_key)
     return ApiResponse(data=PdfPreviewRead(pages=pages), message="PDF 预览已生成")
 
 
@@ -221,20 +228,13 @@ def get_report_pdf(
 ) -> Response:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    try:
-        ensure_fuel_subsidy_printable(report)
-        mark_report_pdf_exported(report, date.today(), mark_printed=True)
-        db.flush()
-        pdf_bytes = build_merged_report_pdf(
-            report,
-            settings.pdf_fill_font_key,
-            settings.double_print_vat_special_invoices,
-        )
-        filename = build_pdf_filename(report)
-        db.commit()
-    except Exception:
-        db.rollback()
-        raise
+    ensure_fuel_subsidy_printable(report)
+    pdf_bytes = build_merged_report_pdf(
+        report,
+        settings.pdf_fill_font_key,
+        settings.double_print_vat_special_invoices,
+    )
+    filename = build_pdf_filename(report)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",

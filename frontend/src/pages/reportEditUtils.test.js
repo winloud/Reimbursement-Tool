@@ -29,6 +29,7 @@ import {
   appendTripWithAutoStart,
   swapTripEndpoints,
   validateFuelSubsidyAmount,
+  validateManualSubsidyTotal,
   validatePaperInvoice,
 } from "./reportEditUtils.js";
 
@@ -111,6 +112,7 @@ describe("report edit utilities", () => {
       employee_name: "李四",
       purpose: "客户拜访",
       daily_subsidy: "100",
+      manual_subsidy_total: null,
       advance_date_month: "",
       advance_date_day: "4",
       advance_amount: "",
@@ -139,6 +141,7 @@ describe("report edit utilities", () => {
       employee_name: "李四",
       purpose: null,
       daily_subsidy: "100",
+      manual_subsidy_total: null,
       advance_date_month: null,
       advance_date_day: 4,
       advance_amount: "0.00",
@@ -150,6 +153,7 @@ describe("report edit utilities", () => {
       employee_name: "李四",
       purpose: "客户拜访",
       daily_subsidy: "100",
+      manual_subsidy_total: null,
       advance_date_month: null,
       advance_date_day: 4,
       advance_amount: "0.00",
@@ -250,6 +254,83 @@ describe("report edit utilities", () => {
       shortfall: 210.5,
       surplus: 0,
     });
+  });
+
+  it("uses a manual subsidy total including zero without changing automatic days", () => {
+    const base = {
+      reportDate: "2026-06-01",
+      dailySubsidy: "80.00",
+      advanceAmount: "0.00",
+      trips: [normalizeTrip({ depart_month: 6, depart_day: 1, arrive_month: 6, arrive_day: 3 }, 0)],
+      invoices: [],
+    };
+
+    const manualSummary = calculateSummary({ ...base, manualSubsidyTotal: "75.50" });
+    assert.equal(manualSummary.subsidyDays, 3);
+    assert.equal(manualSummary.subsidyTotal, 75.5);
+    assert.equal(manualSummary.total, 75.5);
+
+    const zeroSummary = calculateSummary({ ...base, manualSubsidyTotal: "0.00" });
+    assert.equal(zeroSummary.subsidyDays, 3);
+    assert.equal(zeroSummary.subsidyTotal, 0);
+    assert.equal(zeroSummary.total, 0);
+  });
+
+  it("preserves nullable and zero manual subsidy totals in report payloads", () => {
+    const baseForm = {
+      report_date: "2026-06-03",
+      department: "财务部",
+      employee_name: "张三",
+      purpose: "短时外出",
+      daily_subsidy: "100.00",
+      manual_subsidy_total: null,
+      advance_date_month: "",
+      advance_date_day: "",
+      advance_amount: "0.00",
+    };
+
+    assert.equal(buildReportPayload({ form: baseForm, trips: [], expenseItems: [] }).manual_subsidy_total, null);
+    assert.equal(
+      buildReportPayload({ form: { ...baseForm, manual_subsidy_total: "0.00" }, trips: [], expenseItems: [] }).manual_subsidy_total,
+      "0.00",
+    );
+  });
+
+  it("validates a required non-negative manual subsidy amount with at most two decimals", () => {
+    assert.match(validateManualSubsidyTotal(""), /请输入/);
+    assert.match(validateManualSubsidyTotal("-1"), /不能为负数/);
+    assert.match(validateManualSubsidyTotal("1.234"), /两位小数/);
+    assert.equal(validateManualSubsidyTotal("0.00"), "");
+    assert.equal(validateManualSubsidyTotal("75.5"), "");
+  });
+
+  it("treats selecting manual subsidy zero as an edited draft", () => {
+    const defaults = {
+      report_date: "2026-06-03",
+      department: "财务部",
+      employee_name: "张三",
+      daily_subsidy: "120.00",
+      manual_subsidy_total: null,
+    };
+    const form = {
+      ...defaults,
+      purpose: "",
+      manual_subsidy_total: "0.00",
+      advance_date_month: "",
+      advance_date_day: "",
+      advance_amount: "0.00",
+    };
+
+    assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [] }), false);
+    assert.equal(
+      isEmptyDraft({
+        form: { ...form, manual_subsidy_total: null },
+        defaults: { ...defaults, manual_subsidy_total: "0.00" },
+        trips: [],
+        invoices: [],
+      }),
+      false,
+    );
   });
 
   it("summarizes fuel subsidy by reimbursable amount and reports an invoice shortfall without blocking save", () => {

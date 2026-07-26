@@ -24,14 +24,22 @@ from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.settings_service import get_or_create_settings
 
 ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
-    "draft": {"printed"},
-    "printed": {"draft", "reimbursed"},
+    "draft": {"checked"},
+    "checked": {"draft", "printed"},
+    "printed": {"checked", "reimbursed"},
     "reimbursed": set(),
 }
 REPORT_STATUS_ORDER = {
     "draft": 0,
-    "printed": 1,
-    "reimbursed": 2,
+    "checked": 1,
+    "printed": 2,
+    "reimbursed": 3,
+}
+REPORT_STATUS_LABELS = {
+    "draft": "草稿",
+    "checked": "已核对",
+    "printed": "已提交",
+    "reimbursed": "已报销",
 }
 
 FUEL_SUBSIDY_CATEGORY = "fuel_subsidy"
@@ -123,7 +131,10 @@ def validate_status_transition(current_status: str, target_status: str) -> None:
     if target_status not in ALLOWED_STATUS_TRANSITIONS.get(current_status, set()):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"不允许从 {current_status} 流转到 {target_status}",
+            detail=(
+                f"不允许从{REPORT_STATUS_LABELS.get(current_status, current_status)}"
+                f"流转到{REPORT_STATUS_LABELS.get(target_status, target_status)}"
+            ),
         )
 
 
@@ -194,7 +205,7 @@ def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
     if shortfall > Decimal("0.00"):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再打印",
+            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再下载或提交",
         )
 
 
@@ -334,11 +345,17 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
 
     report_reference = report.report_date or date.today()
     try:
-        report.subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
+        calculated_subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
     except TripDateError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
 
-    report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
+    if report.manual_subsidy_total is not None:
+        report.manual_subsidy_total = quantize_amount(report.manual_subsidy_total)
+        report.subsidy_days = 0
+        report.subsidy_total = report.manual_subsidy_total
+    else:
+        report.subsidy_days = calculated_subsidy_days
+        report.subsidy_total = quantize_amount(Decimal(report.subsidy_days) * report.daily_subsidy)
     transport_total = confirmed_transport_invoice_total(report)
     other_expense_total = sum((item.amount for item in report.expense_items if item.category != "transport_fare"), Decimal("0.00"))
     report.total_amount = quantize_amount(transport_total + other_expense_total + report.subsidy_total)
@@ -504,19 +521,6 @@ def report_trip_date_bounds(report: ExpenseReport) -> tuple[date | None, date | 
     return min(item.depart for item in trip_ranges), max(item.arrive for item in trip_ranges)
 
 
-def mark_report_pdf_exported(
-    report: ExpenseReport,
-    exported_on: date | None = None,
-    *,
-    mark_printed: bool = False,
-) -> None:
-    if report.status != "draft":
-        return
-    report.report_date = exported_on or date.today()
-    if mark_printed:
-        report.status = "printed"
-
-
 def report_has_trip_overlap(report: ExpenseReport, trip_start: date | None, trip_end: date | None) -> bool:
     if trip_start is None and trip_end is None:
         return True
@@ -614,6 +618,9 @@ def report_matches_filters(report: ExpenseReport, filters: ReportFilters, includ
     if not report_matches_category(report, filters.category, include_deleted_invoices=include_deleted_invoices):
         return False
     if filters.has_attachment is not None and bool(active_invoices(report, include_deleted=include_deleted_invoices)) != filters.has_attachment:
+        return False
+    has_subsidy_days_filter = filters.subsidy_days_min is not None or filters.subsidy_days_max is not None
+    if has_subsidy_days_filter and report.manual_subsidy_total is not None:
         return False
     if filters.subsidy_days_min is not None and report.subsidy_days < filters.subsidy_days_min:
         return False

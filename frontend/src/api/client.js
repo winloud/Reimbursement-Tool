@@ -240,6 +240,11 @@ export const batchRestoreReports = async (reportIds) => {
   return response.data;
 };
 
+export const batchUpdateReportStatus = async (reportIds, status) => {
+  const response = await apiClient.patch("/api/reports/batch/status", { report_ids: reportIds, status });
+  return response.data;
+};
+
 export const updateReportStatus = async (id, status) => {
   const response = await apiClient.patch(`/api/reports/${id}/status`, { status });
   return response.data;
@@ -320,6 +325,16 @@ export const updateInvoice = async (id, payload) => {
 
 export const parseInvoice = async (id) => {
   const response = await apiClient.get(`/api/invoices/${id}/parse`);
+  return response.data;
+};
+
+export const getInvoiceOpenCapability = async () => {
+  const response = await apiClient.get("/api/invoices/open-capability");
+  return response.data;
+};
+
+export const openInvoiceLocally = async (id) => {
+  const response = await apiClient.post(`/api/invoices/${encodeURIComponent(id)}/open-local`);
   return response.data;
 };
 

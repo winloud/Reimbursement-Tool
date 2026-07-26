@@ -303,30 +303,24 @@ def test_merged_pdf_respects_disabled_vat_special_double_print(monkeypatch, tmp_
     assert len(PdfReader(BytesIO(pdf_bytes)).pages) == 3
 
 
-def test_download_route_marks_draft_report_printed_and_updates_report_date(monkeypatch, db):
+def test_download_route_preserves_draft_status_and_report_date(monkeypatch, db):
     report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
     captured = {}
-
-    class FixedDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 6, 24)
 
     def build_pdf(report_arg, _fill_font_key, _double_print_vat_special_invoices):
         captured["report_date"] = report_arg.report_date
         return b"%PDF-1.4\n%%EOF"
 
-    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
     monkeypatch.setattr("backend.routers.reports.build_merged_report_pdf", build_pdf)
 
     response = get_report_pdf(report.id, db)
 
     db.refresh(report)
     assert response.media_type == "application/pdf"
-    assert report.status == "printed"
-    assert report.report_date == date(2026, 6, 24)
-    assert captured["report_date"] == date(2026, 6, 24)
-    assert "2026-06-24" in response.headers["Content-Disposition"]
+    assert report.status == "draft"
+    assert report.report_date == date(2026, 6, 4)
+    assert captured["report_date"] == date(2026, 6, 4)
+    assert "2026-06-04" in response.headers["Content-Disposition"]
 
 
 def test_download_route_preserves_printed_report_date(monkeypatch, db):
@@ -358,20 +352,14 @@ def test_download_route_preserves_printed_report_date(monkeypatch, db):
     assert "2026-06-04" in response.headers["Content-Disposition"]
 
 
-def test_preview_route_updates_report_date_before_render(monkeypatch, db):
+def test_preview_route_preserves_draft_status_and_report_date(monkeypatch, db):
     report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
     captured = {}
-
-    class FixedDate(date):
-        @classmethod
-        def today(cls):
-            return cls(2026, 6, 24)
 
     def render_pages(report_arg, _fill_font_key):
         captured["report_date"] = report_arg.report_date
         return [{"page": 1, "image_url": "data:image/png;base64,abc"}]
 
-    monkeypatch.setattr("backend.routers.reports.date", FixedDate)
     monkeypatch.setattr("backend.routers.reports.render_report_preview_pages", render_pages)
 
     response = get_report_pdf_preview(report.id, db)
@@ -379,8 +367,8 @@ def test_preview_route_updates_report_date_before_render(monkeypatch, db):
     db.refresh(report)
     assert response.data.pages[0].page == 1
     assert report.status == "draft"
-    assert report.report_date == date(2026, 6, 24)
-    assert captured["report_date"] == date(2026, 6, 24)
+    assert report.report_date == date(2026, 6, 4)
+    assert captured["report_date"] == date(2026, 6, 4)
 
 
 def test_preview_route_preserves_printed_report_date(monkeypatch, db):
@@ -409,6 +397,32 @@ def test_preview_route_preserves_printed_report_date(monkeypatch, db):
     assert report.status == "printed"
     assert report.report_date == date(2026, 6, 4)
     assert captured["report_date"] == date(2026, 6, 4)
+
+
+@pytest.mark.parametrize("report_status", ["checked", "reimbursed"])
+def test_pdf_routes_allow_non_draft_workflow_statuses_without_mutation(monkeypatch, db, report_status):
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    report.status = report_status
+    db.commit()
+    db.refresh(report)
+
+    monkeypatch.setattr(
+        "backend.routers.reports.render_report_preview_pages",
+        lambda _report, _fill_font_key: [{"page": 1, "image_url": "data:image/png;base64,abc"}],
+    )
+    monkeypatch.setattr(
+        "backend.routers.reports.build_merged_report_pdf",
+        lambda _report, _fill_font_key, _double_print_vat_special_invoices: b"%PDF-1.4\n%%EOF",
+    )
+
+    preview = get_report_pdf_preview(report.id, db)
+    download = get_report_pdf(report.id, db)
+
+    db.refresh(report)
+    assert preview.data.pages[0].page == 1
+    assert download.media_type == "application/pdf"
+    assert report.status == report_status
+    assert report.report_date == date(2026, 6, 4)
 
 
 def test_download_route_uses_vat_special_double_print_setting(monkeypatch, db):
@@ -468,16 +482,18 @@ def test_overlay_applies_configured_font_only_to_regular_fields(monkeypatch, db)
     calls = []
 
     def record_draw(_canvas, field, value):
-        calls.append((field.name, field.font_name, value))
+        calls.append((field.name, field.font_name, field.font_size, value))
 
     monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
 
     _build_overlay(report, [], rows, rows, True, (595, 298), "1/2", fill_font_name="CustomFill")
 
-    fonts_by_field = {name: font_name for name, font_name, _value in calls}
+    fonts_by_field = {name: font_name for name, font_name, _font_size, _value in calls}
+    font_sizes_by_field = {name: font_size for name, _font_name, font_size, _value in calls}
     assert fonts_by_field["department"] == "CustomFill"
     assert fonts_by_field["total_amount"] == "CustomFill"
     assert fonts_by_field["custom:宴请_label"] == ITEM_FILL_FONT_NAME
+    assert font_sizes_by_field["custom:宴请_label"] == 9.7
     assert fonts_by_field["page_label"] is None
 
 
@@ -594,6 +610,52 @@ def test_overlay_total_invoice_count_only_counts_transport_invoices(monkeypatch,
     assert values_by_field["total_transport_fare"] == "18.50"
     assert values_by_field["total_other_count"] == 3
     assert values_by_field["total_other_amount"] == "60.00"
+
+
+def test_overlay_keeps_automatic_subsidy_days_and_amount(monkeypatch, db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date="2026-06-04",
+            daily_subsidy=Decimal("80.00"),
+            trips=[TripWrite(sort_order=1, depart_month=6, depart_day=4, arrive_month=6, arrive_day=4)],
+        ),
+    )
+    calls = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
+
+    _build_overlay(report, [], [], [], True, (595, 298), fill_font_name="CustomFill")
+
+    values_by_field = {name: value for name, value in calls}
+    assert report.manual_subsidy_total is None
+    assert values_by_field["subsidy_days"] == "1天"
+    assert values_by_field["subsidy_amount"] == "80.00"
+
+
+@pytest.mark.parametrize("manual_total", [Decimal("35.50"), Decimal("0.00")])
+def test_overlay_hides_days_and_uses_final_total_for_manual_subsidy(
+    monkeypatch, db, manual_total
+):
+    report = create_report(db, ReportCreate(report_date="2026-06-04"))
+    report.manual_subsidy_total = manual_total
+    report.subsidy_days = 3
+    report.subsidy_total = manual_total
+    calls = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
+
+    _build_overlay(report, [], [], [], True, (595, 298), fill_font_name="CustomFill")
+
+    values_by_field = {name: value for name, value in calls}
+    assert values_by_field["subsidy_days"] == ""
+    assert values_by_field["subsidy_amount"] == f"{manual_total:.2f}"
 
 
 def test_overlay_leaves_shortfall_and_surplus_blank_without_advance(monkeypatch, db):

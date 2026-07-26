@@ -158,6 +158,7 @@ OTHER_EXPENSE_CATEGORIES = [
 ]
 OTHER_PROJECT_X = 164.95
 OTHER_PROJECT_WIDTH = 15.0
+OTHER_PROJECT_MAX_FONT_SIZE = 9.7
 OTHER_COUNT_X = 180.038
 OTHER_COUNT_WIDTH = 8.107
 OTHER_AMOUNT_X = 188.145
@@ -368,7 +369,7 @@ def _build_overlay(
                 y_mm,
                 OTHER_PROJECT_WIDTH,
                 height_mm,
-                font_size=10.2,
+                font_size=OTHER_PROJECT_MAX_FONT_SIZE,
                 font_name=ITEM_FILL_FONT_NAME,
             ),
             row.label,
@@ -386,11 +387,16 @@ def _build_overlay(
         total_other_count = sum(row.count for row in all_expense_rows)
         total_other_amount = sum((row.amount for row in all_expense_rows), Decimal("0.00"))
         has_advance = bool(report.advance_amount and report.advance_amount != Decimal("0.00"))
+        has_manual_subsidy = report.manual_subsidy_total is not None
         total_fields = {
             "total_invoice_count": total_transport_count or "",
             "total_transport_fare": _money(total_transport) if total_transport else "",
-            "subsidy_days": f"{report.subsidy_days}天" if report.subsidy_days else "",
-            "subsidy_amount": _money(report.subsidy_total) if report.subsidy_total else "",
+            "subsidy_days": (
+                "" if has_manual_subsidy else (f"{report.subsidy_days}天" if report.subsidy_days else "")
+            ),
+            "subsidy_amount": (
+                _money(report.subsidy_total) if has_manual_subsidy or report.subsidy_total else ""
+            ),
             "total_other_count": total_other_count or "",
             "total_other_amount": _money(total_other_amount) if total_other_amount else "",
             "total_amount": _money(report.total_amount),
