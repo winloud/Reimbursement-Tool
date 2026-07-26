@@ -27,6 +27,12 @@ from backend.services.report_service import (
     rollback_printed_report_for_fuel_shortfall,
     validate_expense_category,
 )
+from backend.services.invoice_duplicate_service import (
+    InvoiceDuplicateIndex,
+    calculate_path_hash,
+    format_duplicate_sources,
+    has_current_report_match,
+)
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
 
@@ -102,48 +108,63 @@ def validate_invoice_target(report, expense_category: str, trip_id: int | None) 
 
 
 def calculate_file_hash(file_path: Path) -> str | None:
-    if not file_path.exists():
-        return None
+    return calculate_path_hash(file_path)
+
+
+def calculate_upload_fingerprint(upload_file: UploadFile) -> tuple[int, str]:
     digest = sha256()
-    with file_path.open("rb") as source:
-        for chunk in iter(lambda: source.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    file_size = 0
+    upload_file.file.seek(0)
+    for chunk in iter(lambda: upload_file.file.read(1024 * 1024), b""):
+        file_size += len(chunk)
+        digest.update(chunk)
+    upload_file.file.seek(0)
+    return file_size, digest.hexdigest()
 
 
 def calculate_upload_hash(upload_file: UploadFile) -> str:
-    digest = sha256()
-    upload_file.file.seek(0)
-    for chunk in iter(lambda: upload_file.file.read(1024 * 1024), b""):
-        digest.update(chunk)
-    upload_file.file.seek(0)
-    return digest.hexdigest()
+    return calculate_upload_fingerprint(upload_file)[1]
 
 
-def ensure_no_duplicate_invoice_file(report, upload_hash: str) -> None:
-    for invoice in report.invoices:
-        if invoice.deleted_at is not None:
-            continue
-        existing_hash = calculate_file_hash(_invoice_file_path(invoice.file_path))
-        if existing_hash == upload_hash:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="该发票文件已在本报销单中上传，请删除重复发票后再上传",
-            )
+def ensure_no_duplicate_invoice_file(
+    duplicate_index: InvoiceDuplicateIndex,
+    report_id: int,
+    upload_size: int,
+    upload_hash: str,
+    subject: str = "该发票文件",
+) -> None:
+    matches = duplicate_index.find_file_matches(upload_size, upload_hash)
+    if not matches:
+        return
+    scope = "本报销单" if has_current_report_match(matches, report_id) else "其他报销单"
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"{subject}已在{scope}中上传，请删除重复发票后再上传。"
+            f"{format_duplicate_sources(matches, report_id)}"
+        ),
+    )
 
 
-def ensure_no_duplicate_invoice_no(report, invoice_no: str | None) -> None:
+def ensure_no_duplicate_invoice_no(
+    duplicate_index: InvoiceDuplicateIndex,
+    report_id: int,
+    invoice_no: str | None,
+) -> None:
     normalized = (invoice_no or "").strip()
     if not normalized:
         return
-    for invoice in report.invoices:
-        if invoice.deleted_at is not None:
-            continue
-        if (invoice.invoice_no or "").strip() == normalized:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail=f"识别到相同发票号 {normalized} 已在本报销单中上传，请删除重复发票后再上传",
-            )
+    matches = duplicate_index.find_invoice_no_matches(normalized)
+    if not matches:
+        return
+    scope = "本报销单" if has_current_report_match(matches, report_id) else "其他报销单"
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail=(
+            f"识别到相同发票号 {normalized} 已在{scope}中上传，请删除重复发票后再上传。"
+            f"{format_duplicate_sources(matches, report_id)}"
+        ),
+    )
 
 
 def safe_category_filename_prefix(expense_category: str) -> str:
@@ -227,8 +248,9 @@ def upload_invoices(
     expense_category = validate_invoice_target(report, expense_category, trip_id)
 
     file_type = detect_file_type(upload_file.filename or "")
-    upload_hash = calculate_upload_hash(upload_file)
-    ensure_no_duplicate_invoice_file(report, upload_hash)
+    duplicate_index = InvoiceDuplicateIndex(db, resolve_path=_invoice_file_path)
+    upload_size, upload_hash = calculate_upload_fingerprint(upload_file)
+    ensure_no_duplicate_invoice_file(duplicate_index, report_id, upload_size, upload_hash)
 
     relative_path = save_upload_file(upload_file, report_id, expense_category, file_type)
     absolute_path = _invoice_file_path(relative_path)
@@ -244,6 +266,7 @@ def upload_invoices(
     created: list[tuple[Invoice, InvoiceParsedData]] = []
     created_paths: list[Path] = []
     seen_invoice_nos: set[str] = set()
+    seen_page_hashes: set[str] = set()
     should_split_pdf = file_type == "pdf" and len(parsed_items) > 1
 
     try:
@@ -256,15 +279,35 @@ def upload_invoices(
                         detail=f"识别到相同发票号 {normalized_invoice_no} 在本文件中重复，请拆分后再上传",
                     )
                 seen_invoice_nos.add(normalized_invoice_no)
-            ensure_no_duplicate_invoice_no(report, parsed.invoice_no)
+            ensure_no_duplicate_invoice_no(duplicate_index, report_id, parsed.invoice_no)
 
             item_relative_path = relative_path
+            page_number: int | None = None
             if should_split_pdf:
                 page_index = parsed_page_index(parsed)
                 if page_index is None:
                     page_index = len(created)
+                page_number = page_index + 1
                 item_relative_path = split_pdf_page_to_upload_file(absolute_path, report_id, expense_category, page_index)
                 created_paths.append(_invoice_file_path(item_relative_path))
+
+            item_path = _invoice_file_path(item_relative_path)
+            calculated_item_hash = calculate_file_hash(item_path)
+            item_hash = calculated_item_hash or upload_hash
+            if should_split_pdf and calculated_item_hash is not None:
+                ensure_no_duplicate_invoice_file(
+                    duplicate_index,
+                    report_id,
+                    item_path.stat().st_size,
+                    calculated_item_hash,
+                    subject=f"该发票文件中的第 {page_number} 页",
+                )
+                if calculated_item_hash in seen_page_hashes:
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"该发票文件中的第 {page_number} 页与本文件中的其他页面内容完全相同，请删除重复页后再上传",
+                    )
+                seen_page_hashes.add(calculated_item_hash)
 
             invoice = Invoice(
                 report_id=report_id,
@@ -280,7 +323,6 @@ def upload_invoices(
             )
             db.add(invoice)
             db.flush()
-            item_hash = calculate_file_hash(_invoice_file_path(item_relative_path)) or upload_hash
             relocate_invoice_file(invoice, item_hash)
             created_paths.append(_invoice_file_path(invoice.file_path))
             created.append((invoice, parsed))

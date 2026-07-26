@@ -10,12 +10,14 @@ import {
   calculateSubsidyDays,
   calculateSummary,
   cloneTripAfter,
+  formatInvoiceUploadFailure,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
   getExpenseItemAmount,
   getFuelSubsidyInvoiceShortfall,
+  getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   hasPaperInvoice,
   getTripYearRangeLabel,
@@ -103,6 +105,36 @@ describe("report edit utilities", () => {
     assert.equal(getClipboardInvoiceFilename({ name: "invoice.webp", type: "image/webp" }, 0, 1234), "invoice.webp");
     assert.equal(getClipboardInvoiceFilename({ name: "", type: "image/png" }, 1, 1234), "clipboard-invoice-1234-2.png");
     assert.equal(getClipboardInvoiceFilename({ name: "clipboard", type: "application/pdf" }, 0, 1234), "clipboard-invoice-1234-1.pdf");
+  });
+
+  it("associates each invoice upload error with its filename", () => {
+    assert.equal(formatInvoiceUploadFailure("invoice-a.pdf", "该发票已存在"), "invoice-a.pdf：该发票已存在");
+    assert.equal(formatInvoiceUploadFailure("", ""), "未命名文件：上传失败");
+  });
+
+  it("summarizes successful and failed invoice uploads", () => {
+    assert.deepEqual(
+      getInvoiceUploadFeedback({ totalFileCount: 1, successfulFileCount: 1 }),
+      { errorMessage: "", toastMessage: "发票已上传，请确认发票信息" },
+    );
+    assert.deepEqual(
+      getInvoiceUploadFeedback({ totalFileCount: 3, successfulFileCount: 2, failures: ["duplicate.pdf：该发票已存在"] }),
+      {
+        errorMessage: "1 个文件上传失败：\nduplicate.pdf：该发票已存在",
+        toastMessage: "已上传 2 个文件，1 个失败，请逐张确认发票信息",
+      },
+    );
+    assert.deepEqual(
+      getInvoiceUploadFeedback({
+        totalFileCount: 2,
+        successfulFileCount: 0,
+        failures: ["first.pdf：文件重复", "second.pdf：发票号重复"],
+      }),
+      {
+        errorMessage: "2 个文件上传失败：\nfirst.pdf：文件重复\nsecond.pdf：发票号重复",
+        toastMessage: "",
+      },
+    );
   });
 
   it("builds create and update payloads using backend field names", () => {

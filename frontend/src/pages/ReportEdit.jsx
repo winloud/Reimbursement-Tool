@@ -64,6 +64,7 @@ import {
   cloneTripAfter,
   emptyForm,
   formatAmount,
+  formatInvoiceUploadFailure,
   getConfirmedInvoiceCount,
   getConfirmedInvoiceTotal,
   getClipboardInvoiceFilename,
@@ -72,6 +73,7 @@ import {
   getExpenseItemInvoiceTotal,
   getExpenseCategoryOptions,
   getFuelSubsidyInvoiceShortfall,
+  getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getTripYearRangeLabel,
   hasPaperInvoice,
@@ -1127,27 +1129,49 @@ export default function ReportEdit() {
     if (!(await ensureSavedBeforeAction())) return;
 
     const uploaded = [];
+    const failures = [];
+    let successfulFileCount = 0;
     setError("");
     setUploadState({ key, current: 0, total: fileList.length, name: fileList[0].name });
     try {
       for (let index = 0; index < fileList.length; index += 1) {
         const file = fileList[index];
         setUploadState({ key, current: index + 1, total: fileList.length, name: file.name });
-        const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
-        if (!res.success) {
-          throw new Error(res.message || `${file.name} 上传失败`);
+        try {
+          const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
+          if (!res.success) {
+            throw new Error(res.message || "上传失败");
+          }
+          const uploadedItems = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
+          if (uploadedItems.length === 0) {
+            throw new Error("服务器未返回发票信息");
+          }
+          uploaded.push(...uploadedItems);
+          successfulFileCount += 1;
+        } catch (err) {
+          failures.push(formatInvoiceUploadFailure(file.name, getApiErrorMessage(err, "上传失败")));
         }
-        const uploadedItems = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
-        uploaded.push(...uploadedItems);
       }
-      await loadForEdit({ quiet: true });
+
+      const feedback = getInvoiceUploadFeedback({
+        totalFileCount: fileList.length,
+        successfulFileCount,
+        failures,
+      });
+
       if (uploaded.length > 0) {
-        setInvoiceQueue(uploaded);
-        setSelectedInvoice(uploaded[0]);
-        setToast(uploaded.length > 1 ? "批量上传完成，请逐张确认发票信息" : "发票已上传，请确认发票信息");
+        const report = await loadForEdit({ quiet: true });
+        const refreshedById = new Map((report?.invoices || []).map((invoice) => [Number(invoice.id), invoice]));
+        const refreshedUploaded = uploaded.map((invoice) => refreshedById.get(Number(invoice.id))).filter(Boolean);
+        const confirmationQueue = refreshedUploaded.length === uploaded.length ? refreshedUploaded : uploaded;
+        setInvoiceQueue(confirmationQueue);
+        setSelectedInvoice(confirmationQueue[0]);
+        setToast(feedback.toastMessage);
+      } else {
+        setInvoiceQueue([]);
+        setSelectedInvoice(null);
       }
-    } catch (err) {
-      setError(getApiErrorMessage(err, "上传失败"));
+      if (feedback.errorMessage) setError(feedback.errorMessage);
     } finally {
       setUploadState(null);
     }
@@ -1415,7 +1439,11 @@ export default function ReportEdit() {
         </Stack>
       </Stack>
 
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+          {error}
+        </Alert>
+      )}
       {readonly && <Alert severity="info">已报销状态为只读，不可修改。</Alert>}
       {uploadState && (
         <Alert severity="info">
