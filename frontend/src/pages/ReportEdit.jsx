@@ -15,15 +15,15 @@ import {
   DialogContentText,
   DialogTitle,
   Divider,
+  FormControlLabel,
   IconButton,
   InputAdornment,
   LinearProgress,
   Paper,
   Snackbar,
   Stack,
+  Switch,
   TextField,
-  ToggleButton,
-  ToggleButtonGroup,
   Tooltip,
   Typography,
 } from "@mui/material";
@@ -182,6 +182,38 @@ const editSectionNavSx = {
 
 const sectionAnchorSx = {
   scrollMarginTop: 24,
+};
+
+const subsidyModeSwitchSx = {
+  width: 40,
+  height: 22,
+  p: 0,
+  "& .MuiSwitch-switchBase": {
+    p: "3px",
+    color: "common.white",
+    "&.Mui-disabled": { color: "common.white" },
+  },
+  "& .MuiSwitch-switchBase.Mui-checked": {
+    color: "common.white",
+    transform: "translateX(18px)",
+  },
+  "& .MuiSwitch-thumb": {
+    width: 16,
+    height: 16,
+    boxShadow: "0 1px 3px rgba(23, 32, 42, 0.28)",
+  },
+  "& .MuiSwitch-track": {
+    borderRadius: 11,
+    bgcolor: "primary.light",
+    opacity: 1,
+  },
+  "& .MuiSwitch-switchBase.Mui-checked + .MuiSwitch-track": {
+    bgcolor: "warning.main",
+    opacity: 1,
+  },
+  "& .MuiSwitch-switchBase.Mui-disabled + .MuiSwitch-track": {
+    opacity: 0.45,
+  },
 };
 
 const tripSegmentGridSx = {
@@ -549,7 +581,6 @@ export default function ReportEdit() {
   const [paperInvoiceEditor, setPaperInvoiceEditor] = useState(null);
   const [paperInvoiceClearTarget, setPaperInvoiceClearTarget] = useState(null);
   const [subsidyDialogOpen, setSubsidyDialogOpen] = useState(false);
-  const [subsidyDialogMode, setSubsidyDialogMode] = useState("automatic");
   const [manualSubsidyDraft, setManualSubsidyDraft] = useState("");
   const [manualSubsidyError, setManualSubsidyError] = useState("");
   const [pdfBusy, setPdfBusy] = useState("");
@@ -693,6 +724,12 @@ export default function ReportEdit() {
     [expenseItems, form.advance_amount, form.daily_subsidy, form.manual_subsidy_total, form.report_date, invoices, trips],
   );
   const hasManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
+  const subsidyModeLabel = hasManualSubsidy ? "人工核定" : "自动计算";
+  const subsidyModeToggleTooltip = readonly
+    ? subsidyModeLabel
+    : hasManualSubsidy
+      ? "切换为自动计算"
+      : "切换为人工核定";
   const automaticSubsidyTotal = summary.subsidyDays * Number(form.daily_subsidy || 0);
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
   const visibleOtherExpenseItems = useMemo(
@@ -875,30 +912,20 @@ export default function ReportEdit() {
     setManualSubsidyError("");
   };
 
-  const openSubsidyDialog = () => {
-    const mode = hasManualSubsidy ? "manual" : "automatic";
-    setSubsidyDialogMode(mode);
-    setManualSubsidyDraft(hasManualSubsidy ? toMoney(form.manual_subsidy_total) : toMoney(automaticSubsidyTotal));
+  const openManualSubsidyDialog = () => {
+    setManualSubsidyDraft(toMoney(form.manual_subsidy_total));
     setManualSubsidyError("");
     setSubsidyDialogOpen(true);
   };
 
-  const handleSubsidyModeChange = (_event, nextMode) => {
-    if (!nextMode) return;
-    if (nextMode === "manual" && subsidyDialogMode !== "manual") {
-      setManualSubsidyDraft(toMoney(automaticSubsidyTotal));
-    }
-    setSubsidyDialogMode(nextMode);
-    setManualSubsidyError("");
+  const handleSubsidyModeToggle = (manual) => {
+    setForm((prev) => ({
+      ...prev,
+      manual_subsidy_total: manual ? toMoney(automaticSubsidyTotal) : null,
+    }));
   };
 
-  const applySubsidyAdjustment = () => {
-    if (subsidyDialogMode === "automatic") {
-      setForm((prev) => ({ ...prev, manual_subsidy_total: null }));
-      closeSubsidyDialog();
-      return;
-    }
-
+  const applyManualSubsidyTotal = () => {
     const validationError = validateManualSubsidyTotal(manualSubsidyDraft);
     if (validationError) {
       setManualSubsidyError(validationError);
@@ -1997,16 +2024,62 @@ export default function ReportEdit() {
 
                 <Stack spacing={1.1}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0 }}>
-                      <Typography fontWeight={800}>途中补贴</Typography>
-                      <Chip
-                        size="small"
-                        label={hasManualSubsidy ? "人工核定" : "自动计算"}
-                        color={hasManualSubsidy ? "warning" : "primary"}
-                        variant="outlined"
-                      />
+                    <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0, flex: "1 1 auto" }}>
+                      <Typography fontWeight={800} sx={{ flexShrink: 0 }}>
+                        途中补贴
+                      </Typography>
+                      <Tooltip title={subsidyModeToggleTooltip} arrow>
+                        <Box component="span" sx={{ display: "inline-flex", minWidth: 0 }}>
+                          <FormControlLabel
+                            disabled={readonly}
+                            control={
+                              <Switch
+                                checked={hasManualSubsidy}
+                                onChange={(_event, checked) => handleSubsidyModeToggle(checked)}
+                                size="small"
+                                inputProps={{
+                                  "aria-label": `途中补贴计算方式：${subsidyModeLabel}`,
+                                }}
+                                sx={subsidyModeSwitchSx}
+                              />
+                            }
+                            label={subsidyModeLabel}
+                            sx={{
+                              m: 0,
+                              gap: 0.75,
+                              minWidth: 0,
+                              cursor: readonly ? "default" : "pointer",
+                              "& .MuiFormControlLabel-label": {
+                                color: hasManualSubsidy ? "warning.dark" : "primary.main",
+                                fontSize: 12,
+                                fontWeight: 800,
+                                lineHeight: 1,
+                                whiteSpace: "nowrap",
+                              },
+                              "& .MuiFormControlLabel-label.Mui-disabled": {
+                                color: "text.disabled",
+                              },
+                            }}
+                          />
+                        </Box>
+                      </Tooltip>
                     </Stack>
-                    <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
+                    <Stack direction="row" alignItems="center" spacing={0.25} sx={{ flex: "0 0 auto" }}>
+                      <Typography fontWeight={800}>{formatAmount(summary.subsidyTotal)}</Typography>
+                      {hasManualSubsidy && !readonly && (
+                        <Tooltip title="编辑人工核定金额" arrow>
+                          <IconButton
+                            size="small"
+                            color="primary"
+                            aria-label="编辑人工核定金额"
+                            onClick={openManualSubsidyDialog}
+                            sx={{ p: 0.5, borderRadius: 0.75 }}
+                          >
+                            <EditIcon sx={{ fontSize: 18 }} />
+                          </IconButton>
+                        </Tooltip>
+                      )}
+                    </Stack>
                   </Stack>
                   {hasManualSubsidy ? (
                     <Typography variant="caption" color="text.secondary">
@@ -2018,16 +2091,6 @@ export default function ReportEdit() {
                       <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
                     </Stack>
                   )}
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    startIcon={<EditIcon />}
-                    onClick={openSubsidyDialog}
-                    disabled={readonly}
-                    sx={{ alignSelf: "flex-start" }}
-                  >
-                    调整途中补贴
-                  </Button>
                 </Stack>
 
                 <Divider />
@@ -2119,68 +2182,34 @@ export default function ReportEdit() {
       />
 
       <Dialog open={subsidyDialogOpen} onClose={closeSubsidyDialog} fullWidth maxWidth="xs">
-        <DialogTitle>调整途中补贴</DialogTitle>
+        <DialogTitle>编辑人工核定金额</DialogTitle>
         <DialogContent>
-          <Stack spacing={2} sx={{ pt: 0.5 }}>
-            <ToggleButtonGroup
-              exclusive
-              fullWidth
-              size="small"
-              value={subsidyDialogMode}
-              onChange={handleSubsidyModeChange}
-              aria-label="途中补贴计算方式"
-              sx={{
-                "& .MuiToggleButton-root": {
-                  flex: 1,
-                  minWidth: 0,
-                  minHeight: 48,
-                  px: 1,
-                  lineHeight: 1.35,
-                  whiteSpace: "normal",
-                },
-              }}
-            >
-              <ToggleButton value="automatic">自动计算</ToggleButton>
-              <ToggleButton value="manual">人工核定补贴总额</ToggleButton>
-            </ToggleButtonGroup>
-
-            {subsidyDialogMode === "manual" ? (
-              <TextField
-                autoFocus
-                fullWidth
-                label="人工核定补贴总额"
-                type="number"
-                value={manualSubsidyDraft}
-                error={Boolean(manualSubsidyError)}
-                helperText={manualSubsidyError || "保存后作为最终总额，不再按补贴天数计算。"}
-                onChange={(event) => {
-                  setManualSubsidyDraft(event.target.value);
-                  if (manualSubsidyError) setManualSubsidyError("");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter") applySubsidyAdjustment();
-                }}
-                InputProps={{
-                  startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                  inputProps: { min: 0, step: "0.01" },
-                }}
-              />
-            ) : (
-              <Paper variant="outlined" sx={{ px: 1.5, py: 1.25, bgcolor: "action.hover" }}>
-                <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
-                  <Typography variant="body2" color="text.secondary">
-                    当前自动计算总额
-                  </Typography>
-                  <Typography fontWeight={800}>{formatAmount(automaticSubsidyTotal)}</Typography>
-                </Stack>
-              </Paper>
-            )}
-          </Stack>
+          <TextField
+            autoFocus
+            fullWidth
+            label="人工核定补贴总额"
+            type="number"
+            value={manualSubsidyDraft}
+            error={Boolean(manualSubsidyError)}
+            helperText={manualSubsidyError || "保存后作为最终总额，不再按补贴天数计算。"}
+            onChange={(event) => {
+              setManualSubsidyDraft(event.target.value);
+              if (manualSubsidyError) setManualSubsidyError("");
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") applyManualSubsidyTotal();
+            }}
+            InputProps={{
+              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+              inputProps: { min: 0, step: "0.01" },
+            }}
+            sx={{ mt: 1.5 }}
+          />
         </DialogContent>
         <DialogActions>
           <Button onClick={closeSubsidyDialog}>取消</Button>
-          <Button variant="contained" onClick={applySubsidyAdjustment}>
-            应用
+          <Button variant="contained" onClick={applyManualSubsidyTotal}>
+            保存
           </Button>
         </DialogActions>
       </Dialog>

@@ -109,6 +109,22 @@ const theme = createTheme({
         },
       },
     },
+    MuiInputLabel: {
+      styleOverrides: {
+        outlined: {
+          "&.MuiInputLabel-shrink": {
+            marginLeft: -4,
+            paddingLeft: 4,
+            paddingRight: 4,
+            backgroundColor: "#FFFFFF",
+          },
+          "&.Mui-focused": {
+            color: "#2454A6",
+            fontWeight: 700,
+          },
+        },
+      },
+    },
     MuiOutlinedInput: {
       styleOverrides: {
         root: {
@@ -116,7 +132,7 @@ const theme = createTheme({
           backgroundColor: "#FFFFFF",
           "&.Mui-focused .MuiOutlinedInput-notchedOutline": {
             borderColor: "#2454A6",
-            boxShadow: "0 0 0 3px rgba(36, 84, 166, 0.13)",
+            borderWidth: 2,
           },
         },
         notchedOutline: {
