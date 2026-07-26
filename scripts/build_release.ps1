@@ -20,9 +20,20 @@ $ReleaseVenv = Join-Path $Root ".release-venv"
 $Python = $BasePython
 $AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))
 $AppExeName = "$AppName.exe"
-$DataSchemaVersion = 1
-$MinSupportedDataSchemaVersion = 1
-$MaxSupportedDataSchemaVersion = $DataSchemaVersion
+Push-Location $Root
+try {
+    $DataSchemaJson = & $BasePython -c "import json; from backend.data_schema import DATA_SCHEMA_VERSION, MIN_SUPPORTED_DATA_SCHEMA_VERSION, MAX_SUPPORTED_DATA_SCHEMA_VERSION; print(json.dumps({'data_schema_version': DATA_SCHEMA_VERSION, 'min_supported_data_schema_version': MIN_SUPPORTED_DATA_SCHEMA_VERSION, 'max_supported_data_schema_version': MAX_SUPPORTED_DATA_SCHEMA_VERSION}))"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Failed to read backend data schema version with exit code $LASTEXITCODE"
+    }
+}
+finally {
+    Pop-Location
+}
+$DataSchemaInfo = ($DataSchemaJson | Select-Object -Last 1) | ConvertFrom-Json
+$DataSchemaVersion = [int]$DataSchemaInfo.data_schema_version
+$MinSupportedDataSchemaVersion = [int]$DataSchemaInfo.min_supported_data_schema_version
+$MaxSupportedDataSchemaVersion = [int]$DataSchemaInfo.max_supported_data_schema_version
 $DistApp = Join-Path $Root "dist\$AppName"
 $LauncherExe = Join-Path $Root "dist\$AppName-launcher.exe"
 $ReleaseDir = Join-Path $Root "release"
