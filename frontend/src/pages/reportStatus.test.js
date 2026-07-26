@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  canAccessReportPdf,
   getReportStatusLabel,
   REPORT_STATUS_OPTIONS,
   STATUS_ACTIONS,
@@ -27,4 +28,11 @@ test("report edit actions only expose adjacent transitions", () => {
   assert.deepEqual(STATUS_ACTIONS.checked.map((item) => item.target), ["printed", "draft"]);
   assert.deepEqual(STATUS_ACTIONS.printed.map((item) => item.target), ["reimbursed", "checked"]);
   assert.deepEqual(STATUS_ACTIONS.reimbursed, []);
+});
+
+test("all report workflow statuses allow PDF preview and download", () => {
+  for (const { value } of REPORT_STATUS_OPTIONS) {
+    assert.equal(canAccessReportPdf(value), true, `${value} should allow PDF access`);
+  }
+  assert.equal(canAccessReportPdf("unknown"), false);
 });

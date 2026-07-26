@@ -411,6 +411,32 @@ def test_preview_route_preserves_printed_report_date(monkeypatch, db):
     assert captured["report_date"] == date(2026, 6, 4)
 
 
+@pytest.mark.parametrize("report_status", ["checked", "reimbursed"])
+def test_pdf_routes_allow_non_draft_workflow_statuses_without_mutation(monkeypatch, db, report_status):
+    report = create_report(db, ReportCreate(report_date="2026-06-04", purpose="成都出差"))
+    report.status = report_status
+    db.commit()
+    db.refresh(report)
+
+    monkeypatch.setattr(
+        "backend.routers.reports.render_report_preview_pages",
+        lambda _report, _fill_font_key: [{"page": 1, "image_url": "data:image/png;base64,abc"}],
+    )
+    monkeypatch.setattr(
+        "backend.routers.reports.build_merged_report_pdf",
+        lambda _report, _fill_font_key, _double_print_vat_special_invoices: b"%PDF-1.4\n%%EOF",
+    )
+
+    preview = get_report_pdf_preview(report.id, db)
+    download = get_report_pdf(report.id, db)
+
+    db.refresh(report)
+    assert preview.data.pages[0].page == 1
+    assert download.media_type == "application/pdf"
+    assert report.status == report_status
+    assert report.report_date == date(2026, 6, 4)
+
+
 def test_download_route_uses_vat_special_double_print_setting(monkeypatch, db):
     db.add(
         Settings(
@@ -468,16 +494,18 @@ def test_overlay_applies_configured_font_only_to_regular_fields(monkeypatch, db)
     calls = []
 
     def record_draw(_canvas, field, value):
-        calls.append((field.name, field.font_name, value))
+        calls.append((field.name, field.font_name, field.font_size, value))
 
     monkeypatch.setattr("backend.services.pdf_generator._draw_field", record_draw)
 
     _build_overlay(report, [], rows, rows, True, (595, 298), "1/2", fill_font_name="CustomFill")
 
-    fonts_by_field = {name: font_name for name, font_name, _value in calls}
+    fonts_by_field = {name: font_name for name, font_name, _font_size, _value in calls}
+    font_sizes_by_field = {name: font_size for name, _font_name, font_size, _value in calls}
     assert fonts_by_field["department"] == "CustomFill"
     assert fonts_by_field["total_amount"] == "CustomFill"
     assert fonts_by_field["custom:宴请_label"] == ITEM_FILL_FONT_NAME
+    assert font_sizes_by_field["custom:宴请_label"] == 9.7
     assert fonts_by_field["page_label"] is None
 
 

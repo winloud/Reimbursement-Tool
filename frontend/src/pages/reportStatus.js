@@ -25,4 +25,6 @@ export const STATUS_ACTIONS = {
   reimbursed: [],
 };
 
+export const canAccessReportPdf = (status) => Object.prototype.hasOwnProperty.call(STATUS_META, status);
+
 export const getReportStatusLabel = (status) => STATUS_META[status]?.label || status;

@@ -11,8 +11,8 @@
 - [ ] feat: 上传重复发票预警
 - [ ] 发票信息确认窗口打开原始文件按钮，可调用本地默认PDF浏览器。（适用本地版，服务器版仍保留浏览器打开）
 - [x] feat：根据实际的报销流程，增加报销单状态：草稿-已核对（新增状态）-已提交（原名：已打印）-已报销（报销打款，流程结案）。允许批量修改状态。报销单录入页面的状态修改功能要同步做改动。
-- [ ] fix bug: 已报销状态下，进入报销单后，预览和下载都是灰度，改为允许预览和下载。
-- [ ] fix bug: PDF输出时其他费用-项目一列，限制最大字号9.7pt
+- [x] fix bug: 已报销状态下，进入报销单后，预览和下载都是灰度，改为允许预览和下载。
+- [x] fix bug: PDF输出时其他费用-项目一列，限制最大字号9.7pt
 
 ## 范围
 本次做：
@@ -96,6 +96,8 @@
 ## 完成记录
 
 ### 重要改动
+- fix(report): 报销单录入页将 PDF 预览、下载权限与“已报销不可编辑”解耦；草稿、已核对、已提交、已报销均可使用 PDF 操作，未确认发票和燃油补助发票不足的既有校验保持不变。
+- fix(pdf): PDF“其他费用-项目”列最大字号由 10.2pt 限制为 9.7pt，较长项目名称继续沿用现有宽度自适应缩小逻辑。
 - feat(report): 报销流程扩展为“草稿、已核对、已提交、已报销”；原内部 `printed` 值保持兼容并统一显示为“已提交”，录入页按相邻节点提供前进和退回操作，已报销继续作为不可回退的结案状态。
 - feat(report): 报销单管理列表新增“已核对”页签和批量状态修改；合法记录统一更新，非法跨级、同状态、已结案或缺失记录逐条跳过，批量回退只创建一次安全快照。
 - feat(data): 新增 `checked` 状态并将 SQLite 数据域与导出包结构升级至 v4；既有 `printed` 记录无需迁移，继续兼容 v1-v3 数据包导入。
@@ -109,6 +111,9 @@
 - fix(desktop): Chrome/Edge app-mode 捕获窗口状态时跳过最小化窗口；读取历史状态时自动丢弃 DPI 虚拟化后的最小化哨兵坐标，避免下次启动复用 `-21333/-21333` 等无效位置。
 
 ### 验证记录
+- PDF 操作浏览器验收：草稿、已核对、已提交、已报销四种录入页的“预览”“下载”按钮均可用；已报销页面仍保持字段只读，浏览器控制台无错误。
+- PDF 状态与字号定向回归：`python -m pytest tests/test_phase4.py -q`，30 passed（5 个既有弃用警告）；覆盖已核对、已报销状态下预览和下载成功且状态/日期不变，并断言“其他费用-项目”列最大字号为 9.7pt。
+- 本轮完整回归：`python -m pytest -q`，331 passed、2 skipped（7 个既有弃用警告）；前端 `node --test src/**/*.test.js`，81 passed；`npm run build` 成功（Vite 6.4.2，1710 modules，仅有既有大 chunk 提示）。
 - 报销状态完整后端回归：`python -m pytest -q`，329 passed、2 skipped（7 个既有弃用警告）。
 - 报销状态定向后端回归：`tests/test_status_machine.py tests/test_report_batch.py tests/test_report_crud.py tests/test_report_trash.py tests/test_phase3.py tests/test_phase5_2.py`，126 passed（5 个既有弃用警告）；覆盖四段状态机、批量更新/跳过、批量回退快照、v4 导出及已核对状态导入。
 - 数据结构与维护定向回归：`tests/test_maintenance_service.py tests/test_settings_fonts.py`，41 passed。
@@ -136,6 +141,7 @@
 - `git diff --check` 通过。
 
 ### 已同步到 CHANGELOG
+- 已在 `Unreleased / Fixed` 中记录四种报销状态均可预览和下载 PDF，以及“其他费用-项目”列最大字号限制为 9.7pt。
 - 已在 `Unreleased` 的 `Added` / `Changed` 中记录四段报销状态、批量修改状态，以及“已打印”更名为“已提交”的兼容策略。
 - 已在 `Unreleased` 的 `Added` 中记录途中补贴自动计算 / 人工核定总额，以及人工模式 PDF 仅输出最终总额。
 - 已在 `Unreleased` 的 `Fixed` 中记录全屏与窗口化内容区宽度跳变、最小化窗口错误保存坐标修复。

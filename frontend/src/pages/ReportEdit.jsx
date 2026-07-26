@@ -93,7 +93,7 @@ import {
   validateTrips,
   validateCustomExpenseName,
 } from "./reportEditUtils";
-import { STATUS_ACTIONS, STATUS_META } from "./reportStatus";
+import { canAccessReportPdf, STATUS_ACTIONS, STATUS_META } from "./reportStatus";
 import {
   DEFAULT_AUTOSAVE_DELAY_SECONDS,
   normalizeAutosaveDelaySeconds,
@@ -721,6 +721,7 @@ export default function ReportEdit() {
     return getFuelSubsidyInvoiceShortfall(fuelItem, fuelInvoices);
   }, [expenseItems, invoices]);
   const hasFuelSubsidyInvoiceShortfall = fuelSubsidyInvoiceShortfall > 0;
+  const canAccessPdf = canAccessReportPdf(status);
   const confirmedInvoiceCount = useMemo(
     () =>
       invoices.filter((invoice) => invoice.amount_confirmed).length +
@@ -2076,7 +2077,7 @@ export default function ReportEdit() {
                     variant="outlined"
                     startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />}
                     onClick={handlePdfPreview}
-                    disabled={readonly || pdfBusy === "download"}
+                    disabled={!canAccessPdf || pdfBusy === "download"}
                     sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
                   >
                     {pdfBusy === "preview" ? "生成中" : hasUnconfirmedInvoices ? "待确认后预览" : "预览"}
@@ -2086,7 +2087,7 @@ export default function ReportEdit() {
                     variant="contained"
                     startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
                     onClick={handlePdfDownload}
-                    disabled={readonly || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
+                    disabled={!canAccessPdf || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
                     sx={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
                   >
                     {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}

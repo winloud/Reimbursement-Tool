@@ -158,6 +158,7 @@ OTHER_EXPENSE_CATEGORIES = [
 ]
 OTHER_PROJECT_X = 164.95
 OTHER_PROJECT_WIDTH = 15.0
+OTHER_PROJECT_MAX_FONT_SIZE = 9.7
 OTHER_COUNT_X = 180.038
 OTHER_COUNT_WIDTH = 8.107
 OTHER_AMOUNT_X = 188.145
@@ -368,7 +369,7 @@ def _build_overlay(
                 y_mm,
                 OTHER_PROJECT_WIDTH,
                 height_mm,
-                font_size=10.2,
+                font_size=OTHER_PROJECT_MAX_FONT_SIZE,
                 font_name=ITEM_FILL_FONT_NAME,
             ),
             row.label,
