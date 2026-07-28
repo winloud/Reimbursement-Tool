@@ -20,7 +20,7 @@
 
 ## 二、当前状态
 
-- 当前源码版本：`v1.2.6`
+- 当前源码版本：`v1.3.0`
 - 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
 - 当前开发版：TBD
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
@@ -72,6 +72,7 @@
 
 | 版本 | 状态 | 文档 |
 | --- | --- | --- |
+| `v1.3.0` | 内容已冻结 | [releases/v1.3.0-plan.md](releases/v1.3.0-plan.md) |
 | `v1.2.6` | 内容已冻结 | [releases/v1.2.6-plan.md](releases/v1.2.6-plan.md) |
 | `v1.2.5` | 内容已冻结 | [releases/v1.2.5-plan.md](releases/v1.2.5-plan.md) |
 | `v1.2.4` | 内容已冻结 | [releases/v1.2.4-plan.md](releases/v1.2.4-plan.md) |
