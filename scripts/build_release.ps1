@@ -230,7 +230,7 @@ function New-OpenCvRuntimePackage {
     $RuntimeZipName = "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip"
     $RuntimeZipPath = Join-Path $ReleaseDir $RuntimeZipName
     $RuntimeStage = Join-Path $ReleaseDir ".opencv-runtime-$OpenCvPackageVersion"
-    $ModelSource = Join-Path $Root "docs\archive\wechat_qrcode"
+    $ModelSource = Join-Path $Root "assets\opencv-wechat-qrcode"
 
     if (Test-Path -LiteralPath $RuntimeZipPath) {
         throw "OpenCV runtime ZIP already exists: $RuntimeZipPath. Delete it manually before rebuilding."

@@ -107,4 +107,5 @@ def test_release_script_can_build_optional_opencv_runtime_package():
     assert "opencv-wechat-runtime-opencv-$OpenCvPackageVersion-win_amd64.zip" in script
     assert "opencv_package_version" in script
     assert "numpy_version" in script
-    assert "docs\\archive\\wechat_qrcode" in script
+    assert "assets\\opencv-wechat-qrcode" in script
+    assert "docs\\archive\\wechat_qrcode" not in script

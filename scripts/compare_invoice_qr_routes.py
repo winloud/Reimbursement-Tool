@@ -19,9 +19,9 @@ from backend.services.invoice_parser import (
 
 
 SAMPLE_DIR = ROOT / "test example"
-MODEL_DIR = ROOT / "docs" / "archive" / "wechat_qrcode"
-REPORT_MD = ROOT / "docs" / "archive" / "invoice_qr_route_comparison_2026-06-09.md"
-REPORT_CSV = ROOT / "docs" / "archive" / "invoice_qr_route_comparison_2026-06-09.csv"
+MODEL_DIR = ROOT / "assets" / "opencv-wechat-qrcode"
+REPORT_MD = ROOT / "docs" / "testing" / "invoice_qr_route_comparison_2026-06-09.md"
+REPORT_CSV = ROOT / "docs" / "testing" / "invoice_qr_route_comparison_2026-06-09.csv"
 
 
 def render_pdf_first_page(path: Path) -> dict[str, Any]:
