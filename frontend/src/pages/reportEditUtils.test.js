@@ -10,12 +10,14 @@ import {
   calculateSubsidyDays,
   calculateSummary,
   cloneTripAfter,
+  createInvoiceUploadIssue,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
   getExpenseItemAmount,
   getFuelSubsidyInvoiceShortfall,
+  getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   hasPaperInvoice,
   getTripYearRangeLabel,
@@ -103,6 +105,101 @@ describe("report edit utilities", () => {
     assert.equal(getClipboardInvoiceFilename({ name: "invoice.webp", type: "image/webp" }, 0, 1234), "invoice.webp");
     assert.equal(getClipboardInvoiceFilename({ name: "", type: "image/png" }, 1, 1234), "clipboard-invoice-1234-2.png");
     assert.equal(getClipboardInvoiceFilename({ name: "clipboard", type: "application/pdf" }, 0, 1234), "clipboard-invoice-1234-1.pdf");
+  });
+
+  it("classifies invoice upload issues and keeps their filenames", () => {
+    assert.deepEqual(createInvoiceUploadIssue("invoice-a.pdf", "该发票已存在", 409), {
+      fileName: "invoice-a.pdf",
+      message: "该发票已存在",
+      type: "duplicate",
+    });
+    assert.deepEqual(createInvoiceUploadIssue("", "", 500), {
+      fileName: "未命名文件",
+      message: "上传失败",
+      type: "error",
+    });
+  });
+
+  it("summarizes successful and failed invoice uploads", () => {
+    assert.deepEqual(
+      getInvoiceUploadFeedback({ totalFileCount: 1, successfulFileCount: 1 }),
+      {
+        totalFileCount: 1,
+        successfulFileCount: 1,
+        duplicateCount: 0,
+        failedCount: 0,
+        issues: [],
+        hasIssues: false,
+        toastMessage: "发票已上传，请确认发票信息",
+      },
+    );
+    const duplicateIssue = createInvoiceUploadIssue("duplicate.pdf", "该发票已存在", 409);
+    assert.deepEqual(
+      getInvoiceUploadFeedback({ totalFileCount: 3, successfulFileCount: 2, issues: [duplicateIssue] }),
+      {
+        totalFileCount: 3,
+        successfulFileCount: 2,
+        duplicateCount: 1,
+        failedCount: 0,
+        issues: [duplicateIssue],
+        hasIssues: true,
+        toastMessage: "",
+      },
+    );
+    const duplicateIssues = [
+      createInvoiceUploadIssue("first.pdf", "文件重复", 409),
+      createInvoiceUploadIssue("second.pdf", "发票号重复", 409),
+    ];
+    assert.deepEqual(
+      getInvoiceUploadFeedback({
+        totalFileCount: 2,
+        successfulFileCount: 0,
+        issues: duplicateIssues,
+      }),
+      {
+        totalFileCount: 2,
+        successfulFileCount: 0,
+        duplicateCount: 2,
+        failedCount: 0,
+        issues: duplicateIssues,
+        hasIssues: true,
+        toastMessage: "",
+      },
+    );
+
+    const failedIssue = createInvoiceUploadIssue("broken.pdf", "解析失败", 500);
+    assert.deepEqual(
+      getInvoiceUploadFeedback({
+        totalFileCount: 3,
+        successfulFileCount: 1,
+        issues: [duplicateIssue, failedIssue],
+      }),
+      {
+        totalFileCount: 3,
+        successfulFileCount: 1,
+        duplicateCount: 1,
+        failedCount: 1,
+        issues: [duplicateIssue, failedIssue],
+        hasIssues: true,
+        toastMessage: "",
+      },
+    );
+  });
+
+  it("uses one upload-result dialog before confirming partial successes", () => {
+    const reportEditSource = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const dialogSource = readFileSync(
+      new URL("../components/InvoiceUploadResultDialog.jsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(reportEditSource, /setUploadResult\(\{ \.\.\.feedback, uploadedInvoices: confirmationQueue \}\)/);
+    assert.match(reportEditSource, /const handleUploadResultContinue/);
+    assert.match(dialogSource, /发票上传结果/);
+    assert.match(dialogSource, /继续确认 \{uploadedInvoiceCount\} 张/);
+    assert.match(dialogSource, /知道了/);
+    assert.match(dialogSource, /重复文件（未上传）/);
+    assert.match(dialogSource, /上传失败/);
   });
 
   it("builds create and update payloads using backend field names", () => {

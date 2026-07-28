@@ -24,7 +24,11 @@ from backend.schemas.ticket import (
     RailTicketPreview,
 )
 from backend.services.invoice_parser import extract_pdf_page_artifacts, parse_invoice_artifacts
-from backend.services.invoice_service import build_invoice_storage_path, calculate_file_hash
+from backend.services.invoice_duplicate_service import (
+    InvoiceDuplicateIndex,
+    format_duplicate_sources,
+)
+from backend.services.invoice_service import build_invoice_storage_path
 from backend.services.pdf_text_decoder import PdfTextExtraction, PdfTextRun, extract_pdf_text_runs
 from backend.services.report_service import ensure_report_writable, get_report_or_404, recalculate_report_totals
 from backend.services.settings_service import get_or_create_settings
@@ -426,20 +430,6 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
-def _existing_duplicates(report) -> tuple[set[str], set[str]]:
-    hashes: set[str] = set()
-    invoice_nos: set[str] = set()
-    for invoice in report.invoices:
-        if invoice.deleted_at is not None:
-            continue
-        if invoice.invoice_no and invoice.invoice_no.strip():
-            invoice_nos.add(invoice.invoice_no.strip())
-        file_hash = calculate_file_hash(uploaded_path(invoice.file_path))
-        if file_hash:
-            hashes.add(file_hash)
-    return hashes, invoice_nos
-
-
 def _cleanup_expired_tokens() -> None:
     if not TEMP_ROOT.exists():
         return
@@ -467,7 +457,7 @@ def create_ticket_preview(db: Session, report_id: int, files: Iterable[UploadFil
     token_dir.mkdir(parents=True, exist_ok=False)
     try:
         settings = get_or_create_settings(db)
-        existing_hashes, existing_invoice_nos = _existing_duplicates(report)
+        duplicate_index = InvoiceDuplicateIndex(db, resolve_path=uploaded_path)
         seen_hashes: set[str] = set()
         seen_invoice_nos: set[str] = set()
         tickets: list[RailTicketCandidate] = []
@@ -493,13 +483,25 @@ def create_ticket_preview(db: Session, report_id: int, files: Iterable[UploadFil
                 continue
             file_hash = _file_hash(temp_path)
             reasons: list[str] = []
-            if file_hash in existing_hashes:
-                reasons.append("相同文件已在当前报销单中")
+            global_matches: dict[int, Invoice] = {}
+            global_reasons: list[str] = []
+            file_matches = duplicate_index.find_file_matches(temp_path.stat().st_size, file_hash)
+            if file_matches:
+                global_reasons.append("相同文件已存在")
+                global_matches.update((invoice.id, invoice) for invoice in file_matches)
             if file_hash in seen_hashes:
                 reasons.append("本次上传包含相同文件")
             normalized_no = (ticket.invoice_no or "").strip()
-            if normalized_no and normalized_no in existing_invoice_nos:
-                reasons.append(f"发票号 {normalized_no} 已在当前报销单中")
+            invoice_no_matches = duplicate_index.find_invoice_no_matches(normalized_no)
+            if invoice_no_matches:
+                global_reasons.append(f"发票号 {normalized_no} 已存在")
+                global_matches.update((invoice.id, invoice) for invoice in invoice_no_matches)
+            if global_reasons:
+                reasons.insert(
+                    0,
+                    f"{'、'.join(global_reasons)}。"
+                    f"{format_duplicate_sources(global_matches.values(), report_id)}",
+                )
             if normalized_no and normalized_no in seen_invoice_nos:
                 reasons.append(f"本次上传包含重复发票号 {normalized_no}")
             seen_hashes.add(file_hash)
@@ -600,7 +602,7 @@ def import_ticket_preview(db: Session, report_id: int, payload: RailTicketImport
     if not set(ticket_by_id).issubset(metadata_by_id):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="提交的车票与预览令牌不一致")
 
-    existing_hashes, existing_invoice_nos = _existing_duplicates(report)
+    duplicate_index = InvoiceDuplicateIndex(db, resolve_path=uploaded_path)
     submitted_hashes: set[str] = set()
     submitted_invoice_nos: set[str] = set()
     for ticket_id, ticket in ticket_by_id.items():
@@ -608,12 +610,30 @@ def import_ticket_preview(db: Session, report_id: int, payload: RailTicketImport
         temp_path = token_dir / item["stored_name"]
         if not temp_path.is_file() or _file_hash(temp_path) != item["file_hash"]:
             raise HTTPException(status_code=status.HTTP_410_GONE, detail="临时车票文件缺失或已变化，请重新上传")
-        if item["file_hash"] in existing_hashes or item["file_hash"] in submitted_hashes:
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"{item['file_name']} 已在当前报销单中上传")
+        file_matches = duplicate_index.find_file_matches(temp_path.stat().st_size, item["file_hash"])
+        if file_matches:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"{item['file_name']} 与已有发票文件重复。"
+                    f"{format_duplicate_sources(file_matches, report_id)}"
+                ),
+            )
+        if item["file_hash"] in submitted_hashes:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"{item['file_name']} 与本次导入的其他车票文件重复")
         submitted_hashes.add(item["file_hash"])
         invoice_no = (ticket.invoice_no or "").strip()
-        if invoice_no and (invoice_no in existing_invoice_nos or invoice_no in submitted_invoice_nos):
-            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"发票号 {invoice_no} 重复")
+        invoice_no_matches = duplicate_index.find_invoice_no_matches(invoice_no)
+        if invoice_no_matches:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"发票号 {invoice_no} 重复。"
+                    f"{format_duplicate_sources(invoice_no_matches, report_id)}"
+                ),
+            )
+        if invoice_no and invoice_no in submitted_invoice_nos:
+            raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"发票号 {invoice_no} 在本次导入中重复")
         if invoice_no:
             submitted_invoice_nos.add(invoice_no)
 

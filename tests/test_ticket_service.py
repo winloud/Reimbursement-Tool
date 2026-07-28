@@ -23,7 +23,8 @@ from backend.schemas.ticket import (
     RailTicketImportRequest,
     RailTicketPreview,
 )
-from backend.services import ticket_service
+from backend.services import invoice_service, ticket_service
+from backend.services.invoice_service import upload_invoice
 from backend.services.pdf_text_decoder import PdfTextExtraction, PdfTextRun, decode_font_bytes, extract_pdf_text_runs
 from backend.services.report_service import create_report
 
@@ -82,6 +83,33 @@ def configure_ticket_paths(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> t
 
     monkeypatch.setattr(ticket_service, "uploaded_path", test_uploaded_path)
     return upload_root, temp_root
+
+
+def add_existing_invoice(
+    db,
+    upload_root: Path,
+    report,
+    *,
+    content: bytes,
+    invoice_no: str | None = None,
+    expense_category: str = "luggage",
+) -> Invoice:
+    relative_path = Path("uploads") / str(report.id) / f"existing-{report.id}.pdf"
+    absolute_path = upload_root.joinpath(*relative_path.parts[1:])
+    absolute_path.parent.mkdir(parents=True, exist_ok=True)
+    absolute_path.write_bytes(content)
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category=expense_category,
+        file_path=relative_path.as_posix(),
+        file_type="pdf",
+        invoice_no=invoice_no,
+        amount=Decimal("10.00"),
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    return invoice
 
 
 def test_discard_ticket_preview_removes_only_matching_token(monkeypatch, tmp_path):
@@ -634,6 +662,85 @@ def test_create_ticket_preview_returns_tickets_in_grouping_order(db, monkeypatch
     assert "唯一连续路线自动排序" in preview.warnings[0]
 
 
+def test_create_ticket_preview_marks_cross_report_file_and_number_duplicates(db, monkeypatch, tmp_path):
+    upload_root, _temp_root = configure_ticket_paths(monkeypatch, tmp_path)
+    source = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 1),
+            employee_name="李四",
+            purpose="既有报销",
+        ),
+    )
+    add_existing_invoice(
+        db,
+        upload_root,
+        source,
+        content=b"existing rail ticket",
+        invoice_no="RAIL-GLOBAL-001",
+    )
+    source.status = "reimbursed"
+    db.commit()
+    target = create_report(db, ReportCreate(report_date=date(2026, 7, 2), purpose="目标报销"))
+
+    monkeypatch.setattr(
+        ticket_service,
+        "parse_rail_ticket",
+        lambda _path, ticket_id, file_name, _invoice_qr_engine: RailTicketCandidate(
+            id=ticket_id,
+            file_name=file_name,
+            travel_date=date(2026, 7, 10),
+            depart_station="杭州",
+            arrive_station="南京南",
+            amount=Decimal("100.00"),
+            invoice_no="RAIL-GLOBAL-001",
+        ),
+    )
+
+    preview = ticket_service.create_ticket_preview(
+        db,
+        target.id,
+        [UploadFile(file=BytesIO(b"existing rail ticket"), filename="duplicate.pdf")],
+    )
+
+    assert len(preview.tickets) == 1
+    duplicate = preview.tickets[0]
+    assert duplicate.duplicate is True
+    assert "相同文件已存在" in duplicate.duplicate_reason
+    assert "发票号 RAIL-GLOBAL-001 已存在" in duplicate.duplicate_reason
+    assert f"编号：{source.id}" in duplicate.duplicate_reason
+    assert "事由：既有报销" in duplicate.duplicate_reason
+    assert "人员：李四" in duplicate.duplicate_reason
+    assert "状态：已报销" in duplicate.duplicate_reason
+    assert any("检测到重复车票" in warning for warning in preview.warnings)
+
+
+def test_ticket_imported_invoice_blocks_later_ordinary_upload(db, monkeypatch, tmp_path):
+    upload_root, temp_root = configure_ticket_paths(monkeypatch, tmp_path)
+    source = create_report(db, ReportCreate(report_date=date(2026, 7, 1), purpose="车票来源"))
+    token, _token_dir = write_preview_token(temp_root, source.id, [("a", b"ticket-origin-content")])
+    payload = RailTicketImportRequest(
+        token=token,
+        tickets=[import_candidate("a", invoice_no="RAIL-ORIGIN-001")],
+        groups=[RailTicketImportGroup(ticket_ids=["a"], merge=False)],
+    )
+    ticket_service.import_ticket_preview(db, source.id, payload)
+    target = create_report(db, ReportCreate(report_date=date(2026, 7, 2), purpose="普通上传目标"))
+    monkeypatch.setattr(invoice_service, "UPLOAD_ROOT", upload_root)
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=target.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="duplicate.pdf", file=BytesIO(b"ticket-origin-content")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert f"编号：{source.id}" in exc_info.value.detail
+    assert db.scalars(select(Invoice).where(Invoice.report_id == target.id)).all() == []
+
+
 def test_import_merged_transfer_creates_one_trip_with_two_invoices(db, monkeypatch, tmp_path):
     upload_root, temp_root = configure_ticket_paths(monkeypatch, tmp_path)
     report = create_report(db, ReportCreate(purpose="中转导入"))
@@ -757,6 +864,36 @@ def test_import_rejects_duplicate_file_hash_within_batch(db, monkeypatch, tmp_pa
         ticket_service.import_ticket_preview(db, report.id, payload)
 
     assert exc.value.status_code == 409
+
+
+def test_import_rechecks_global_duplicates_created_after_preview(db, monkeypatch, tmp_path):
+    upload_root, temp_root = configure_ticket_paths(monkeypatch, tmp_path)
+    target = create_report(db, ReportCreate(report_date=date(2026, 7, 2), purpose="待导入报销单"))
+    token, token_dir = write_preview_token(temp_root, target.id, [("late", b"late duplicate ticket")])
+    payload = RailTicketImportRequest(
+        token=token,
+        tickets=[import_candidate("late", invoice_no="LATE-DUPLICATE-001")],
+        groups=[RailTicketImportGroup(ticket_ids=["late"], merge=False)],
+    )
+
+    source = create_report(db, ReportCreate(report_date=date(2026, 7, 1), purpose="预览后新增来源"))
+    add_existing_invoice(
+        db,
+        upload_root,
+        source,
+        content=b"late duplicate ticket",
+        invoice_no="LATE-DUPLICATE-001",
+        expense_category="transport_fare",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        ticket_service.import_ticket_preview(db, target.id, payload)
+
+    assert exc_info.value.status_code == 409
+    assert f"编号：{source.id}" in exc_info.value.detail
+    assert db.scalars(select(Trip).where(Trip.report_id == target.id)).all() == []
+    assert db.scalars(select(Invoice).where(Invoice.report_id == target.id)).all() == []
+    assert token_dir.exists()
 
 
 def test_create_ticket_preview_skips_unparseable_file_and_keeps_others(db, monkeypatch, tmp_path):

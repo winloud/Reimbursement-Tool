@@ -419,7 +419,7 @@ function TicketEditor({
           </Alert>
         ))}
         {errors.length > 0 && (
-          <Alert severity="error" sx={{ py: 0.25 }}>
+          <Alert severity="error" sx={{ py: 0.25, "& .MuiAlert-message": { minWidth: 0, overflowWrap: "anywhere" } }}>
             {errors.join("；")}
           </Alert>
         )}
@@ -713,11 +713,22 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
                       已按日期和连续站点整理初始顺序；分叉或循环路线内部保留上传顺序，仍可手动调整、拆分或取消合并。
                     </Typography>
                   </Box>
-                  <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap>
+                  <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ minWidth: 0, maxWidth: "100%" }}>
                     <Chip size="small" label={`${groups.length} 个建议行程组`} color="info" variant="outlined" />
                     {duplicateCount > 0 && <Chip size="small" label={`${duplicateCount} 张重复票`} color="error" />}
                     {invalidCount > 0 && <Chip size="small" label={`${invalidCount} 张待补充`} color="warning" />}
-                    {preview.expires_at && <Chip size="small" label={`临时预览有效至 ${preview.expires_at}`} variant="outlined" />}
+                    {preview.expires_at && (
+                      <Chip
+                        size="small"
+                        label={`临时预览有效至 ${preview.expires_at}`}
+                        variant="outlined"
+                        sx={{
+                          height: "auto",
+                          maxWidth: "100%",
+                          "& .MuiChip-label": { py: 0.35, whiteSpace: "normal", overflowWrap: "anywhere" },
+                        }}
+                      />
+                    )}
                   </Stack>
                 </Stack>
               </Paper>

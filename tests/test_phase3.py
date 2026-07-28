@@ -1,4 +1,4 @@
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO
 from pathlib import Path
@@ -576,7 +576,7 @@ def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_pa
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     writer = PdfWriter()
     writer.add_blank_page(width=200, height=200)
-    writer.add_blank_page(width=200, height=200)
+    writer.add_blank_page(width=210, height=200)
     pdf_buffer = BytesIO()
     writer.write(pdf_buffer)
     pdf_buffer.seek(0)
@@ -613,6 +613,92 @@ def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_pa
     for invoice in invoices:
         assert invoice.file_type == "pdf"
         assert (upload_root / Path(invoice.file_path).relative_to("uploads")).exists()
+
+
+def test_upload_multi_page_pdf_rejects_page_matching_existing_invoice(monkeypatch, tmp_path: Path, db):
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+    source = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="单页来源"))
+    source_relative = Path("uploads") / str(source.id) / "existing-page.pdf"
+    source_path = upload_root.joinpath(*source_relative.parts[1:])
+    source_path.parent.mkdir(parents=True, exist_ok=True)
+    source_path.write_bytes(b"existing split page")
+    db.add(
+        Invoice(
+            report_id=source.id,
+            expense_category="luggage",
+            file_path=source_relative.as_posix(),
+            file_type="pdf",
+            amount=Decimal("10.00"),
+        )
+    )
+    db.commit()
+    target = create_report(db, ReportCreate(report_date=date(2026, 6, 2), purpose="多页目标"))
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(amount=Decimal("10.00"), raw={"page_index": 0}),
+            InvoiceParsedData(amount=Decimal("20.00"), raw={"page_index": 1}),
+        ],
+    )
+
+    def fake_split(_source_path, report_id, _category, page_index):
+        relative = Path("uploads") / str(report_id) / f"page-{page_index}.pdf"
+        path = upload_root.joinpath(*relative.parts[1:])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"existing split page" if page_index == 0 else b"unique split page")
+        return relative.as_posix()
+
+    monkeypatch.setattr("backend.services.invoice_service.split_pdf_page_to_upload_file", fake_split)
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoices(
+            db,
+            report_id=target.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="multi.pdf", file=BytesIO(b"different multi-page source")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "第 1 页" in exc_info.value.detail
+    assert f"编号：{source.id}" in exc_info.value.detail
+    assert db.scalars(select(Invoice).where(Invoice.report_id == target.id)).all() == []
+    assert list((upload_root / str(target.id)).glob("*")) == []
+
+
+def test_upload_multi_page_pdf_rejects_identical_pages_and_rolls_back(monkeypatch, tmp_path: Path, db):
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(amount=Decimal("10.00"), raw={"page_index": 0}),
+            InvoiceParsedData(amount=Decimal("20.00"), raw={"page_index": 1}),
+        ],
+    )
+
+    def fake_split(_source_path, report_id, _category, page_index):
+        relative = Path("uploads") / str(report_id) / f"page-{page_index}.pdf"
+        path = upload_root.joinpath(*relative.parts[1:])
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(b"identical split page")
+        return relative.as_posix()
+
+    monkeypatch.setattr("backend.services.invoice_service.split_pdf_page_to_upload_file", fake_split)
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoices(
+            db,
+            report_id=report.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="multi.pdf", file=BytesIO(b"multi-page source")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "与本文件中的其他页面内容完全相同" in exc_info.value.detail
+    assert db.scalars(select(Invoice).where(Invoice.report_id == report.id)).all() == []
+    assert list((upload_root / str(report.id)).glob("*")) == []
 
 
 def test_confirming_invoice_updates_report_totals(monkeypatch, db):
@@ -739,6 +825,161 @@ def test_upload_invoice_rejects_duplicate_invoice_number_in_same_report(monkeypa
         select(Invoice).where(Invoice.report_id == report.id, Invoice.deleted_at.is_(None)),
     ).all()
     assert len(active_invoices) == 1
+
+
+@pytest.mark.parametrize(
+    ("source_status", "status_label"),
+    [
+        ("draft", "草稿"),
+        ("checked", "已核对"),
+        ("printed", "已提交"),
+        ("reimbursed", "已报销"),
+    ],
+)
+def test_upload_invoice_rejects_duplicate_file_across_all_active_report_statuses(
+    monkeypatch,
+    tmp_path: Path,
+    db,
+    source_status: str,
+    status_label: str,
+):
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(amount=Decimal("10.00")),
+    )
+    source = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 3),
+            employee_name="张三",
+            purpose="来源出差",
+        ),
+    )
+    upload_invoice(
+        db,
+        report_id=source.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="source.pdf", file=BytesIO(b"global duplicate invoice")),
+    )
+    source.status = source_status
+    db.commit()
+    target = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="目标出差"))
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=target.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="duplicate.pdf", file=BytesIO(b"global duplicate invoice")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "该发票文件已在其他报销单中上传" in exc_info.value.detail
+    assert f"编号：{source.id}" in exc_info.value.detail
+    assert "事由：来源出差" in exc_info.value.detail
+    assert "人员：张三" in exc_info.value.detail
+    assert f"状态：{status_label}" in exc_info.value.detail
+    assert db.scalars(select(Invoice).where(Invoice.report_id == target.id)).all() == []
+
+
+def test_upload_invoice_rejects_duplicate_number_across_reports_after_strip(monkeypatch, tmp_path: Path, db):
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "uploads")
+    parsed_numbers = iter([" GLOBAL-NO-001 ", "GLOBAL-NO-001"])
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no=next(parsed_numbers), amount=Decimal("10.00")),
+    )
+    source = create_report(db, ReportCreate(report_date=date(2026, 6, 3), purpose="号码来源"))
+    upload_invoice(
+        db,
+        report_id=source.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="source.pdf", file=BytesIO(b"source invoice content")),
+    )
+    target = create_report(db, ReportCreate(report_date=date(2026, 6, 4)))
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=target.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="target.pdf", file=BytesIO(b"different target invoice content")),
+        )
+
+    assert exc_info.value.status_code == 409
+    assert "识别到相同发票号 GLOBAL-NO-001 已在其他报销单中上传" in exc_info.value.detail
+    assert f"编号：{source.id}" in exc_info.value.detail
+    assert db.scalars(select(Invoice).where(Invoice.report_id == target.id)).all() == []
+
+
+@pytest.mark.parametrize("deleted_owner", ["invoice", "report"])
+def test_upload_invoice_ignores_soft_deleted_duplicate_sources(monkeypatch, tmp_path: Path, db, deleted_owner: str):
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(amount=Decimal("10.00")),
+    )
+    source = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    source_invoice, _parsed = upload_invoice(
+        db,
+        report_id=source.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="source.pdf", file=BytesIO(b"reusable deleted invoice")),
+    )
+    if deleted_owner == "invoice":
+        source_invoice.deleted_at = datetime.utcnow()
+    else:
+        source.deleted_at = datetime.utcnow()
+    db.commit()
+    target = create_report(db, ReportCreate(report_date=date(2026, 6, 4)))
+
+    uploaded, _parsed = upload_invoice(
+        db,
+        report_id=target.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="target.pdf", file=BytesIO(b"reusable deleted invoice")),
+    )
+
+    assert uploaded.report_id == target.id
+
+
+def test_upload_invoice_duplicate_message_limits_report_contexts(monkeypatch, tmp_path: Path, db):
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", tmp_path / "uploads")
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_file",
+        lambda _path, _file_type: InvoiceParsedData(invoice_no="MULTI-SOURCE", amount=Decimal("10.00")),
+    )
+    source_ids = []
+    for index in range(4):
+        source = create_report(db, ReportCreate(report_date=date(2026, 6, index + 1), purpose=f"来源 {index + 1}"))
+        source_ids.append(source.id)
+        db.add(
+            Invoice(
+                report_id=source.id,
+                expense_category="luggage",
+                file_path=f"uploads/{source.id}/missing.pdf",
+                file_type="pdf",
+                invoice_no="MULTI-SOURCE",
+                amount=Decimal("10.00"),
+            )
+        )
+    db.commit()
+    target = create_report(db, ReportCreate(report_date=date(2026, 6, 5)))
+
+    with pytest.raises(HTTPException) as exc_info:
+        upload_invoice(
+            db,
+            report_id=target.id,
+            expense_category="luggage",
+            upload_file=UploadFile(filename="target.pdf", file=BytesIO(b"new content")),
+        )
+
+    assert exc_info.value.status_code == 409
+    for source_id in source_ids[:3]:
+        assert f"编号：{source_id}" in exc_info.value.detail
+    assert f"编号：{source_ids[3]}" not in exc_info.value.detail
+    assert "另有 1 张来源报销单" in exc_info.value.detail
 
 
 def test_report_update_can_add_custom_expense_category_and_keeps_fixed_items(db):

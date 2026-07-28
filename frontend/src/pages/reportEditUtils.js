@@ -84,6 +84,34 @@ export const getClipboardInvoiceFilename = (file, index = 0, timestamp = Date.no
   return extension ? `clipboard-invoice-${timestamp}-${index + 1}${extension}` : currentName;
 };
 
+export const createInvoiceUploadIssue = (fileName, message, statusCode) => ({
+  fileName: String(fileName || "").trim() || "未命名文件",
+  message: String(message || "").trim() || "上传失败",
+  type: Number(statusCode) === 409 ? "duplicate" : "error",
+});
+
+export const getInvoiceUploadFeedback = ({ totalFileCount = 0, successfulFileCount = 0, issues = [] } = {}) => {
+  const normalizedIssues = Array.isArray(issues) ? issues.filter(Boolean) : [];
+  const duplicateCount = normalizedIssues.filter((issue) => issue.type === "duplicate").length;
+  const failedCount = normalizedIssues.length - duplicateCount;
+  const hasIssues = normalizedIssues.length > 0;
+
+  return {
+    totalFileCount: Math.max(0, Number(totalFileCount) || 0),
+    successfulFileCount: Math.max(0, Number(successfulFileCount) || 0),
+    duplicateCount,
+    failedCount,
+    issues: normalizedIssues,
+    hasIssues,
+    toastMessage:
+      successfulFileCount > 0 && !hasIssues
+        ? totalFileCount === 1
+          ? "发票已上传，请确认发票信息"
+          : `已上传 ${successfulFileCount} 个文件，请逐张确认发票信息`
+        : "",
+  };
+};
+
 export const validateCustomExpenseName = (name, expenseItems = []) => {
   const trimmed = String(name || "").trim();
   if (trimmed.length < 1 || trimmed.length > 20) return "自定义费用名称需为 1-20 个字符";

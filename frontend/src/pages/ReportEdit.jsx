@@ -41,6 +41,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate, useParams } from "react-router-dom";
+import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
 import { useNavigationGuard } from "../navigationGuard";
@@ -62,6 +63,7 @@ import {
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
+  createInvoiceUploadIssue,
   emptyForm,
   formatAmount,
   getConfirmedInvoiceCount,
@@ -72,6 +74,7 @@ import {
   getExpenseItemInvoiceTotal,
   getExpenseCategoryOptions,
   getFuelSubsidyInvoiceShortfall,
+  getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getTripYearRangeLabel,
   hasPaperInvoice,
@@ -566,6 +569,7 @@ export default function ReportEdit() {
   const [invoices, setInvoices] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceQueue, setInvoiceQueue] = useState([]);
+  const [uploadResult, setUploadResult] = useState(null);
   const [dragIndex, setDragIndex] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creatingDraft, setCreatingDraft] = useState(false);
@@ -1127,30 +1131,73 @@ export default function ReportEdit() {
     if (!(await ensureSavedBeforeAction())) return;
 
     const uploaded = [];
+    const issues = [];
+    let successfulFileCount = 0;
     setError("");
     setUploadState({ key, current: 0, total: fileList.length, name: fileList[0].name });
     try {
       for (let index = 0; index < fileList.length; index += 1) {
         const file = fileList[index];
         setUploadState({ key, current: index + 1, total: fileList.length, name: file.name });
-        const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
-        if (!res.success) {
-          throw new Error(res.message || `${file.name} 上传失败`);
+        try {
+          const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
+          if (!res.success) {
+            throw new Error(res.message || "上传失败");
+          }
+          const uploadedItems = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
+          if (uploadedItems.length === 0) {
+            throw new Error("服务器未返回发票信息");
+          }
+          uploaded.push(...uploadedItems);
+          successfulFileCount += 1;
+        } catch (err) {
+          issues.push(
+            createInvoiceUploadIssue(
+              file.name,
+              getApiErrorMessage(err, "上传失败"),
+              err.response?.status,
+            ),
+          );
         }
-        const uploadedItems = Array.isArray(res.data) ? res.data : [res.data].filter(Boolean);
-        uploaded.push(...uploadedItems);
       }
-      await loadForEdit({ quiet: true });
+
+      const feedback = getInvoiceUploadFeedback({
+        totalFileCount: fileList.length,
+        successfulFileCount,
+        issues,
+      });
+
+      let confirmationQueue = uploaded;
       if (uploaded.length > 0) {
-        setInvoiceQueue(uploaded);
-        setSelectedInvoice(uploaded[0]);
-        setToast(uploaded.length > 1 ? "批量上传完成，请逐张确认发票信息" : "发票已上传，请确认发票信息");
+        const report = await loadForEdit({ quiet: true });
+        const refreshedById = new Map((report?.invoices || []).map((invoice) => [Number(invoice.id), invoice]));
+        const refreshedUploaded = uploaded.map((invoice) => refreshedById.get(Number(invoice.id))).filter(Boolean);
+        confirmationQueue = refreshedUploaded.length === uploaded.length ? refreshedUploaded : uploaded;
       }
-    } catch (err) {
-      setError(getApiErrorMessage(err, "上传失败"));
+
+      if (feedback.hasIssues) {
+        setInvoiceQueue([]);
+        setSelectedInvoice(null);
+        setUploadResult({ ...feedback, uploadedInvoices: confirmationQueue });
+      } else if (confirmationQueue.length > 0) {
+        setInvoiceQueue(confirmationQueue);
+        setSelectedInvoice(confirmationQueue[0]);
+        setToast(feedback.toastMessage);
+      }
     } finally {
       setUploadState(null);
     }
+  };
+
+  const handleUploadResultClose = () => {
+    setUploadResult(null);
+  };
+
+  const handleUploadResultContinue = () => {
+    const confirmationQueue = uploadResult?.uploadedInvoices || [];
+    setUploadResult(null);
+    setInvoiceQueue(confirmationQueue);
+    setSelectedInvoice(confirmationQueue[0] || null);
   };
 
   const handleDeleteInvoice = async (invoiceId) => {
@@ -1415,7 +1462,11 @@ export default function ReportEdit() {
         </Stack>
       </Stack>
 
-      {error && <Alert severity="error">{error}</Alert>}
+      {error && (
+        <Alert severity="error" sx={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
+          {error}
+        </Alert>
+      )}
       {readonly && <Alert severity="info">已报销状态为只读，不可修改。</Alert>}
       {uploadState && (
         <Alert severity="info">
@@ -2172,6 +2223,12 @@ export default function ReportEdit() {
         }}
         onSkip={invoiceQueue.length > 0 ? handleInvoiceSkipped : undefined}
         onUpdated={handleInvoiceUpdated}
+      />
+
+      <InvoiceUploadResultDialog
+        result={uploadResult}
+        onClose={handleUploadResultClose}
+        onContinue={handleUploadResultContinue}
       />
 
       <TicketImportDialog
