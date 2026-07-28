@@ -498,10 +498,15 @@ describe("report edit utilities", () => {
     ];
     const visibleItems = expenseItems.filter((item) => getExpenseItemAmount(item) > 0);
     const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const paperInvoiceSource = readFileSync(
+      new URL("../features/report-edit/PaperInvoiceEntry.jsx", import.meta.url),
+      "utf8",
+    );
 
     assert.deepEqual(visibleItems.map((item) => item.category), ["accommodation"]);
     assert.match(source, /\.filter\(\(\{ amount \}\) => amount > 0\)/);
-    assert.match(source, /添加纸质发票/);
+    assert.match(source, /<PaperInvoiceEntry/);
+    assert.match(paperInvoiceSource, /添加纸质发票/);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {
