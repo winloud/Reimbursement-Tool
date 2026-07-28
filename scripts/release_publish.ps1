@@ -244,8 +244,7 @@ function Test-ReleasePrepared {
     if (-not (Test-FileContains -RelativePath "docs/README.md" -Pattern "(?m)^- 当前源码版本：$escapedTag\s*$")) {
         return $false
     }
-    $mainPlanVersionPattern = '(?m)^- 当前源码版本：`{0}`\s*$' -f $escapedTag
-    if (-not (Test-FileContains -RelativePath "docs/expense-reimbursement-plan.md" -Pattern $mainPlanVersionPattern)) {
+    if (Test-FileContains -RelativePath "docs/expense-reimbursement-plan.md" -Pattern "(?m)^- 当前源码版本：") {
         return $false
     }
     if (-not (Test-FileContains -RelativePath "docs/expense-reimbursement-plan.md" -Pattern ([regex]::Escape("| ``$TagName`` | 内容已冻结 |")))) {
@@ -346,38 +345,30 @@ function Freeze-ReleasePlan {
     $newActive = @"
 # 当前开发计划
 
+> 只记录当前目标、范围、验收条件和阻塞；完成结果、长期验证和技术决策分别写入 ``CHANGELOG.md``、``docs/testing/``、``docs/decisions/``。正式发布前冻结本文件。
+
 ## 状态
+
 - 版本号：TBD
 - 计划状态：规划中
 - 预计版本类型：TBD
 
 ## 目标
+
 - [ ] 收集下一轮需求并确认版本范围。
 
 ## 范围
-本次做：
-- TBD
 
-本次不做：
-- 未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器；后续修改先在本地完成测试。
+- 本轮包含：TBD
+- 本轮不包含：未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器。
 
-## 版本号判断
-- 如果只是修复问题：patch
-- 如果增加用户可见功能：minor
-- 如果数据结构或使用方式有不兼容变化：major
+## 验收条件
 
----
+- [ ] 根据实际改动补充可验证的完成条件。
 
-## 完成记录
+## 阻塞
 
-### 重要改动
-- 暂无。
-
-### 验证记录
-- 暂无。
-
-### 已同步到 CHANGELOG
-- 暂无。
+- 无。
 "@
     Write-TextFile -Path $ActivePlanPath -Text $newActive
 }
@@ -390,7 +381,6 @@ function Update-DocsIndexes {
 
     $planPath = Join-Path $Root "docs\expense-reimbursement-plan.md"
     $plan = Read-TextFile -Path $planPath
-    $plan = Replace-Required -Text $plan -Pattern '(?m)^- 当前源码版本：`?v?\d+\.\d+\.\d+`?.*$' -Replacement "- 当前源码版本：``$TagName``" -Description "main plan source version"
     if ($plan -notmatch [regex]::Escape("| ``$TagName`` |")) {
         $versionRow = "| ``$TagName`` | 内容已冻结 | [releases/$TagName-plan.md](releases/$TagName-plan.md) |"
         $plan = Replace-Required -Text $plan -Pattern "(?m)(^\| 版本 \| 状态 \| 文档 \|\r?\n^\| --- \| --- \| --- \|\r?\n)" -Replacement "`$1$versionRow`r`n" -Description "main plan version index"

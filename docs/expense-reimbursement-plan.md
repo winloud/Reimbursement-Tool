@@ -20,9 +20,8 @@
 
 ## 二、当前状态
 
-- 当前源码版本：`v1.3.0`
-- 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
-- 当前开发版：TBD
+- 当前源码与公开版本：[文档地图的当前状态](README.md#当前状态)
+- 当前开发范围与状态：[当前开发计划](releases/active-plan.md)
 - 当前发布产物命名：`release/报销管理-vX.Y.Z-yyyymmdd.zip`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-4.10.0.84-win_amd64.zip`
 - 发布方式：本地按需生成 ZIP；正式版本从 `main` 创建不可变 `vX.Y.Z` tag，由 GitHub Actions 构建、验证并发布 GitHub Release；用户解压后运行 `报销管理/报销管理.exe` 根目录 launcher，真实程序位于 `报销管理/versions/<version>/报销管理.exe`
@@ -82,7 +81,7 @@
 | `v1.2.0` | 内容已冻结 | [releases/v1.2.0-plan.md](releases/v1.2.0-plan.md) |
 | `v1.1.1` | 内容已冻结 | [releases/v1.1.1-plan.md](releases/v1.1.1-plan.md) |
 | `v1.1.0` | 内容已冻结 | [releases/v1.1.0-plan.md](releases/v1.1.0-plan.md) |
-| 当前开发 | 规划中 | [releases/active-plan.md](releases/active-plan.md) |
+| 当前开发 | 见当前计划 | [releases/active-plan.md](releases/active-plan.md) |
 
 ---
 

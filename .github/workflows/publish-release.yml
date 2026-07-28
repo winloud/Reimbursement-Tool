@@ -91,20 +91,12 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements-dev.txt
 
-      - name: Run tests
-        run: |
-          python -m pytest -q
-          if ($LASTEXITCODE -ne 0) { throw "Backend tests failed." }
-          node --test frontend/src/pages/reportEditUtils.test.js
-          if ($LASTEXITCODE -ne 0) { throw "reportEditUtils tests failed." }
-          node --test frontend/src/pages/settingsPageUtils.test.js
-          if ($LASTEXITCODE -ne 0) { throw "settingsPageUtils tests failed." }
-          node --test frontend/src/pages/dashboardUtils.test.js
-          if ($LASTEXITCODE -ne 0) { throw "dashboardUtils tests failed." }
-          node --test frontend/src/api/client.test.js
-          if ($LASTEXITCODE -ne 0) { throw "API client tests failed." }
-          node --test frontend/src/api/reportFilters.test.js
-          if ($LASTEXITCODE -ne 0) { throw "report filter tests failed." }
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Run frontend tests
+        run: npm test
+        working-directory: frontend
 
       - name: Extract release notes and metadata from CHANGELOG
         shell: pwsh

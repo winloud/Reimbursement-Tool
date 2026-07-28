@@ -3,7 +3,7 @@
 ## 当前状态
 - 当前源码版本：v1.3.0
 - 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
-- 当前开发版：TBD
+- 当前开发状态：[releases/active-plan.md](releases/active-plan.md)
 
 ## 核心文档
 - 主开发计划：expense-reimbursement-plan.md
@@ -11,6 +11,7 @@
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
 - 发布流程：release-process.md
+- 固定验证入口：[scripts/verify.ps1](../scripts/verify.ps1)（`Backend`、`Frontend`、`Release`、`All`）
 
 ## 版本文档
 - releases/

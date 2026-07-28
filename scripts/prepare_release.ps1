@@ -154,8 +154,8 @@ if (-not $SkipTests) {
     Invoke-External -Name "Backend tests" -FilePath "python" -ArgumentList @("-m", "pytest")
     Invoke-External `
         -Name "Frontend tests" `
-        -FilePath "node" `
-        -ArgumentList @("--test", "src/**/*.test.js") `
+        -FilePath "npm" `
+        -ArgumentList @("test") `
         -WorkingDirectory (Join-Path $Root "frontend")
 }
 else {

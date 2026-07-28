@@ -10,6 +10,14 @@
 - 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
 - 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
+## 当前计划生命周期
+
+- `docs/releases/active-plan.md` 只保留当前目标、范围、验收条件和阻塞，不累计完成流水、历史测试次数、预览包哈希或 CHANGELOG 内容副本。
+- 当前开发版本、计划状态和预计版本类型只在 `active-plan.md` 维护；其他文档只链接该文件，不复制当前值。
+- 面向用户的完成结果写入 `CHANGELOG.md`；长期有价值的人工验证或技术路线分别写入 `docs/testing/` 和 `docs/decisions/`。
+- 正式发布准备会把当前计划冻结为版本计划，并由 `scripts/release_publish.ps1` 重建同样的精简模板。
+- 正式版本号只向发布总控传入一次；脚本负责同步源码和文档中的必要版本镜像，并在发布前校验一致性。
+
 ## 标准发布顺序
 
 1. 在开发分支完成开发、测试和文档记录。
@@ -68,6 +76,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须校验下载文件的 SHA256 和 ZIP 内容；校验失败时重新构建，不能只依赖文件名和非零大小。
 
 ## 独立验证工具
+
+发布治理脚本和状态机可先用固定档位定向验证：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile Release
+```
 
 发布后按需复验 Release 资产；`-MetadataOnly` 不下载主 ZIP，但会下载 manifest 和 checksum 两个小型完整性资产：
 

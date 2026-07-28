@@ -97,23 +97,26 @@ V1.2.4 主包默认不包含兼容运行时。
     )
     write(
         repo / "docs" / "README.md",
-        "# 文档\n\n- 当前源码版本：v1.2.4\n- 公开稳定版本：[GitHub Releases](https://example.invalid/releases/latest)\n",
+        "# 文档\n\n- 当前源码版本：v1.2.4\n- 公开稳定版本：[GitHub Releases](https://example.invalid/releases/latest)\n- 当前开发状态：[releases/active-plan.md](releases/active-plan.md)\n",
     )
     write(
         repo / "docs" / "expense-reimbursement-plan.md",
         """# 主计划
 
-- 当前源码版本：`v1.2.4`
+- 当前源码与公开版本：[文档地图的当前状态](README.md#当前状态)
+- 当前开发范围与状态：[当前开发计划](releases/active-plan.md)
 
 | 版本 | 状态 | 文档 |
 | --- | --- | --- |
 | `v1.2.4` | 内容已冻结 | [releases/v1.2.4-plan.md](releases/v1.2.4-plan.md) |
-| 当前开发 | 规划中 | [releases/active-plan.md](releases/active-plan.md) |
+| 当前开发 | 见当前计划 | [releases/active-plan.md](releases/active-plan.md) |
 """,
     )
     write(
         repo / "docs" / "releases" / "active-plan.md",
         """# 当前开发计划
+
+> 只记录当前目标、范围、验收条件和阻塞。
 
 ## 状态
 - 版本号：TBD
@@ -123,16 +126,16 @@ V1.2.4 主包默认不包含兼容运行时。
 ## 目标
 - [x] 改进发布流程。
 
-## 完成记录
+## 范围
 
-### 重要改动
-- 已完成。
+- 本轮包含：改进发布流程。
+- 本轮不包含：远端部署。
 
-### 验证记录
-- 待发布预检。
+## 验收条件
+- [x] 发布预检通过。
 
-### 已同步到 CHANGELOG
-- 已同步。
+## 阻塞
+- 无。
 """,
     )
 
@@ -250,6 +253,17 @@ def test_prepare_is_idempotent_and_creates_no_commit_or_tag(tmp_path: Path):
     assert run(["git", "tag", "--list"], repo).stdout.strip() == ""
     frozen = (repo / "docs" / "releases" / "v1.3.0-plan.md").read_text(encoding="utf-8")
     assert "- 计划状态：内容已冻结" in frozen
+    active = (repo / "docs" / "releases" / "active-plan.md").read_text(encoding="utf-8")
+    assert "## 验收条件" in active
+    assert "## 阻塞" in active
+    assert "## 完成记录" not in active
+    assert "已同步到 CHANGELOG" not in active
+    docs_readme = (repo / "docs" / "README.md").read_text(encoding="utf-8")
+    assert "- 当前源码版本：v1.3.0" in docs_readme
+    main_plan = (repo / "docs" / "expense-reimbursement-plan.md").read_text(encoding="utf-8")
+    assert "- 当前源码版本：" not in main_plan
+    assert "| `v1.3.0` | 内容已冻结 |" in main_plan
+    assert "| 当前开发 | 见当前计划 |" in main_plan
 
 
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):

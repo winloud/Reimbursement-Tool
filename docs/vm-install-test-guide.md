@@ -123,18 +123,15 @@ cd ..
 在项目根目录执行：
 
 ```powershell
-python -m pytest
-node --test frontend/src/**/*.test.js
-cd frontend
-npm run build
-cd ..
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile All
 ```
 
 期望结果：
 
 - 后端测试全部通过
 - 前端 Node 测试全部通过
-- `npm run build` 成功
+- 前端生产构建成功
+- PowerShell 脚本语法和 Git diff 空白检查通过
 - Vite 可能提示 chunk size 警告，该警告不影响当前功能
 
 ### 5. 打包 EXE
