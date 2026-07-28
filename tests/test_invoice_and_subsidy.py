@@ -1215,7 +1215,7 @@ def test_fuel_subsidy_manual_amount_is_preserved_after_invoice_deletion(db):
     assert report.total_amount == Decimal("180.00")
 
 
-def test_printed_report_with_insufficient_fuel_invoice_returns_to_draft(monkeypatch, db):
+def test_submitted_report_fuel_invoice_is_locked(monkeypatch, db):
     snapshots = []
     monkeypatch.setattr(report_service, "create_safety_snapshot", lambda _db, reason: snapshots.append(reason))
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
@@ -1240,47 +1240,16 @@ def test_printed_report_with_insufficient_fuel_invoice_returns_to_draft(monkeypa
     update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
 
-    update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("120.00"), amount_confirmed=True))
-    db.refresh(report)
-
-    assert report.status == "draft"
-    assert snapshots == ["pre_fuel_subsidy_shortfall_rollback"]
-
-
-def test_fuel_shortfall_rollback_aborts_when_snapshot_fails(monkeypatch, db):
-    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
-    invoice = Invoice(
-        report_id=report.id,
-        expense_category="fuel_subsidy",
-        file_path="uploads/fuel.pdf",
-        file_type="pdf",
-        amount=Decimal("300.00"),
-        amount_confirmed=True,
-    )
-    db.add(invoice)
-    db.commit()
-    update_report(
-        db,
-        report.id,
-        ReportUpdate(
-            report_date=date(2026, 6, 3),
-            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
-        ),
-    )
-    update_report_status(db, report.id, "checked")
-    update_report_status(db, report.id, "printed")
-
-    def fail_snapshot(_db, reason):
-        raise HTTPException(status_code=500, detail=f"{reason} failed")
-
-    monkeypatch.setattr(report_service, "create_safety_snapshot", fail_snapshot)
-    with pytest.raises(HTTPException, match="pre_fuel_subsidy_shortfall_rollback failed"):
+    with pytest.raises(HTTPException) as exc:
         update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("120.00"), amount_confirmed=True))
 
     db.refresh(report)
     db.refresh(invoice)
+
+    assert exc.value.status_code == 403
     assert report.status == "printed"
     assert invoice.amount == Decimal("300.00")
+    assert snapshots == []
 
 
 def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):

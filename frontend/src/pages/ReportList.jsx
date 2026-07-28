@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   Alert,
   Box,
@@ -62,6 +62,7 @@ import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
 import {
   formatBatchPdfFailureMessage,
   getSubsidyDaysLabel,
+  isReportStatusVisible,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterCategorySx,
@@ -78,8 +79,8 @@ import {
   getHomogeneousReportStatus,
   getReportStatusActions,
   getReportStatusLabel,
-  STATUS_META,
 } from "./reportStatus";
+import ReportStatusStepControl from "./ReportStatusStepControl";
 
 const STATUS_TABS = [
   { value: "all", label: "全部" },
@@ -198,11 +199,7 @@ export default function ReportList() {
   const [batchLoading, setBatchLoading] = useState(false);
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
-  const [statusMenuAnchor, setStatusMenuAnchor] = useState(null);
-  const [statusMenuReport, setStatusMenuReport] = useState(null);
   const [batchStatusMenuAnchor, setBatchStatusMenuAnchor] = useState(null);
-  const [pendingFinalStatus, setPendingFinalStatus] = useState(null);
-  const finalStatusCancelRef = useRef(null);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -328,8 +325,6 @@ export default function ReportList() {
         skippedCount: 0,
       }))
     : getBatchReportStatusActions(selectedReports);
-  const statusMenuActions = getReportStatusActions(statusMenuReport?.status);
-
   const handleToggleReport = (reportId) => {
     setSelectedIds((current) => toggleReportSelection(current, reportId));
   };
@@ -420,17 +415,6 @@ export default function ReportList() {
     }
   };
 
-  const handleStatusMenuOpen = (event, report) => {
-    event.stopPropagation();
-    setStatusMenuAnchor(event.currentTarget);
-    setStatusMenuReport(report);
-  };
-
-  const handleStatusMenuClose = () => {
-    setStatusMenuAnchor(null);
-    setStatusMenuReport(null);
-  };
-
   const handleSingleStatusUpdate = async (report, target) => {
     if (!report || !target) return;
     setStatusUpdatingId(report.id);
@@ -439,12 +423,18 @@ export default function ReportList() {
     try {
       const res = await updateReportStatus(report.id, target);
       if (res.success) {
-        setBatchResult({
-          severity: "success",
-          message: `报销单「${report.purpose || `#${report.id}`}」已改为${getReportStatusLabel(target)}`,
-        });
+        const updatedReport = { ...report, ...res.data, status: res.data?.status || target };
+        const remainsVisible = isReportStatusVisible(
+          { tab: status, statuses: filters.statuses },
+          updatedReport.status,
+        );
+        if (remainsVisible) {
+          setItems((current) => current.map((item) => (item.id === report.id ? { ...item, ...updatedReport } : item)));
+        } else {
+          setItems((current) => current.filter((item) => item.id !== report.id));
+          setTotal((current) => Math.max(0, current - 1));
+        }
         setSelectedIds((current) => current.filter((id) => id !== report.id));
-        await fetchReports();
       } else {
         setError(res.message || "修改状态失败");
       }
@@ -455,14 +445,7 @@ export default function ReportList() {
     }
   };
 
-  const handleSingleStatusRequest = (report, target) => {
-    handleStatusMenuClose();
-    if (target === "reimbursed") {
-      setPendingFinalStatus({ mode: "single", report, target });
-      return;
-    }
-    handleSingleStatusUpdate(report, target);
-  };
+  const handleSingleStatusRequest = (report, target) => handleSingleStatusUpdate(report, target);
 
   const handleBatchStatusUpdate = async (target, reportIds = selectedIds) => {
     if (reportIds.length === 0 || !target) return;
@@ -496,27 +479,7 @@ export default function ReportList() {
   const handleBatchStatusRequest = (action) => {
     if (!action) return;
     setBatchStatusMenuAnchor(null);
-    if (action.target === "reimbursed") {
-      setPendingFinalStatus({
-        mode: "batch",
-        target: action.target,
-        reportIds: [...selectedIds],
-        eligibleCount: action.eligibleCount,
-        skippedCount: action.skippedCount,
-      });
-      return;
-    }
     handleBatchStatusUpdate(action.target);
-  };
-
-  const handleConfirmFinalStatus = async () => {
-    if (!pendingFinalStatus) return;
-    if (pendingFinalStatus.mode === "single") {
-      await handleSingleStatusUpdate(pendingFinalStatus.report, pendingFinalStatus.target);
-    } else {
-      await handleBatchStatusUpdate(pendingFinalStatus.target, pendingFinalStatus.reportIds);
-    }
-    setPendingFinalStatus(null);
   };
 
   const handleConfirmBatchDelete = async (action) => {
@@ -1006,7 +969,18 @@ export default function ReportList() {
                       {batchStatusUpdating ? "修改中..." : primaryBatchStatusAction.label}
                     </Button>
                   )}
-                  {batchStatusMenuActions.length > 0 && (
+                  {homogeneousSelectedStatus && batchStatusMenuActions.length === 1 && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      color={batchStatusMenuActions[0].color === "inherit" ? "inherit" : batchStatusMenuActions[0].color}
+                      onClick={() => handleBatchStatusRequest(batchStatusMenuActions[0])}
+                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+                    >
+                      {batchStatusUpdating ? "修改中..." : batchStatusMenuActions[0].label}
+                    </Button>
+                  )}
+                  {(!homogeneousSelectedStatus ? batchStatusMenuActions.length > 0 : batchStatusMenuActions.length > 1) && (
                     <Button
                       size="small"
                       variant="outlined"
@@ -1098,9 +1072,6 @@ export default function ReportList() {
                 </TableRow>
               ) : (
                 items.map((report) => {
-                  const meta = STATUS_META[report.status] || { label: report.status, color: "default" };
-                  const reportStatusActions = getReportStatusActions(report.status);
-                  const canChangeReportStatus = reportStatusActions.length > 0;
                   const reportStatusUpdating = statusUpdatingId === report.id;
                   return (
                     <TableRow
@@ -1132,29 +1103,12 @@ export default function ReportList() {
                       </TableCell>
                       <TableCell align="center">{report.invoice_count ?? 0}</TableCell>
                       <TableCell align="center">
-                        <Chip
-                          id={`report-status-${report.id}`}
-                          component={canChangeReportStatus ? "button" : "div"}
-                          type={canChangeReportStatus ? "button" : undefined}
-                          size="small"
-                          color={meta.color}
-                          clickable={canChangeReportStatus}
+                        <ReportStatusStepControl
+                          reportId={report.id}
+                          status={report.status}
+                          loading={reportStatusUpdating}
                           disabled={reportStatusUpdating || batchStatusUpdating}
-                          onClick={canChangeReportStatus ? (event) => handleStatusMenuOpen(event, report) : undefined}
-                          aria-label={
-                            canChangeReportStatus
-                              ? `修改报销单 ${report.id} 状态，当前${meta.label}`
-                              : `报销单 ${report.id} 状态：${meta.label}`
-                          }
-                          aria-haspopup={canChangeReportStatus ? "menu" : undefined}
-                          aria-expanded={statusMenuReport?.id === report.id && Boolean(statusMenuAnchor)}
-                          label={
-                            <Box sx={{ display: "inline-flex", alignItems: "center", gap: 0.25 }}>
-                              {reportStatusUpdating ? <CircularProgress size={12} color="inherit" /> : meta.label}
-                              {canChangeReportStatus && !reportStatusUpdating && <ExpandMoreIcon sx={{ fontSize: 15 }} />}
-                            </Box>
-                          }
-                          sx={canChangeReportStatus ? { border: 0, font: "inherit" } : undefined}
+                          onStatusChange={(target) => handleSingleStatusRequest(report, target)}
                         />
                       </TableCell>
                       {isTrash && <TableCell>{formatDateTime(report.deleted_at)}</TableCell>}
@@ -1221,25 +1175,6 @@ export default function ReportList() {
       </Card>
 
       <Menu
-        anchorEl={statusMenuAnchor}
-        open={Boolean(statusMenuAnchor && statusMenuReport)}
-        onClose={handleStatusMenuClose}
-        MenuListProps={{
-          "aria-labelledby": statusMenuReport ? `report-status-${statusMenuReport.id}` : undefined,
-        }}
-      >
-        {statusMenuActions.map((action) => (
-          <MenuItem
-            key={action.target}
-            onClick={() => handleSingleStatusRequest(statusMenuReport, action.target)}
-            disabled={statusUpdatingId !== null || batchStatusUpdating}
-          >
-            {action.label}
-          </MenuItem>
-        ))}
-      </Menu>
-
-      <Menu
         anchorEl={batchStatusMenuAnchor}
         open={Boolean(batchStatusMenuAnchor)}
         onClose={() => setBatchStatusMenuAnchor(null)}
@@ -1300,44 +1235,6 @@ export default function ReportList() {
           </Button>
           <Button onClick={() => handleConfirmBatchDelete("trash")} variant="contained" disabled={deleting}>
             放入回收站
-          </Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog
-        open={Boolean(pendingFinalStatus)}
-        onClose={() =>
-          !batchStatusUpdating && statusUpdatingId === null && setPendingFinalStatus(null)
-        }
-        TransitionProps={{ onEntered: () => finalStatusCancelRef.current?.focus() }}
-      >
-        <DialogTitle>
-          {pendingFinalStatus?.mode === "single" ? "确认标记为已报销" : "确认批量标记为已报销"}
-        </DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            已报销表示报销款已打款、流程结案，状态更新后不可回退。
-            {pendingFinalStatus?.mode === "single"
-              ? `确定将报销单「${pendingFinalStatus.report?.purpose || `#${pendingFinalStatus.report?.id || ""}`}」标记为已报销吗？`
-              : `当前可更新 ${pendingFinalStatus?.eligibleCount || 0} 张，将跳过 ${pendingFinalStatus?.skippedCount || 0} 张。`}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button
-            autoFocus
-            ref={finalStatusCancelRef}
-            onClick={() => setPendingFinalStatus(null)}
-            disabled={batchStatusUpdating || statusUpdatingId !== null}
-          >
-            取消
-          </Button>
-          <Button
-            variant="contained"
-            color="success"
-            onClick={handleConfirmFinalStatus}
-            disabled={batchStatusUpdating || statusUpdatingId !== null}
-          >
-            {batchStatusUpdating || statusUpdatingId !== null ? "修改中..." : "确认结案"}
           </Button>
         </DialogActions>
       </Dialog>

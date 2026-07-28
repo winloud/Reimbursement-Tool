@@ -27,7 +27,7 @@ ALLOWED_STATUS_TRANSITIONS: dict[str, set[str]] = {
     "draft": {"checked"},
     "checked": {"draft", "printed"},
     "printed": {"checked", "reimbursed"},
-    "reimbursed": set(),
+    "reimbursed": {"printed"},
 }
 REPORT_STATUS_ORDER = {
     "draft": 0,
@@ -139,8 +139,8 @@ def validate_status_transition(current_status: str, target_status: str) -> None:
 
 
 def ensure_report_writable(report: ExpenseReport) -> None:
-    if report.status == "reimbursed":
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="已报销状态不可修改")
+    if report.status in {"printed", "reimbursed"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="已提交或已报销状态不可修改")
 
 
 def ensure_report_deletable(report: ExpenseReport) -> None:
@@ -196,10 +196,6 @@ def fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> Decimal:
     return Decimal("0.00")
 
 
-def has_fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> bool:
-    return fuel_subsidy_invoice_shortfall(report) > Decimal("0.00")
-
-
 def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
     shortfall = fuel_subsidy_invoice_shortfall(report)
     if shortfall > Decimal("0.00"):
@@ -207,14 +203,6 @@ def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再下载或提交",
         )
-
-
-def rollback_printed_report_for_fuel_shortfall(db: Session, report: ExpenseReport) -> bool:
-    if report.status != "printed" or not has_fuel_subsidy_invoice_shortfall(report):
-        return False
-    create_safety_snapshot(db, reason="pre_fuel_subsidy_shortfall_rollback")
-    report.status = "draft"
-    return True
 
 
 def build_trip_date(year: int, month: int, day: int) -> date:
@@ -756,7 +744,6 @@ def update_report(db: Session, report_id: int, payload: ReportUpdate) -> Expense
             update_expense_items(report, payload.expense_items)
         db.flush()
         recalculate_report_totals(report)
-        rollback_printed_report_for_fuel_shortfall(db, report)
         db.commit()
     except Exception:
         db.rollback()

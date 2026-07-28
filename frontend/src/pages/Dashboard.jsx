@@ -375,11 +375,11 @@ export default function Dashboard() {
               <Typography variant="h6" fontWeight={800}>
                 费用类别排行
               </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-                按已报销金额排序，优先看占用最高的费用项
-              </Typography>
-              {categoryData.length === 0 ? (
-                <EmptyPanel text="暂无已报销费用数据" />
+                <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+                  按报销金额排序，优先看占用最高的费用项
+                </Typography>
+                {categoryData.length === 0 ? (
+                  <EmptyPanel text="暂无费用数据" />
               ) : (
                 <CategoryRankList items={categoryLegendItems} sourceItems={categoryData} />
               )}

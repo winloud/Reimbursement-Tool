@@ -114,15 +114,15 @@ export const buildDashboardCardReportTarget = ({ target, startMonth, endMonth })
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   } else if (target === "pending") {
-    params.set("status", "printed");
+    params.set("statuses", "checked,printed");
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   } else if (target === "trip_days") {
-    params.set("statuses", "printed,reimbursed");
+    params.set("statuses", "checked,printed,reimbursed");
     params.set("trip_start", startDate);
     params.set("trip_end", endDate);
   } else {
-    params.set("statuses", "printed,reimbursed");
+    params.set("statuses", "checked,printed,reimbursed");
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   }

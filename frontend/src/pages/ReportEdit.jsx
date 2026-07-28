@@ -288,9 +288,9 @@ export default function ReportEdit() {
   const autosaveRequestRef = useRef(0);
   const lastSavedPayloadRef = useRef("");
   const leaveResolverRef = useRef(null);
-  const readonly = status === "reimbursed";
+  const readonly = ["printed", "reimbursed"].includes(status);
 
-  const statusMeta = STATUS_META[status] || { label: status, color: "default" };
+  const statusMeta = STATUS_META[status] || { label: status, chipSx: {} };
   const actions = STATUS_ACTIONS[status] || [];
   const saveMeta = SAVE_LABELS[saveState] || SAVE_LABELS.idle;
   const currentPayload = useMemo(
@@ -740,6 +740,7 @@ export default function ReportEdit() {
   };
 
   const handleStatusAction = async (target) => {
+    if (!id) return;
     if (!(await ensureSavedBeforeAction())) return;
     if (target === "printed" && hasFuelSubsidyInvoiceShortfall) {
       setPdfBlockedOpen(true);
@@ -1114,18 +1115,23 @@ export default function ReportEdit() {
 
   return (
     <Stack spacing={SECTION_GAP} sx={pageContentSx}>
-      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={2}>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "stretch", md: "center" }}
+        spacing={2}
+      >
         <Box>
           <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
             <Typography variant="h5" fontWeight={800}>
               报销单录入
             </Typography>
-            <Chip size="small" color={statusMeta.color} label={statusMeta.label} />
+            <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
             <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
           </Stack>
           <Typography color="text.secondary">基本信息、行程、发票和预支信息在一页完成。</Typography>
         </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ "& > .MuiButton-root": { whiteSpace: "nowrap" } }}>
           <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={() => requestNavigation("/reports")}>
             返回列表
           </Button>
@@ -1143,7 +1149,7 @@ export default function ReportEdit() {
               variant="outlined"
               color={action.color === "inherit" ? "inherit" : action.color}
               onClick={() => handleStatusAction(action.target)}
-              disabled={saveState === "saving"}
+              disabled={!isEdit || !id || loading || saveState === "saving"}
             >
               {action.label}
             </Button>
@@ -1156,7 +1162,7 @@ export default function ReportEdit() {
           {error}
         </Alert>
       )}
-      {readonly && <Alert severity="info">已报销状态为只读，不可修改。</Alert>}
+      {readonly && <Alert severity="info">已提交或已报销状态为只读，不可修改报销单内容。</Alert>}
       {uploadState && (
         <Alert severity="info">
           <Stack spacing={1}>

@@ -89,7 +89,11 @@ describe("dashboard utilities", () => {
     );
     assert.equal(
       buildDashboardCardReportTarget({ target: "total", startMonth: "2024-02", endMonth: "2024-02" }),
-      "/reports?page=1&statuses=printed%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
+      "/reports?page=1&statuses=checked%2Cprinted%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
+    );
+    assert.equal(
+      buildDashboardCardReportTarget({ target: "pending", startMonth: "2024-02", endMonth: "2024-02" }),
+      "/reports?page=1&statuses=checked%2Cprinted&report_start=2024-02-01&report_end=2024-02-29",
     );
   });
 

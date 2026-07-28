@@ -234,6 +234,26 @@ def test_batch_status_updates_legal_items_and_skips_the_rest(monkeypatch, db):
     assert snapshot_reasons == ["pre_batch_status_rollback"]
 
 
+def test_batch_status_allows_reimbursed_reports_to_return_to_submitted(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
+    report = create_report(db, ReportCreate(purpose="已报销"))
+    mark_submitted(db, report)
+    update_report_status(db, report.id, "reimbursed")
+
+    result = batch_update_report_status(db, [report.id], "printed")
+
+    db.refresh(report)
+    assert result.updated_count == 1
+    assert result.skipped_count == 0
+    assert report.status == "printed"
+    assert snapshot_reasons == ["pre_batch_status_rollback"]
+
+
 def test_batch_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):
     first = create_report(db, ReportCreate(purpose="提交一"))
     second = create_report(db, ReportCreate(purpose="提交二"))

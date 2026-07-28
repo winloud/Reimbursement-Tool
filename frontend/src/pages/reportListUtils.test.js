@@ -5,6 +5,7 @@ import {
   deleteDialogActionLabels,
   formatBatchPdfFailureMessage,
   getSubsidyDaysLabel,
+  isReportStatusVisible,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterMoreButtonSx,
@@ -36,6 +37,14 @@ test("formatBatchPdfFailureMessage displays failed report ids and reasons", () =
 test("isTrashStatus detects the recycle bin tab", () => {
   assert.equal(isTrashStatus("trash"), true);
   assert.equal(isTrashStatus("draft"), false);
+});
+
+test("isReportStatusVisible respects tabs and dashboard status scopes", () => {
+  assert.equal(isReportStatusVisible({ tab: "all" }, "checked"), true);
+  assert.equal(isReportStatusVisible({ tab: "checked" }, "printed"), false);
+  assert.equal(isReportStatusVisible({ tab: "all", statuses: "checked,printed,reimbursed" }, "draft"), false);
+  assert.equal(isReportStatusVisible({ tab: "all", statuses: "checked,printed,reimbursed" }, "printed"), true);
+  assert.equal(isReportStatusVisible({ tab: "trash" }, "draft"), true);
 });
 
 test("delete dialog action labels keep destructive action first", () => {
