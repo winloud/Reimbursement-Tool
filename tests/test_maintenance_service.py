@@ -705,78 +705,19 @@ def test_request_application_restart_schedules_launcher(monkeypatch: pytest.Monk
     (paths["app_root"] / "current-version.json").write_text('{"current_version":"1.2.0"}', encoding="utf-8")
     monkeypatch.setattr(maintenance_service.sys, "platform", "win32")
     monkeypatch.setenv("REIMBURSEMENT_DESKTOP_MODE", "1")
-    scheduled: list[Path] = []
+    scheduled: list[tuple[Path, Path]] = []
 
-    monkeypatch.setattr(maintenance_service, "_schedule_application_restart", lambda path: scheduled.append(path))
+    monkeypatch.setattr(
+        maintenance_service.desktop_restart,
+        "schedule_application_restart",
+        lambda path, *, app_root: scheduled.append((path, app_root)),
+    )
 
     result = maintenance_service.request_application_restart()
 
     assert result.restart_scheduled is True
     assert result.launcher_path == launcher.as_posix()
-    assert scheduled == [launcher]
-
-
-def test_schedule_application_restart_closes_old_window_before_launch(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    calls = []
-    captured_thread = {}
-    launcher = tmp_path / "报销管理.exe"
-    launcher.write_bytes(b"launcher")
-
-    class ImmediateThread:
-        def __init__(self, target, name, daemon):
-            self.target = target
-            captured_thread["name"] = name
-            captured_thread["daemon"] = daemon
-
-        def start(self):
-            self.target()
-
-    def fake_popen(args, **kwargs):
-        calls.append(("popen", args, kwargs))
-        return object()
-
-    def fake_exit(code):
-        calls.append(("exit", code))
-        raise SystemExit(code)
-
-    monkeypatch.setattr(maintenance_service.threading, "Thread", ImmediateThread)
-    monkeypatch.setattr(maintenance_service.time, "sleep", lambda seconds: calls.append(("sleep", seconds)))
-    monkeypatch.setattr(maintenance_service, "_close_desktop_browser_window", lambda: calls.append("close_window") or True)
-    monkeypatch.setattr(maintenance_service.subprocess, "Popen", fake_popen)
-    monkeypatch.setattr(maintenance_service.os, "_exit", fake_exit)
-
-    with pytest.raises(SystemExit):
-        maintenance_service._schedule_application_restart(launcher, delay_seconds=0.1)
-
-    assert captured_thread == {"name": "maintenance-restart", "daemon": False}
-    assert calls[0] == ("sleep", 0.1)
-    assert calls[1] == "close_window"
-    assert calls[2][0] == "popen"
-    assert calls[2][1] == [str(launcher)]
-    assert calls[3] == ("exit", 0)
-
-
-def test_close_desktop_browser_window_uses_recorded_pid(monkeypatch: pytest.MonkeyPatch):
-    calls = []
-    monkeypatch.setenv(maintenance_service.DESKTOP_BROWSER_PID_ENV, "4321")
-    monkeypatch.setattr(
-        maintenance_service,
-        "_post_close_to_process_windows",
-        lambda pid: calls.append(("post", pid)) or 1,
-    )
-    monkeypatch.setattr(
-        maintenance_service,
-        "_wait_for_process_exit",
-        lambda pid, seconds: calls.append(("wait", pid, seconds)) or True,
-    )
-    monkeypatch.setattr(
-        maintenance_service,
-        "_terminate_process_tree",
-        lambda pid: calls.append(("terminate", pid)) or True,
-    )
-
-    assert maintenance_service._close_desktop_browser_window() is True
-    assert calls == [("post", 4321), ("wait", 4321, 4.0)]
+    assert scheduled == [(launcher, paths["app_root"])]
 
 
 def test_request_application_restart_rejects_non_desktop_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

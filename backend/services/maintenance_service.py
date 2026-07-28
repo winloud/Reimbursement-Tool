@@ -5,11 +5,8 @@ import os
 import platform
 import shutil
 import sqlite3
-import subprocess
 import sys
 import tempfile
-import threading
-import time
 import zipfile
 from datetime import datetime
 from hashlib import sha256
@@ -29,7 +26,6 @@ from backend.data_schema import (
     MIN_SUPPORTED_DATA_SCHEMA_VERSION,
 )
 from backend.runtime_paths import APP_ROOT, DATA_DIR, DATABASE_PATH, LOG_DIR, UPLOAD_ROOT, uploaded_path
-from backend.schemas.report import REPORT_STATUS_VALUES
 from backend.schemas.maintenance import (
     BackupCleanupRead,
     BackupRead,
@@ -52,6 +48,8 @@ from backend.schemas.maintenance import (
     VersionDeleteRead,
     VersionSwitchRead,
 )
+from backend.schemas.report import REPORT_STATUS_VALUES
+from backend.services import desktop_restart_service as desktop_restart
 from backend.services.invoice_qr_runtime import (
     INVOICE_QR_ENGINE_OPENCV_WECHAT,
     INVOICE_QR_ENGINE_ZXING,
@@ -80,7 +78,6 @@ APP_DIR_NAME = "报销管理"
 APP_EXE_NAME = "报销管理.exe"
 CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
-DESKTOP_BROWSER_PID_ENV = "REIMBURSEMENT_BROWSER_PID"
 LOG_TAIL_BYTES = 200 * 1024
 VALID_REPORT_STATUSES = set(REPORT_STATUS_VALUES)
 VALID_EXPENSE_CATEGORIES = {
@@ -1659,122 +1656,13 @@ def switch_installed_version(version: str, confirm_switch: bool) -> VersionSwitc
     )
 
 
-def _read_desktop_browser_pid() -> int | None:
-    value = os.environ.get(DESKTOP_BROWSER_PID_ENV)
-    if not value:
-        return None
-    try:
-        pid = int(value)
-    except ValueError:
-        return None
-    return pid if pid > 0 else None
-
-
-def _post_close_to_process_windows(pid: int) -> int:
-    if sys.platform != "win32":
-        return 0
-
-    try:
-        import ctypes
-        from ctypes import wintypes
-    except ImportError:
-        return 0
-
-    user32 = ctypes.windll.user32
-    wm_close = 0x0010
-    closed_count = 0
-
-    def enum_handler(hwnd, _lparam):
-        nonlocal closed_count
-        if not user32.IsWindowVisible(hwnd):
-            return True
-
-        process_id = wintypes.DWORD()
-        user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
-        if int(process_id.value) != pid:
-            return True
-
-        user32.PostMessageW(hwnd, wm_close, 0, 0)
-        closed_count += 1
-        return True
-
-    callback = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)(enum_handler)
-    user32.EnumWindows(callback, 0)
-    return closed_count
-
-
-def _wait_for_process_exit(pid: int, timeout_seconds: float) -> bool:
-    if sys.platform != "win32":
-        return False
-
-    try:
-        import ctypes
-    except ImportError:
-        return False
-
-    kernel32 = ctypes.windll.kernel32
-    synchronize = 0x00100000
-    wait_object_0 = 0x00000000
-    handle = kernel32.OpenProcess(synchronize, False, pid)
-    if not handle:
-        return False
-    try:
-        result = kernel32.WaitForSingleObject(handle, int(timeout_seconds * 1000))
-        return result == wait_object_0
-    finally:
-        kernel32.CloseHandle(handle)
-
-
-def _terminate_process_tree(pid: int, timeout_seconds: float = 3.0) -> bool:
-    if sys.platform != "win32":
-        return False
-
-    try:
-        result = subprocess.run(
-            ["taskkill", "/PID", str(pid), "/T", "/F"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            timeout=timeout_seconds,
-            check=False,
-        )
-    except (OSError, subprocess.TimeoutExpired):
-        return False
-    return result.returncode == 0
-
-
-def _close_desktop_browser_window(wait_seconds: float = 4.0) -> bool:
-    pid = _read_desktop_browser_pid()
-    if pid is None:
-        return False
-
-    posted_count = _post_close_to_process_windows(pid)
-    if posted_count and _wait_for_process_exit(pid, wait_seconds):
-        return True
-
-    return _terminate_process_tree(pid)
-
-
-def _schedule_application_restart(launcher_path: Path, delay_seconds: float = 0.8) -> None:
-    def restart_after_response() -> None:
-        time.sleep(delay_seconds)
-        _close_desktop_browser_window()
-        try:
-            subprocess.Popen([str(launcher_path)], cwd=str(APP_ROOT), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except OSError:
-            return
-        os._exit(0)
-
-    thread = threading.Thread(target=restart_after_response, name="maintenance-restart", daemon=False)
-    thread.start()
-
-
 def request_application_restart() -> RestartRead:
     if not _desktop_file_dialog_enabled() or not _is_portable_install():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行方式不支持程序内重启")
     launcher_path = APP_ROOT / APP_EXE_NAME
     if not launcher_path.is_file():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到程序启动器，无法重启")
-    _schedule_application_restart(launcher_path)
+    desktop_restart.schedule_application_restart(launcher_path, app_root=APP_ROOT)
     return RestartRead(restart_scheduled=True, launcher_path=launcher_path.as_posix())
 
 
