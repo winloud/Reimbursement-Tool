@@ -84,27 +84,31 @@ export const getClipboardInvoiceFilename = (file, index = 0, timestamp = Date.no
   return extension ? `clipboard-invoice-${timestamp}-${index + 1}${extension}` : currentName;
 };
 
-export const formatInvoiceUploadFailure = (fileName, message) => {
-  const name = String(fileName || "").trim() || "未命名文件";
-  const detail = String(message || "").trim() || "上传失败";
-  return `${name}：${detail}`;
-};
+export const createInvoiceUploadIssue = (fileName, message, statusCode) => ({
+  fileName: String(fileName || "").trim() || "未命名文件",
+  message: String(message || "").trim() || "上传失败",
+  type: Number(statusCode) === 409 ? "duplicate" : "error",
+});
 
-export const getInvoiceUploadFeedback = ({ totalFileCount = 0, successfulFileCount = 0, failures = [] } = {}) => {
-  const failureCount = failures.length;
-  const errorMessage = failureCount > 0 ? `${failureCount} 个文件上传失败：\n${failures.join("\n")}` : "";
+export const getInvoiceUploadFeedback = ({ totalFileCount = 0, successfulFileCount = 0, issues = [] } = {}) => {
+  const normalizedIssues = Array.isArray(issues) ? issues.filter(Boolean) : [];
+  const duplicateCount = normalizedIssues.filter((issue) => issue.type === "duplicate").length;
+  const failedCount = normalizedIssues.length - duplicateCount;
+  const hasIssues = normalizedIssues.length > 0;
 
-  if (successfulFileCount === 0) {
-    return { errorMessage, toastMessage: "" };
-  }
-  if (totalFileCount === 1 && failureCount === 0) {
-    return { errorMessage, toastMessage: "发票已上传，请确认发票信息" };
-  }
-
-  const partialFailure = failureCount > 0 ? `，${failureCount} 个失败` : "";
   return {
-    errorMessage,
-    toastMessage: `已上传 ${successfulFileCount} 个文件${partialFailure}，请逐张确认发票信息`,
+    totalFileCount: Math.max(0, Number(totalFileCount) || 0),
+    successfulFileCount: Math.max(0, Number(successfulFileCount) || 0),
+    duplicateCount,
+    failedCount,
+    issues: normalizedIssues,
+    hasIssues,
+    toastMessage:
+      successfulFileCount > 0 && !hasIssues
+        ? totalFileCount === 1
+          ? "发票已上传，请确认发票信息"
+          : `已上传 ${successfulFileCount} 个文件，请逐张确认发票信息`
+        : "",
   };
 };
 

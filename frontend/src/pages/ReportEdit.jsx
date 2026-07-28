@@ -41,6 +41,7 @@ import SaveIcon from "@mui/icons-material/Save";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useNavigate, useParams } from "react-router-dom";
+import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
 import { useNavigationGuard } from "../navigationGuard";
@@ -62,9 +63,9 @@ import {
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
+  createInvoiceUploadIssue,
   emptyForm,
   formatAmount,
-  formatInvoiceUploadFailure,
   getConfirmedInvoiceCount,
   getConfirmedInvoiceTotal,
   getClipboardInvoiceFilename,
@@ -568,6 +569,7 @@ export default function ReportEdit() {
   const [invoices, setInvoices] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceQueue, setInvoiceQueue] = useState([]);
+  const [uploadResult, setUploadResult] = useState(null);
   const [dragIndex, setDragIndex] = useState(null);
   const [loading, setLoading] = useState(true);
   const [creatingDraft, setCreatingDraft] = useState(false);
@@ -1129,7 +1131,7 @@ export default function ReportEdit() {
     if (!(await ensureSavedBeforeAction())) return;
 
     const uploaded = [];
-    const failures = [];
+    const issues = [];
     let successfulFileCount = 0;
     setError("");
     setUploadState({ key, current: 0, total: fileList.length, name: fileList[0].name });
@@ -1149,32 +1151,53 @@ export default function ReportEdit() {
           uploaded.push(...uploadedItems);
           successfulFileCount += 1;
         } catch (err) {
-          failures.push(formatInvoiceUploadFailure(file.name, getApiErrorMessage(err, "上传失败")));
+          issues.push(
+            createInvoiceUploadIssue(
+              file.name,
+              getApiErrorMessage(err, "上传失败"),
+              err.response?.status,
+            ),
+          );
         }
       }
 
       const feedback = getInvoiceUploadFeedback({
         totalFileCount: fileList.length,
         successfulFileCount,
-        failures,
+        issues,
       });
 
+      let confirmationQueue = uploaded;
       if (uploaded.length > 0) {
         const report = await loadForEdit({ quiet: true });
         const refreshedById = new Map((report?.invoices || []).map((invoice) => [Number(invoice.id), invoice]));
         const refreshedUploaded = uploaded.map((invoice) => refreshedById.get(Number(invoice.id))).filter(Boolean);
-        const confirmationQueue = refreshedUploaded.length === uploaded.length ? refreshedUploaded : uploaded;
+        confirmationQueue = refreshedUploaded.length === uploaded.length ? refreshedUploaded : uploaded;
+      }
+
+      if (feedback.hasIssues) {
+        setInvoiceQueue([]);
+        setSelectedInvoice(null);
+        setUploadResult({ ...feedback, uploadedInvoices: confirmationQueue });
+      } else if (confirmationQueue.length > 0) {
         setInvoiceQueue(confirmationQueue);
         setSelectedInvoice(confirmationQueue[0]);
         setToast(feedback.toastMessage);
-      } else {
-        setInvoiceQueue([]);
-        setSelectedInvoice(null);
       }
-      if (feedback.errorMessage) setError(feedback.errorMessage);
     } finally {
       setUploadState(null);
     }
+  };
+
+  const handleUploadResultClose = () => {
+    setUploadResult(null);
+  };
+
+  const handleUploadResultContinue = () => {
+    const confirmationQueue = uploadResult?.uploadedInvoices || [];
+    setUploadResult(null);
+    setInvoiceQueue(confirmationQueue);
+    setSelectedInvoice(confirmationQueue[0] || null);
   };
 
   const handleDeleteInvoice = async (invoiceId) => {
@@ -2200,6 +2223,12 @@ export default function ReportEdit() {
         }}
         onSkip={invoiceQueue.length > 0 ? handleInvoiceSkipped : undefined}
         onUpdated={handleInvoiceUpdated}
+      />
+
+      <InvoiceUploadResultDialog
+        result={uploadResult}
+        onClose={handleUploadResultClose}
+        onContinue={handleUploadResultContinue}
       />
 
       <TicketImportDialog
