@@ -5,7 +5,7 @@
 ## 按需读取
 
 - 任务涉及当前版本目标、范围或验收条件时，读取 `docs/releases/active-plan.md`；普通代码修改优先读取相关代码和测试。
-- 产品状态不清楚时读取 `docs/expense-reimbursement-plan.md`；技术路线变化读取 `docs/decisions/` 中相关记录，没有则新增决策记录。
+- 产品能力不清楚时读取 `docs/product-overview.md`；技术路线变化读取 `docs/decisions/` 中相关记录，没有则新增决策记录。
 - 需要长期保存的人工验证依据时读取或更新 `docs/testing/`；不要为了普通自动化测试结果先读历史验证文档。
 - 预览包或正式发布读取 `docs/release-process.md`、`docs/releases/active-plan.md`、`CHANGELOG.md` 和相关发布脚本。
 - Linux 部署、迁移或运维读取 `docs/deployment/linux-server.md` 和相关脚本；服务器目标必须由用户当次提供或确认。

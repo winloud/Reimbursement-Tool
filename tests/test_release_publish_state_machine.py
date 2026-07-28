@@ -100,19 +100,6 @@ V1.2.4 主包默认不包含兼容运行时。
         "# 文档\n\n- 当前源码版本：v1.2.4\n- 公开稳定版本：[GitHub Releases](https://example.invalid/releases/latest)\n- 当前开发状态：[releases/active-plan.md](releases/active-plan.md)\n",
     )
     write(
-        repo / "docs" / "expense-reimbursement-plan.md",
-        """# 主计划
-
-- 当前源码与公开版本：[文档地图的当前状态](README.md#当前状态)
-- 当前开发范围与状态：[当前开发计划](releases/active-plan.md)
-
-| 版本 | 状态 | 文档 |
-| --- | --- | --- |
-| `v1.2.4` | 内容已冻结 | [releases/v1.2.4-plan.md](releases/v1.2.4-plan.md) |
-| 当前开发 | 见当前计划 | [releases/active-plan.md](releases/active-plan.md) |
-""",
-    )
-    write(
         repo / "docs" / "releases" / "active-plan.md",
         """# 当前开发计划
 
@@ -260,10 +247,6 @@ def test_prepare_is_idempotent_and_creates_no_commit_or_tag(tmp_path: Path):
     assert "已同步到 CHANGELOG" not in active
     docs_readme = (repo / "docs" / "README.md").read_text(encoding="utf-8")
     assert "- 当前源码版本：v1.3.0" in docs_readme
-    main_plan = (repo / "docs" / "expense-reimbursement-plan.md").read_text(encoding="utf-8")
-    assert "- 当前源码版本：" not in main_plan
-    assert "| `v1.3.0` | 内容已冻结 |" in main_plan
-    assert "| 当前开发 | 见当前计划 |" in main_plan
 
 
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):

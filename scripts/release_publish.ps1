@@ -24,7 +24,6 @@ $ReleaseFiles = @(
     "frontend/package.json",
     "frontend/package-lock.json",
     "docs/README.md",
-    "docs/expense-reimbursement-plan.md",
     "docs/releases/active-plan.md",
     "docs/releases/$TagName-plan.md"
 )
@@ -244,12 +243,6 @@ function Test-ReleasePrepared {
     if (-not (Test-FileContains -RelativePath "docs/README.md" -Pattern "(?m)^- 当前源码版本：$escapedTag\s*$")) {
         return $false
     }
-    if (Test-FileContains -RelativePath "docs/expense-reimbursement-plan.md" -Pattern "(?m)^- 当前源码版本：") {
-        return $false
-    }
-    if (-not (Test-FileContains -RelativePath "docs/expense-reimbursement-plan.md" -Pattern ([regex]::Escape("| ``$TagName`` | 内容已冻结 |")))) {
-        return $false
-    }
     return $true
 }
 
@@ -373,19 +366,11 @@ function Freeze-ReleasePlan {
     Write-TextFile -Path $ActivePlanPath -Text $newActive
 }
 
-function Update-DocsIndexes {
+function Update-DocsStatus {
     $docsReadmePath = Join-Path $Root "docs\README.md"
     $docsReadme = Read-TextFile -Path $docsReadmePath
     $docsReadme = Replace-Required -Text $docsReadme -Pattern "(?m)^- 当前源码版本：v?\d+\.\d+\.\d+.*$" -Replacement "- 当前源码版本：$TagName" -Description "docs README source version"
     Write-TextFile -Path $docsReadmePath -Text $docsReadme
-
-    $planPath = Join-Path $Root "docs\expense-reimbursement-plan.md"
-    $plan = Read-TextFile -Path $planPath
-    if ($plan -notmatch [regex]::Escape("| ``$TagName`` |")) {
-        $versionRow = "| ``$TagName`` | 内容已冻结 | [releases/$TagName-plan.md](releases/$TagName-plan.md) |"
-        $plan = Replace-Required -Text $plan -Pattern "(?m)(^\| 版本 \| 状态 \| 文档 \|\r?\n^\| --- \| --- \| --- \|\r?\n)" -Replacement "`$1$versionRow`r`n" -Description "main plan version index"
-    }
-    Write-TextFile -Path $planPath -Text $plan
 }
 
 function Invoke-Preflight {
@@ -643,7 +628,7 @@ if (-not $wasPrepared) {
     Update-Readme
     Update-VersionFiles
     Freeze-ReleasePlan
-    Update-DocsIndexes
+    Update-DocsStatus
 }
 
 if (-not (Test-ReleasePrepared)) {

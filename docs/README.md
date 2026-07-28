@@ -6,7 +6,7 @@
 - 当前开发状态：[releases/active-plan.md](releases/active-plan.md)
 
 ## 核心文档
-- 主开发计划：expense-reimbursement-plan.md
+- 产品与能力概览：[product-overview.md](product-overview.md)
 - 当前开发计划：releases/active-plan.md
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
