@@ -51,20 +51,10 @@ function Invoke-FrontendVerification {
 }
 
 function Invoke-ReleaseTests {
-    $releaseTests = @(
-        "tests/test_changelog_release_metadata.py",
-        "tests/test_changelog_release_notes.py",
-        "tests/test_phase6_release.py",
-        "tests/test_publish_release_workflow.py",
-        "tests/test_release_publish_state_machine.py",
-        "tests/test_validate_release_asset.py",
-        "tests/test_verify_entrypoint.py",
-        "tests/test_zip_upgrade_script.py"
-    )
     Invoke-External `
         -Name "Release tooling tests" `
         -FilePath "python" `
-        -ArgumentList (@("-m", "pytest", "-q") + $releaseTests)
+        -ArgumentList @("-m", "pytest", "-q", "tests/release")
 }
 
 function Invoke-ReleaseStaticChecks {

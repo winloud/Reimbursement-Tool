@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "extract_changelog_section.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "extract_changelog_section.py"
 spec = importlib.util.spec_from_file_location("extract_changelog_section", SCRIPT_PATH)
 extract_changelog_module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None
@@ -41,7 +41,7 @@ def test_extract_changelog_section_errors_when_version_missing():
 
 
 def test_release_workflow_extracts_changelog_before_publishing():
-    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "publish-release.yml").read_text(
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "publish-release.yml").read_text(
         encoding="utf-8"
     )
 
@@ -63,7 +63,7 @@ def test_release_workflow_extracts_changelog_before_publishing():
 
 
 def test_preview_workflow_manually_builds_artifact_without_publishing_release():
-    workflow = (Path(__file__).resolve().parents[1] / ".github" / "workflows" / "build-preview.yml").read_text(
+    workflow = (Path(__file__).resolve().parents[2] / ".github" / "workflows" / "build-preview.yml").read_text(
         encoding="utf-8"
     )
 
@@ -86,7 +86,7 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
 
 
 def test_release_publish_script_covers_release_governance_flow():
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "release_publish.ps1").read_text(
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "release_publish.ps1").read_text(
         encoding="utf-8-sig"
     )
 
@@ -123,7 +123,7 @@ def test_release_publish_script_covers_release_governance_flow():
 
 
 def test_release_process_documents_main_first_release_flow():
-    document = (Path(__file__).resolve().parents[1] / "docs" / "release-process.md").read_text(encoding="utf-8")
+    document = (Path(__file__).resolve().parents[2] / "docs" / "release-process.md").read_text(encoding="utf-8")
 
     assert "正式版本只从已合并并推送的 `main` 发布" in document
     assert "将开发分支合并到 `main`" in document
@@ -135,7 +135,7 @@ def test_release_process_documents_main_first_release_flow():
 
 
 def test_release_asset_validator_checks_portable_zip_contract():
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "validate_release_asset.ps1").read_text(
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "validate_release_asset.ps1").read_text(
         encoding="utf-8"
     )
 
@@ -157,7 +157,7 @@ def test_release_asset_validator_checks_portable_zip_contract():
 
 
 def test_release_metrics_collector_outputs_json_and_markdown():
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "collect_release_metrics.ps1").read_text(
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "collect_release_metrics.ps1").read_text(
         encoding="utf-8"
     )
 

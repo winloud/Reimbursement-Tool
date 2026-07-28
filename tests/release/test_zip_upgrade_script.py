@@ -2,7 +2,7 @@ from pathlib import Path
 
 
 def test_zip_upgrade_script_uses_safe_copy_only_flow():
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     script = (root / "scripts" / "upgrade_zip_release.ps1").read_text(encoding="utf-8")
 
     assert "[Parameter(Mandatory = $true)][string]$OldAppDir" in script
@@ -19,7 +19,7 @@ def test_zip_upgrade_script_uses_safe_copy_only_flow():
 
 
 def test_release_zip_includes_upgrade_script():
-    root = Path(__file__).resolve().parents[1]
+    root = Path(__file__).resolve().parents[2]
     script = (root / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
 
     assert "$AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))" in script

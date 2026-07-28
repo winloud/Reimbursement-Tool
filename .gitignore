@@ -17,7 +17,7 @@ dist/报销管理/
 dist/报销管理/data/
 dist/报销管理/uploads/
 dist/报销管理/logs/
-release/
+/release/
 
 # Virtual environments
 .venv/

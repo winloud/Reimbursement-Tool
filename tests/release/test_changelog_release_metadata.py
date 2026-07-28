@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 
-SCRIPT_PATH = Path(__file__).resolve().parents[1] / "scripts" / "extract_changelog_section.py"
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "extract_changelog_section.py"
 spec = importlib.util.spec_from_file_location("extract_changelog_release_metadata", SCRIPT_PATH)
 extract_changelog_module = importlib.util.module_from_spec(spec)
 assert spec.loader is not None

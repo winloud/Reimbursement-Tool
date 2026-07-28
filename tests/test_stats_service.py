@@ -1,3 +1,5 @@
+"""Dashboard statistics and calendar aggregation tests."""
+
 from datetime import date
 from decimal import Decimal
 

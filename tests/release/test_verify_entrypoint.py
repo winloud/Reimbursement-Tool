@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_frontend_exposes_one_canonical_test_command():
@@ -25,11 +25,12 @@ def test_verify_entrypoint_has_only_explicit_profiles():
     script = (ROOT / "scripts" / "verify.ps1").read_text(encoding="utf-8-sig")
 
     assert '[ValidateSet("Backend", "Frontend", "Release", "All")]' in script
-    assert '-ArgumentList @("-m", "pytest", "-q")' in script
+    assert '-ArgumentList @("-m", "pytest", "-q", "tests/release")' in script
     assert '-ArgumentList @("test")' in script
     assert '-ArgumentList @("run", "build")' in script
     assert "System.Management.Automation.Language.Parser" in script
     assert '@("diff", "--check", "HEAD", "--")' in script
+    assert "test_release_publish_state_machine.py" not in script
     assert "diff --name-only" not in script
     assert "status --porcelain" not in script
 

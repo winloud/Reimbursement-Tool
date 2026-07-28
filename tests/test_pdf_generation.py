@@ -1,3 +1,5 @@
+"""PDF generation, preview, download, and attachment merge tests."""
+
 from datetime import date
 from decimal import Decimal
 from io import BytesIO

@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "scripts" / "validate_release_asset.ps1"
 POWERSHELL = shutil.which("powershell") or shutil.which("pwsh")
 VERSION = "1.2.5"

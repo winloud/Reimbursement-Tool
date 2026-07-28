@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 
-WORKFLOW_PATH = Path(__file__).resolve().parents[1] / ".github" / "workflows" / "publish-release.yml"
+WORKFLOW_PATH = Path(__file__).resolve().parents[2] / ".github" / "workflows" / "publish-release.yml"
 
 
 def workflow_text() -> str:

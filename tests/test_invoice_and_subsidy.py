@@ -1,3 +1,5 @@
+"""Invoice parsing, upload, duplicate detection, and subsidy integration tests."""
+
 from datetime import date, datetime
 from decimal import Decimal
 from io import BytesIO

@@ -72,7 +72,7 @@ def test_app_version_detects_portable_version_dir(monkeypatch: pytest.MonkeyPatc
 
 
 def test_release_script_can_build_optional_opencv_runtime_package():
-    script = (Path(__file__).resolve().parents[1] / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
+    script = (Path(__file__).resolve().parents[2] / "scripts" / "build_release.ps1").read_text(encoding="utf-8")
 
     assert "[switch]$BuildOpenCvRuntime" in script
     assert "[switch]$PreviewBuild" in script
