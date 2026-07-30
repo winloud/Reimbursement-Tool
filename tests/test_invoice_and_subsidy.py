@@ -1093,8 +1093,8 @@ def test_fuel_subsidy_reimbursable_amount_overrides_invoice_total(db):
     assert updated.total_amount == Decimal("180.00")
 
 
-def test_fuel_subsidy_reimbursable_amount_can_exceed_invoice_total_before_printing(db):
-    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+def test_fuel_subsidy_reimbursable_amount_requires_sufficient_invoices_before_checking(db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3), purpose="燃油补助"))
     db.add(
         Invoice(
             report_id=report.id,
@@ -1113,6 +1113,7 @@ def test_fuel_subsidy_reimbursable_amount_can_exceed_invoice_total_before_printi
         report.id,
         ReportUpdate(
             report_date=date(2026, 6, 3),
+            purpose="燃油补助",
             expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("301.00")}],
         ),
     )
@@ -1120,9 +1121,8 @@ def test_fuel_subsidy_reimbursable_amount_can_exceed_invoice_total_before_printi
     fuel_item = next(item for item in updated.expense_items if item.category == "fuel_subsidy")
     assert fuel_item.reimbursable_amount == Decimal("301.00")
     assert updated.total_amount == Decimal("301.00")
-    update_report_status(db, report.id, "checked")
     with pytest.raises(HTTPException, match="发票金额不足"):
-        update_report_status(db, report.id, "printed")
+        update_report_status(db, report.id, "checked")
 
 
 def test_non_fuel_category_ignores_reimbursable_amount(db):
@@ -1218,7 +1218,7 @@ def test_fuel_subsidy_manual_amount_is_preserved_after_invoice_deletion(db):
 def test_submitted_report_fuel_invoice_is_locked(monkeypatch, db):
     snapshots = []
     monkeypatch.setattr(report_service, "create_safety_snapshot", lambda _db, reason: snapshots.append(reason))
-    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3), purpose="燃油补助"))
     invoice = Invoice(
         report_id=report.id,
         expense_category="fuel_subsidy",
@@ -1234,6 +1234,7 @@ def test_submitted_report_fuel_invoice_is_locked(monkeypatch, db):
         report.id,
         ReportUpdate(
             report_date=date(2026, 6, 3),
+            purpose="燃油补助",
             expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
         ),
     )
@@ -1250,6 +1251,26 @@ def test_submitted_report_fuel_invoice_is_locked(monkeypatch, db):
     assert report.status == "printed"
     assert invoice.amount == Decimal("300.00")
     assert snapshots == []
+
+
+def test_checked_report_invoice_is_locked(db):
+    report = create_report(db, ReportCreate(purpose="已核对发票"))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="luggage",
+        file_path="uploads/luggage.pdf",
+        file_type="pdf",
+        amount=Decimal("20.00"),
+        amount_confirmed=True,
+    )
+    db.add(invoice)
+    db.commit()
+    update_report_status(db, report.id, "checked")
+
+    with pytest.raises(HTTPException) as exc:
+        update_invoice(db, invoice.id, InvoiceUpdate(amount=Decimal("30.00"), amount_confirmed=True))
+
+    assert exc.value.status_code == 403
 
 
 def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):

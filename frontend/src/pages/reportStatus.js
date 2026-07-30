@@ -66,13 +66,11 @@ export const getHomogeneousReportStatus = (reports) => {
 
 export const getBatchReportStatusActions = (reports) =>
   REPORT_STATUS_OPTIONS.map((option) => {
-    const eligibleCount = reports.filter((report) =>
-      getReportStatusActions(report.status).some((action) => action.target === option.value),
-    ).length;
+    const attemptCount = reports.filter((report) => report.status !== option.value).length;
     return {
       target: option.value,
       label: `改为${option.label}`,
-      eligibleCount,
-      skippedCount: reports.length - eligibleCount,
+      attemptCount,
+      sameStatusCount: reports.length - attemptCount,
     };
-  }).filter((action) => action.eligibleCount > 0);
+  }).filter((action) => action.attemptCount > 0);

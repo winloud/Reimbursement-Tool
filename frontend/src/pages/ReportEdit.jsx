@@ -288,7 +288,7 @@ export default function ReportEdit() {
   const autosaveRequestRef = useRef(0);
   const lastSavedPayloadRef = useRef("");
   const leaveResolverRef = useRef(null);
-  const readonly = ["printed", "reimbursed"].includes(status);
+  const readonly = status !== "draft";
 
   const statusMeta = STATUS_META[status] || { label: status, chipSx: {} };
   const actions = STATUS_ACTIONS[status] || [];
@@ -462,7 +462,7 @@ export default function ReportEdit() {
   const pdfBlockMessage = hasUnconfirmedInvoices
     ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
     : hasFuelSubsidyInvoiceShortfall
-      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；可以保存和预览，补足后才能下载或标记为已提交。`
+      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
     : confirmedInvoiceCount > 0
       ? "发票已确认，可生成 PDF。"
       : "暂无已确认发票，可先录入行程和费用。";
@@ -742,7 +742,7 @@ export default function ReportEdit() {
   const handleStatusAction = async (target) => {
     if (!id) return;
     if (!(await ensureSavedBeforeAction())) return;
-    if (target === "printed" && hasFuelSubsidyInvoiceShortfall) {
+    if (target === "checked" && hasFuelSubsidyInvoiceShortfall) {
       setPdfBlockedOpen(true);
       return;
     }
@@ -1162,7 +1162,7 @@ export default function ReportEdit() {
           {error}
         </Alert>
       )}
-      {readonly && <Alert severity="info">已提交或已报销状态为只读，不可修改报销单内容。</Alert>}
+      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改报销单内容、发票和车票。</Alert>}
       {uploadState && (
         <Alert severity="info">
           <Stack spacing={1}>
@@ -1690,7 +1690,7 @@ export default function ReportEdit() {
                                 helperText={
                                   fuelAmountError ||
                                   (fuelShortfall > 0
-                                    ? `发票金额不足 ${formatAmount(fuelShortfall)}；可保存和预览，补足后才能打印。`
+                                    ? `发票金额不足 ${formatAmount(fuelShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
                                     : "留空则按已确认发票合计报销")
                                 }
                                 onChange={(event) =>
@@ -2045,7 +2045,7 @@ export default function ReportEdit() {
           <DialogContentText>
             {hasUnconfirmedInvoices
               ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
-              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。可以保存和预览，补充足额发票后才能下载或标记为已提交。`}
+              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。仍可预览 PDF，补充足额发票后才能修改状态或下载。`}
           </DialogContentText>
         </DialogContent>
         <DialogActions>

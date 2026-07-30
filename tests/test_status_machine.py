@@ -104,6 +104,18 @@ def test_update_report_status_illegal_raises(db):
     assert exc.value.status_code == 400
 
 
+def test_draft_to_checked_requires_a_nonempty_purpose(db):
+    report = create_report(db, ReportCreate(purpose="   "))
+
+    with pytest.raises(HTTPException) as exc:
+        update_report_status(db, report.id, "checked")
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "出差事由不能为空，请填写后再修改状态"
+    db.refresh(report)
+    assert report.status == "draft"
+
+
 def test_reimbursed_can_only_return_to_submitted(db):
     report = create_report(db, ReportCreate(purpose="出差C"))
     update_report_status(db, report.id, "checked")

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Alert,
   Box,
@@ -31,13 +31,11 @@ import {
   Typography,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
-import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
-import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import { Link as RouterLink, useLocation, useNavigate } from "react-router-dom";
 import {
   batchDeleteReports,
@@ -76,9 +74,8 @@ import {
 } from "./reportListUtils";
 import {
   getBatchReportStatusActions,
-  getHomogeneousReportStatus,
-  getReportStatusActions,
   getReportStatusLabel,
+  STATUS_META,
 } from "./reportStatus";
 import ReportStatusStepControl from "./ReportStatusStepControl";
 
@@ -200,6 +197,7 @@ export default function ReportList() {
   const [batchStatusUpdating, setBatchStatusUpdating] = useState(false);
   const [statusUpdatingId, setStatusUpdatingId] = useState(null);
   const [batchStatusMenuAnchor, setBatchStatusMenuAnchor] = useState(null);
+  const [batchActionMenuAnchor, setBatchActionMenuAnchor] = useState(null);
   const [exporting, setExporting] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
   const [importFile, setImportFile] = useState(null);
@@ -209,6 +207,7 @@ export default function ReportList() {
   const [importLoading, setImportLoading] = useState(false);
   const [importError, setImportError] = useState("");
   const [importResult, setImportResult] = useState(null);
+  const selectionFocusRef = useRef(null);
   const isTrash = isTrashStatus(status);
   const tableColumnCount = isTrash ? 11 : 10;
 
@@ -247,6 +246,18 @@ export default function ReportList() {
   useEffect(() => {
     setSelectedIds([]);
   }, [filters, page, pageSize, status]);
+
+  useEffect(() => {
+    selectionFocusRef.current?.focus();
+    selectionFocusRef.current = null;
+  }, [selectedIds]);
+
+  useEffect(() => {
+    if (selectedIds.length === 0) {
+      setBatchStatusMenuAnchor(null);
+      setBatchActionMenuAnchor(null);
+    }
+  }, [selectedIds.length]);
 
   useEffect(() => {
     let ignore = false;
@@ -312,24 +323,14 @@ export default function ReportList() {
   const allPageSelected = pageIds.length > 0 && pageIds.every((id) => selectedSet.has(id));
   const somePageSelected = pageIds.some((id) => selectedSet.has(id));
   const selectedReports = items.filter((item) => selectedSet.has(item.id));
-  const selectedReportsComplete = selectedReports.length === selectedCount;
-  const homogeneousSelectedStatus = selectedReportsComplete ? getHomogeneousReportStatus(selectedReports) : null;
-  const homogeneousStatusActions = homogeneousSelectedStatus
-    ? getReportStatusActions(homogeneousSelectedStatus)
-    : [];
-  const primaryBatchStatusAction = homogeneousStatusActions[0] || null;
-  const batchStatusMenuActions = homogeneousSelectedStatus
-    ? homogeneousStatusActions.slice(1).map((action) => ({
-        ...action,
-        eligibleCount: selectedCount,
-        skippedCount: 0,
-      }))
-    : getBatchReportStatusActions(selectedReports);
-  const handleToggleReport = (reportId) => {
+  const batchStatusMenuActions = getBatchReportStatusActions(selectedReports);
+  const handleToggleReport = (reportId, focusTarget) => {
+    selectionFocusRef.current = focusTarget;
     setSelectedIds((current) => toggleReportSelection(current, reportId));
   };
 
   const handleToggleCurrentPage = (event) => {
+    selectionFocusRef.current = event.currentTarget;
     setSelectedIds((current) => toggleCurrentPageSelection(current, pageIds, event.target.checked));
   };
 
@@ -480,6 +481,12 @@ export default function ReportList() {
     if (!action) return;
     setBatchStatusMenuAnchor(null);
     handleBatchStatusUpdate(action.target);
+  };
+
+  const handleClearSelection = () => {
+    setBatchStatusMenuAnchor(null);
+    setBatchActionMenuAnchor(null);
+    setSelectedIds([]);
   };
 
   const handleConfirmBatchDelete = async (action) => {
@@ -693,31 +700,84 @@ export default function ReportList() {
             width: { xs: "100%", lg: "auto" },
           }}
         >
-          <Button
-            variant="outlined"
-            startIcon={<UploadFileIcon />}
-            onClick={handleOpenImport}
-            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
-          >
-            导入数据包
-          </Button>
-          <Button
-            variant="outlined"
-            startIcon={<FileDownloadIcon />}
-            onClick={handleExport}
-            disabled={exporting || isTrash}
-            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
-          >
-            {exporting ? "导出中..." : "导出当前筛选"}
-          </Button>
-          <Button
-            component={RouterLink}
-            to="/reports/new"
-            variant="contained"
-            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
-          >
-            新增报销单
-          </Button>
+          {selectedCount > 0 ? (
+            <>
+              <Chip
+                label={`已选 ${selectedCount} 张`}
+                color="primary"
+                variant="outlined"
+                aria-live="polite"
+                sx={{ height: 36, minWidth: 112, fontWeight: 700, justifyContent: "center" }}
+              />
+              {isTrash ? (
+                <Button
+                  variant="contained"
+                  onClick={handleBatchRestore}
+                  disabled={batchLoading || deleting}
+                  sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+                >
+                  批量恢复
+                </Button>
+              ) : (
+                <Button
+                  variant="outlined"
+                  endIcon={<ExpandMoreIcon />}
+                  onClick={(event) => setBatchStatusMenuAnchor(event.currentTarget)}
+                  disabled={
+                    batchStatusMenuActions.length === 0 ||
+                    batchLoading ||
+                    deleting ||
+                    batchStatusUpdating ||
+                    statusUpdatingId !== null
+                  }
+                  aria-haspopup="menu"
+                  aria-expanded={Boolean(batchStatusMenuAnchor)}
+                  sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+                >
+                  {batchStatusUpdating ? "修改中..." : "修改状态..."}
+                </Button>
+              )}
+              <Button
+                variant="outlined"
+                endIcon={<ExpandMoreIcon />}
+                onClick={(event) => setBatchActionMenuAnchor(event.currentTarget)}
+                disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+                aria-haspopup="menu"
+                aria-expanded={Boolean(batchActionMenuAnchor)}
+                sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+              >
+                更多操作
+              </Button>
+            </>
+          ) : (
+            <>
+              <Button
+                variant="outlined"
+                startIcon={<UploadFileIcon />}
+                onClick={handleOpenImport}
+                sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+              >
+                导入数据包
+              </Button>
+              <Button
+                variant="outlined"
+                startIcon={<FileDownloadIcon />}
+                onClick={handleExport}
+                disabled={exporting || isTrash}
+                sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+              >
+                {exporting ? "导出中..." : "导出当前筛选"}
+              </Button>
+              <Button
+                component={RouterLink}
+                to="/reports/new"
+                variant="contained"
+                sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+              >
+                新增报销单
+              </Button>
+            </>
+          )}
         </Box>
       </Stack>
 
@@ -910,127 +970,6 @@ export default function ReportList() {
           )}
         </Box>
 
-        {selectedCount > 0 && (
-          <Box
-            sx={{
-              position: "sticky",
-              top: 0,
-              zIndex: 2,
-              px: 2,
-              py: 1.25,
-              borderBottom: 1,
-              borderColor: "divider",
-              bgcolor: "primary.50",
-              boxShadow: "0 8px 18px rgba(23, 32, 42, 0.08)",
-              display: "flex",
-              flexWrap: "wrap",
-              gap: 1,
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <Typography variant="body2" fontWeight={600}>
-              已选 {selectedCount} 张报销单
-            </Typography>
-            <Stack direction="row" spacing={1} flexWrap="wrap" sx={{ gap: 1 }}>
-              {isTrash ? (
-                <>
-                  <Button size="small" variant="contained" onClick={handleBatchRestore} disabled={batchLoading || deleting}>
-                    批量恢复
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="error"
-                    startIcon={<DeleteOutlineIcon />}
-                    onClick={() => setPendingBatchPurge(true)}
-                    disabled={batchLoading || deleting}
-                  >
-                    彻底删除
-                  </Button>
-                </>
-              ) : (
-                <>
-                  {primaryBatchStatusAction && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color={primaryBatchStatusAction.color}
-                      startIcon={<SwapHorizIcon />}
-                      onClick={() =>
-                        handleBatchStatusRequest({
-                          ...primaryBatchStatusAction,
-                          eligibleCount: selectedCount,
-                          skippedCount: 0,
-                        })
-                      }
-                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-                    >
-                      {batchStatusUpdating ? "修改中..." : primaryBatchStatusAction.label}
-                    </Button>
-                  )}
-                  {homogeneousSelectedStatus && batchStatusMenuActions.length === 1 && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      color={batchStatusMenuActions[0].color === "inherit" ? "inherit" : batchStatusMenuActions[0].color}
-                      onClick={() => handleBatchStatusRequest(batchStatusMenuActions[0])}
-                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-                    >
-                      {batchStatusUpdating ? "修改中..." : batchStatusMenuActions[0].label}
-                    </Button>
-                  )}
-                  {(!homogeneousSelectedStatus ? batchStatusMenuActions.length > 0 : batchStatusMenuActions.length > 1) && (
-                    <Button
-                      size="small"
-                      variant="outlined"
-                      endIcon={<ExpandMoreIcon />}
-                      onClick={(event) => setBatchStatusMenuAnchor(event.currentTarget)}
-                      disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-                      aria-haspopup="menu"
-                      aria-expanded={Boolean(batchStatusMenuAnchor)}
-                    >
-                      {homogeneousSelectedStatus ? "更多状态" : "修改状态..."}
-                    </Button>
-                  )}
-                  {!primaryBatchStatusAction && batchStatusMenuActions.length === 0 && (
-                    <Typography variant="body2" color="text.secondary" sx={{ alignSelf: "center" }}>
-                      所选状态不可修改
-                    </Typography>
-                  )}
-                  <Button
-                    size="small"
-                    variant="contained"
-                    startIcon={<FileDownloadIcon />}
-                    onClick={handleBatchDownload}
-                    disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-                  >
-                    {batchLoading ? "下载中..." : "批量下载"}
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="outlined"
-                    color="error"
-                    startIcon={<DeleteOutlineIcon />}
-                    onClick={() => setPendingBatchDelete(true)}
-                    disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-                  >
-                    删除草稿
-                  </Button>
-                </>
-              )}
-              <Button
-                size="small"
-                variant="text"
-                onClick={() => setSelectedIds([])}
-                disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
-              >
-                清除选择
-              </Button>
-            </Stack>
-          </Box>
-        )}
-
         <TableContainer>
           <Table sx={{ minWidth: isTrash ? 1130 : 1050 }}>
             <TableHead>
@@ -1087,7 +1026,7 @@ export default function ReportList() {
                         <Checkbox
                           size="small"
                           checked={selectedSet.has(report.id)}
-                          onChange={() => handleToggleReport(report.id)}
+                          onChange={(event) => handleToggleReport(report.id, event.currentTarget)}
                           inputProps={{
                             "aria-label": `选择报销单 ${report.id}，${report.purpose || "未命名"}`,
                           }}
@@ -1137,7 +1076,7 @@ export default function ReportList() {
                                 {downloadingId === report.id ? "下载中" : "下载"}
                               </Button>
                               <Button size="small" onClick={() => navigate(`/reports/${report.id}/edit`)}>
-                                编辑
+                                {report.status === "draft" ? "编辑" : "查看"}
                               </Button>
                               <Button
                                 size="small"
@@ -1184,17 +1123,70 @@ export default function ReportList() {
             key={action.target}
             onClick={() => handleBatchStatusRequest(action)}
             disabled={batchStatusUpdating || statusUpdatingId !== null}
+            sx={{ minWidth: 128 }}
           >
-            <Box>
+            <Stack direction="row" alignItems="center" justifyContent="space-between" sx={{ width: "100%" }}>
               <Typography variant="body2">{action.label}</Typography>
-              {!homogeneousSelectedStatus && (
-                <Typography variant="caption" color="text.secondary">
-                  可更新 {action.eligibleCount} 张，跳过 {action.skippedCount} 张
-                </Typography>
-              )}
-            </Box>
+              <Box
+                component="span"
+                aria-hidden="true"
+                sx={{
+                  width: 10,
+                  height: 10,
+                  flex: "0 0 auto",
+                  borderRadius: "50%",
+                  bgcolor: STATUS_META[action.target]?.chipSx?.bgcolor || "action.selected",
+                  border: "1px solid",
+                  borderColor: STATUS_META[action.target]?.chipSx?.color || "text.secondary",
+                }}
+              />
+            </Stack>
           </MenuItem>
         ))}
+      </Menu>
+
+      <Menu
+        anchorEl={batchActionMenuAnchor}
+        open={Boolean(batchActionMenuAnchor)}
+        onClose={() => setBatchActionMenuAnchor(null)}
+      >
+        {isTrash ? (
+          <MenuItem
+            onClick={() => {
+              setBatchActionMenuAnchor(null);
+              setPendingBatchPurge(true);
+            }}
+            disabled={batchLoading || deleting}
+            sx={{ color: "error.main" }}
+          >
+            彻底删除
+          </MenuItem>
+        ) : (
+          <>
+            <MenuItem
+              onClick={() => {
+                setBatchActionMenuAnchor(null);
+                handleBatchDownload();
+              }}
+              disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+            >
+              批量下载
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setBatchActionMenuAnchor(null);
+                setPendingBatchDelete(true);
+              }}
+              disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+              sx={{ color: "error.main" }}
+            >
+              删除草稿
+            </MenuItem>
+          </>
+        )}
+        <MenuItem onClick={handleClearSelection} disabled={batchLoading || deleting || batchStatusUpdating}>
+          清除选择
+        </MenuItem>
       </Menu>
 
       <Dialog open={Boolean(pendingDelete)} onClose={() => !deleting && setPendingDelete(null)}>

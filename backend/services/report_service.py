@@ -139,8 +139,8 @@ def validate_status_transition(current_status: str, target_status: str) -> None:
 
 
 def ensure_report_writable(report: ExpenseReport) -> None:
-    if report.status in {"printed", "reimbursed"}:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="已提交或已报销状态不可修改")
+    if report.status != "draft":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="只有草稿状态可以修改报销单内容、发票和车票")
 
 
 def ensure_report_deletable(report: ExpenseReport) -> None:
@@ -202,6 +202,18 @@ def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再下载或提交",
+        )
+
+
+def ensure_report_ready_to_leave_draft(report: ExpenseReport) -> None:
+    if not (report.purpose or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差事由不能为空，请填写后再修改状态")
+
+    shortfall = fuel_subsidy_invoice_shortfall(report)
+    if shortfall > Decimal("0.00"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再修改状态",
         )
 
 
@@ -805,8 +817,8 @@ def purge_report(db: Session, report_id: int) -> int:
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     validate_status_transition(report.status, target_status)
-    if target_status in {"printed", "reimbursed"}:
-        ensure_fuel_subsidy_printable(report)
+    if report.status == "draft" and target_status != "draft":
+        ensure_report_ready_to_leave_draft(report)
     if REPORT_STATUS_ORDER.get(target_status, 0) < REPORT_STATUS_ORDER.get(report.status, 0):
         create_safety_snapshot(db, reason="pre_status_rollback")
     report.status = target_status

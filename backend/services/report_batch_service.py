@@ -24,9 +24,9 @@ from backend.services.report_service import (
     REPORT_STATUS_LABELS,
     REPORT_STATUS_ORDER,
     ensure_fuel_subsidy_printable,
+    ensure_report_ready_to_leave_draft,
     purge_report,
     restore_deleted_report,
-    validate_status_transition,
 )
 from backend.services.settings_service import get_or_create_settings
 
@@ -156,9 +156,8 @@ def batch_update_report_status(
             )
             continue
         try:
-            validate_status_transition(report.status, target_status)
-            if target_status in {"printed", "reimbursed"}:
-                ensure_fuel_subsidy_printable(report)
+            if report.status == "draft" and target_status != "draft":
+                ensure_report_ready_to_leave_draft(report)
         except HTTPException as exc:
             skipped.append(
                 ReportBatchStatusSkipped(report_id=report_id, reason=str(exc.detail), status=report.status)

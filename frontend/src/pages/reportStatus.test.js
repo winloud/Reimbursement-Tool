@@ -88,7 +88,7 @@ test("directional status actions expose the previous and next workflow steps", (
   assert.deepEqual(getReportStatusDirectionalActions("unknown"), { previous: null, next: null });
 });
 
-test("mixed batch actions report eligible and skipped counts", () => {
+test("batch actions expose every different target status with accurate attempt counts", () => {
   const actions = getBatchReportStatusActions([
     { status: "draft" },
     { status: "checked" },
@@ -97,12 +97,19 @@ test("mixed batch actions report eligible and skipped counts", () => {
   ]);
 
   assert.deepEqual(
-    actions.map((action) => [action.target, action.eligibleCount, action.skippedCount]),
+    actions.map((action) => [action.target, action.attemptCount, action.sameStatusCount]),
     [
-      ["draft", 1, 3],
-      ["checked", 2, 2],
-      ["printed", 2, 2],
-      ["reimbursed", 1, 3],
+      ["draft", 3, 1],
+      ["checked", 3, 1],
+      ["printed", 3, 1],
+      ["reimbursed", 3, 1],
     ],
+  );
+});
+
+test("batch actions omit a pure no-op target", () => {
+  assert.deepEqual(
+    getBatchReportStatusActions([{ status: "checked" }, { status: "checked" }]).map((action) => action.target),
+    ["draft", "printed", "reimbursed"],
   );
 });
