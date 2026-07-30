@@ -24,7 +24,6 @@ from backend.services.report_service import (
     get_report_or_404,
     is_custom_category,
     recalculate_report_totals,
-    rollback_printed_report_for_fuel_shortfall,
     validate_expense_category,
 )
 from backend.services.invoice_duplicate_service import (
@@ -388,7 +387,6 @@ def update_invoice(db: Session, invoice_id: int, payload: InvoiceUpdate) -> Invo
         if payload.invoice_type is not None:
             invoice.invoice_type = payload.invoice_type
         recalculate_report_totals(report)
-        rollback_printed_report_for_fuel_shortfall(db, report)
         db.commit()
     except Exception:
         db.rollback()
@@ -414,7 +412,6 @@ def soft_delete_invoice(db: Session, invoice_id: int) -> None:
     try:
         invoice.deleted_at = datetime.utcnow()
         recalculate_report_totals(report)
-        rollback_printed_report_for_fuel_shortfall(db, report)
         db.commit()
     except Exception:
         db.rollback()

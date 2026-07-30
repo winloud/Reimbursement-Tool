@@ -199,7 +199,7 @@ def test_batch_delete_skips_snapshot_when_no_report_will_be_deleted(monkeypatch,
     assert snapshot_reasons == []
 
 
-def test_batch_status_updates_legal_items_and_skips_the_rest(monkeypatch, db):
+def test_batch_status_allows_cross_status_updates_and_skips_same_or_missing(monkeypatch, db):
     snapshot_reasons = []
     monkeypatch.setattr(
         report_batch_service,
@@ -224,13 +224,91 @@ def test_batch_status_updates_legal_items_and_skips_the_rest(monkeypatch, db):
     for report in (draft, checked, submitted, reimbursed):
         db.refresh(report)
     assert result.target_status == "checked"
-    assert result.updated_count == 2
-    assert result.skipped_count == 3
-    assert {item.report_id for item in result.skipped} == {checked.id, reimbursed.id, 9999}
+    assert result.updated_count == 3
+    assert result.skipped_count == 2
+    assert {item.report_id for item in result.skipped} == {checked.id, 9999}
     assert draft.status == "checked"
     assert checked.status == "checked"
     assert submitted.status == "checked"
-    assert reimbursed.status == "reimbursed"
+    assert reimbursed.status == "checked"
+    assert snapshot_reasons == ["pre_batch_status_rollback"]
+
+
+def test_batch_status_validates_each_draft_before_cross_status_update(db):
+    valid = create_report(db, ReportCreate(purpose="可核对"))
+    missing_purpose = create_report(db, ReportCreate(purpose="  "))
+    insufficient_fuel = create_report(db, ReportCreate(purpose="燃油补助不足"))
+    db.add(
+        Invoice(
+            report_id=insufficient_fuel.id,
+            expense_category="fuel_subsidy",
+            file_path="uploads/fuel.pdf",
+            file_type="pdf",
+            amount=Decimal("100.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    update_report(
+        db,
+        insufficient_fuel.id,
+        ReportUpdate(
+            purpose="燃油补助不足",
+            expense_items=[{"category": "fuel_subsidy", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+
+    result = batch_update_report_status(
+        db,
+        [valid.id, missing_purpose.id, insufficient_fuel.id],
+        "reimbursed",
+    )
+
+    db.refresh(valid)
+    db.refresh(missing_purpose)
+    db.refresh(insufficient_fuel)
+    assert result.updated_count == 1
+    assert result.skipped_count == 2
+    assert valid.status == "reimbursed"
+    assert missing_purpose.status == "draft"
+    assert insufficient_fuel.status == "draft"
+    assert {item.report_id: item.reason for item in result.skipped} == {
+        missing_purpose.id: "出差事由不能为空，请填写后再修改状态",
+        insufficient_fuel.id: "燃油补助发票金额不足，还差 ¥80.00，请补充足额发票后再修改状态",
+    }
+
+
+def test_batch_status_between_read_only_statuses_skips_completeness_checks(db):
+    report = create_report(db, ReportCreate(purpose="已核对后数据"))
+    update_report_status(db, report.id, "checked")
+    report.purpose = " "
+    db.commit()
+
+    result = batch_update_report_status(db, [report.id], "reimbursed")
+
+    db.refresh(report)
+    assert result.updated_count == 1
+    assert result.skipped_count == 0
+    assert report.status == "reimbursed"
+
+
+def test_batch_status_allows_reimbursed_reports_to_return_to_submitted(monkeypatch, db):
+    snapshot_reasons = []
+    monkeypatch.setattr(
+        report_batch_service,
+        "create_safety_snapshot",
+        lambda _db, reason: snapshot_reasons.append(reason),
+    )
+    report = create_report(db, ReportCreate(purpose="已报销"))
+    mark_submitted(db, report)
+    update_report_status(db, report.id, "reimbursed")
+
+    result = batch_update_report_status(db, [report.id], "printed")
+
+    db.refresh(report)
+    assert result.updated_count == 1
+    assert result.skipped_count == 0
+    assert report.status == "printed"
     assert snapshot_reasons == ["pre_batch_status_rollback"]
 
 

@@ -55,6 +55,16 @@ export const formatBatchPdfFailureMessage = (failures) =>
 
 export const isTrashStatus = (status) => status === "trash";
 
+export const isReportStatusVisible = ({ tab = "all", statuses = "" } = {}, reportStatus) => {
+  if (tab === "trash") return true;
+  if (tab !== "all") return reportStatus === tab;
+  const scopedStatuses = String(statuses)
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean);
+  return scopedStatuses.length === 0 || scopedStatuses.includes(reportStatus);
+};
+
 export const getSubsidyDaysLabel = (report = {}) =>
   report.manual_subsidy_total !== null && report.manual_subsidy_total !== undefined
     ? "人工核定"

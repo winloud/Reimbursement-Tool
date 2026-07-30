@@ -52,32 +52,38 @@ def make_report(
     return report
 
 
-def test_stats_summary_excludes_drafts_and_splits_pending_reimbursed_amounts(db):
+def test_stats_summary_excludes_drafts_and_splits_checked_submitted_pending_amounts(db):
     make_report(db, report_date=date(2026, 6, 1), status="draft", amount="999.00")
     make_report(db, report_date=date(2026, 6, 2), status="printed", amount="120.00")
     make_report(db, report_date=date(2026, 6, 3), status="reimbursed", amount="300.00")
+    make_report(db, report_date=date(2026, 6, 4), status="checked", amount="70.00")
     make_report(db, report_date=date(2026, 1, 5), status="printed", amount="80.00")
     make_report(db, report_date=date(2026, 2, 6), status="reimbursed", amount="50.00")
+    make_report(db, report_date=date(2026, 3, 7), status="checked", amount="90.00")
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-01", end_month="2026-06")
 
-    assert summary.selected_period.pending_amount == Decimal("200.00")
-    assert summary.selected_period.pending_count == 2
+    assert summary.selected_period.pending_amount == Decimal("360.00")
+    assert summary.selected_period.pending_count == 4
     assert summary.selected_period.reimbursed_amount == Decimal("350.00")
     assert summary.selected_period.reimbursed_count == 2
-    assert summary.selected_period.total_amount == Decimal("550.00")
-    assert summary.selected_period.total_count == 4
-    assert summary.current_month.pending_amount == Decimal("120.00")
-    assert summary.current_month.pending_count == 1
+    assert summary.selected_period.total_amount == Decimal("710.00")
+    assert summary.selected_period.total_count == 6
+    assert summary.current_month.pending_amount == Decimal("190.00")
+    assert summary.current_month.pending_count == 2
     assert summary.current_month.reimbursed_amount == Decimal("300.00")
     assert summary.current_month.reimbursed_count == 1
-    assert summary.current_year.pending_amount == Decimal("200.00")
-    assert summary.current_year.pending_count == 2
+    assert summary.current_month.total_amount == Decimal("490.00")
+    assert summary.current_month.total_count == 3
+    assert summary.current_year.pending_amount == Decimal("360.00")
+    assert summary.current_year.pending_count == 4
     assert summary.current_year.reimbursed_amount == Decimal("350.00")
     assert summary.current_year.reimbursed_count == 2
+    assert summary.current_year.total_amount == Decimal("710.00")
+    assert summary.current_year.total_count == 6
 
 
-def test_stats_summary_counts_trip_days_for_pending_and_reimbursed_cards(db):
+def test_stats_summary_counts_trip_days_for_all_non_draft_reports(db):
     make_report(
         db,
         report_date=date(2026, 6, 1),
@@ -97,18 +103,26 @@ def test_stats_summary_counts_trip_days_for_pending_and_reimbursed_cards(db):
     make_report(
         db,
         report_date=date(2026, 6, 10),
+        status="checked",
+        trips=[
+            TripWrite(sort_order=1, depart_month=6, depart_day=10, arrive_month=6, arrive_day=11),
+        ],
+    )
+    make_report(
+        db,
+        report_date=date(2026, 6, 12),
         status="draft",
         trips=[
-                TripWrite(sort_order=1, depart_month=6, depart_day=10, arrive_month=6, arrive_day=15),
+            TripWrite(sort_order=1, depart_month=6, depart_day=12, arrive_month=6, arrive_day=15),
         ],
     )
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-06", end_month="2026-06")
 
-    assert summary.selected_period.trip_days == 5
+    assert summary.selected_period.trip_days == 7
 
 
-def test_stats_trend_uses_reimbursed_amounts_and_trip_days_only(db):
+def test_stats_trend_includes_all_non_draft_reports(db):
     make_report(
         db,
         report_date=date(2026, 5, 4),
@@ -123,18 +137,26 @@ def test_stats_trend_uses_reimbursed_amounts_and_trip_days_only(db):
         amount="180.00",
         trips=[TripWrite(sort_order=1, depart_month=5, depart_day=10, arrive_month=5, arrive_day=12)],
     )
+    make_report(
+        db,
+        report_date=date(2026, 5, 15),
+        status="checked",
+        amount="200.00",
+        trips=[TripWrite(sort_order=1, depart_month=5, depart_day=15, arrive_month=5, arrive_day=16)],
+    )
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-05", end_month="2026-06")
 
     assert [item.month for item in summary.monthly_trend] == ["2026-05", "2026-06"]
     may = next(item for item in summary.monthly_trend if item.month == "2026-05")
-    assert may.pending_amount == Decimal("999.00")
+    assert may.pending_amount == Decimal("1199.00")
     assert may.reimbursed_amount == Decimal("180.00")
-    assert may.total_amount == Decimal("1179.00")
-    assert may.trip_days == 8
+    assert may.total_amount == Decimal("1379.00")
+    assert may.total_count == 3
+    assert may.trip_days == 10
 
 
-def test_stats_category_includes_subsidy_and_confirmed_reimbursed_invoices_only(db):
+def test_stats_category_excludes_only_drafts_and_keeps_confirmed_invoice_rules(db):
     reimbursed = make_report(
         db,
         report_date=date(2026, 6, 3),
@@ -147,6 +169,8 @@ def test_stats_category_includes_subsidy_and_confirmed_reimbursed_invoices_only(
     add_invoice(db, reimbursed, "accommodation", "300.00")
     add_invoice(db, reimbursed, "city_transport", "999.00", confirmed=False)
     make_report(db, report_date=date(2026, 6, 5), status="printed", amount="200.00", category="luggage")
+    make_report(db, report_date=date(2026, 6, 6), status="checked", amount="80.00", category="postal")
+    make_report(db, report_date=date(2026, 6, 7), status="draft", amount="900.00", category="city_transport")
     db.commit()
 
     make_report(db, report_date=date(2026, 7, 5), status="reimbursed", amount="700.00", category="postal")
@@ -155,13 +179,14 @@ def test_stats_category_includes_subsidy_and_confirmed_reimbursed_invoices_only(
 
     amounts = {item.category: item.amount for item in category.items}
     assert amounts == {
-        "luggage": Decimal("100.00"),
+        "luggage": Decimal("300.00"),
         "accommodation": Decimal("300.00"),
         "subsidy": Decimal("100.00"),
+        "postal": Decimal("80.00"),
     }
 
 
-def test_stats_calendar_uses_pending_and_reimbursed_trip_days_with_month_detail(db):
+def test_stats_calendar_excludes_only_draft_trip_days_with_month_detail(db):
     make_report(
         db,
         report_date=date(2026, 5, 31),
@@ -180,15 +205,21 @@ def test_stats_calendar_uses_pending_and_reimbursed_trip_days_with_month_detail(
     make_report(
         db,
         report_date=date(2026, 6, 20),
+        status="checked",
+        trips=[TripWrite(sort_order=1, depart_month=6, depart_day=20, arrive_month=6, arrive_day=21)],
+    )
+    make_report(
+        db,
+        report_date=date(2026, 6, 22),
         status="draft",
-        trips=[TripWrite(sort_order=1, depart_month=6, depart_day=20, arrive_month=6, arrive_day=22)],
+        trips=[TripWrite(sort_order=1, depart_month=6, depart_day=22, arrive_month=6, arrive_day=24)],
     )
 
     calendar = get_stats_calendar(db, year=2026, month=6, start_month="2026-06", end_month="2026-06")
 
     assert calendar.year == 2026
     assert calendar.month == 6
-    assert calendar.total_days == 6
+    assert calendar.total_days == 8
     assert calendar.year_dates == [
         date(2026, 6, 1),
         date(2026, 6, 2),
@@ -196,6 +227,8 @@ def test_stats_calendar_uses_pending_and_reimbursed_trip_days_with_month_detail(
         date(2026, 6, 11),
         date(2026, 6, 12),
         date(2026, 6, 13),
+        date(2026, 6, 20),
+        date(2026, 6, 21),
     ]
     assert calendar.month_dates == [
         date(2026, 6, 1),
@@ -204,8 +237,10 @@ def test_stats_calendar_uses_pending_and_reimbursed_trip_days_with_month_detail(
         date(2026, 6, 11),
         date(2026, 6, 12),
         date(2026, 6, 13),
+        date(2026, 6, 20),
+        date(2026, 6, 21),
     ]
-    assert [(item.month, item.days) for item in calendar.months] == [("2026-06", 6)]
+    assert [(item.month, item.days) for item in calendar.months] == [("2026-06", 8)]
 
 
 def test_stats_month_range_supports_cross_year_trend_and_trip_days(db):

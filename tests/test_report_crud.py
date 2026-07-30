@@ -531,14 +531,38 @@ def test_soft_delete_hides_from_list(db):
     assert items == []
 
 
-def test_update_reimbursed_report_forbidden(db):
+@pytest.mark.parametrize("locked_status", ["checked", "printed", "reimbursed"])
+def test_non_draft_report_is_read_only(db, locked_status):
+    report = create_report(db, ReportCreate(purpose="出差"))
+    update_report_status(db, report.id, "checked")
+    if locked_status in {"printed", "reimbursed"}:
+        update_report_status(db, report.id, "printed")
+    if locked_status == "reimbursed":
+        update_report_status(db, report.id, "reimbursed")
+    with pytest.raises(HTTPException) as exc:
+        update_report(db, report.id, ReportUpdate(purpose="改"))
+    assert exc.value.status_code == 403
+
+
+def test_returning_to_draft_restores_editability(db):
+    report = create_report(db, ReportCreate(purpose="出差"))
+    update_report_status(db, report.id, "checked")
+    update_report_status(db, report.id, "draft")
+
+    updated = update_report(db, report.id, ReportUpdate(purpose="改后继续编辑"))
+
+    assert updated.purpose == "改后继续编辑"
+
+
+def test_reimbursed_report_can_return_to_submitted(db):
     report = create_report(db, ReportCreate(purpose="出差"))
     update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
     update_report_status(db, report.id, "reimbursed")
-    with pytest.raises(HTTPException) as exc:
-        update_report(db, report.id, ReportUpdate(purpose="改"))
-    assert exc.value.status_code == 403
+
+    updated = update_report_status(db, report.id, "printed")
+
+    assert updated.status == "printed"
 
 
 def test_list_reports_tolerates_invalid_trip_chronology(db):

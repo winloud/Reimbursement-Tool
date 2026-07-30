@@ -15,6 +15,7 @@ LEGAL_TRANSITIONS = [
     ("checked", "printed"),
     ("printed", "checked"),
     ("printed", "reimbursed"),
+    ("reimbursed", "printed"),
 ]
 
 ILLEGAL_TRANSITIONS = [
@@ -24,7 +25,6 @@ ILLEGAL_TRANSITIONS = [
     ("printed", "draft"),
     ("reimbursed", "draft"),
     ("reimbursed", "checked"),
-    ("reimbursed", "printed"),
 ]
 
 
@@ -73,8 +73,9 @@ def test_update_report_status_full_legal_path(monkeypatch, db):
     report = update_report_status(db, report.id, "checked")
     report = update_report_status(db, report.id, "printed")
     report = update_report_status(db, report.id, "reimbursed")
-    assert report.status == "reimbursed"
-    assert snapshot_reasons == ["pre_status_rollback", "pre_status_rollback"]
+    report = update_report_status(db, report.id, "printed")
+    assert report.status == "printed"
+    assert snapshot_reasons == ["pre_status_rollback", "pre_status_rollback", "pre_status_rollback"]
 
 
 def test_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):
@@ -103,15 +104,27 @@ def test_update_report_status_illegal_raises(db):
     assert exc.value.status_code == 400
 
 
-def test_reimbursed_is_locked(db):
+def test_draft_to_checked_requires_a_nonempty_purpose(db):
+    report = create_report(db, ReportCreate(purpose="   "))
+
+    with pytest.raises(HTTPException) as exc:
+        update_report_status(db, report.id, "checked")
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == "出差事由不能为空，请填写后再修改状态"
+    db.refresh(report)
+    assert report.status == "draft"
+
+
+def test_reimbursed_can_only_return_to_submitted(db):
     report = create_report(db, ReportCreate(purpose="出差C"))
     update_report_status(db, report.id, "checked")
     update_report_status(db, report.id, "printed")
     update_report_status(db, report.id, "reimbursed")
-    # reimbursed -> 任意状态非法
+    # 已报销仅可回退至已提交。
     with pytest.raises(HTTPException):
         update_report_status(db, report.id, "draft")
     with pytest.raises(HTTPException):
         update_report_status(db, report.id, "checked")
-    with pytest.raises(HTTPException):
-        update_report_status(db, report.id, "printed")
+    updated = update_report_status(db, report.id, "printed")
+    assert updated.status == "printed"

@@ -26,9 +26,11 @@ from backend.services.report_service import (
     subsidy_trips_with_implicit_bounds,
 )
 
-PENDING_STATUS = "printed"
+DRAFT_STATUS = "draft"
+CHECKED_STATUS = "checked"
+SUBMITTED_STATUS = "printed"
+PENDING_STATUSES = {CHECKED_STATUS, SUBMITTED_STATUS}
 REIMBURSED_STATUS = "reimbursed"
-STATS_STATUSES = {PENDING_STATUS, REIMBURSED_STATUS}
 SUBSIDY_CATEGORY = "subsidy"
 SUBSIDY_LABEL = "途中补贴"
 MONTH_PATTERN = re.compile(r"^\d{4}-(0[1-9]|1[0-2])$")
@@ -65,14 +67,13 @@ def get_stats_category(
     today = reference_date or date.today()
     period_start, period_end = parse_month_range(start_month, end_month, today)
     amounts: dict[str, Decimal] = {}
-    reimbursed_reports = [
+    reports = [
         report
         for report in list_stats_reports(db)
-        if report.status == REIMBURSED_STATUS
-        and report.report_date is not None
+        if report.report_date is not None
         and period_start <= report.report_date < period_end
     ]
-    for report in reimbursed_reports:
+    for report in reports:
         for trip in report.trips:
             if trip.amount:
                 amounts["transport_fare"] = quantize_amount(amounts.get("transport_fare", Decimal("0.00")) + trip.amount)
@@ -81,7 +82,7 @@ def get_stats_category(
                 continue
             amounts[item.category] = quantize_amount(amounts.get(item.category, Decimal("0.00")) + item.amount)
 
-    subsidy_total = sum((report.subsidy_total for report in reimbursed_reports), Decimal("0.00"))
+    subsidy_total = sum((report.subsidy_total for report in reports), Decimal("0.00"))
     if subsidy_total:
         amounts[SUBSIDY_CATEGORY] = quantize_amount(subsidy_total)
 
@@ -108,8 +109,6 @@ def get_stats_calendar(
     reports = list_stats_reports(db)
     dates: set[date] = set()
     for report in reports:
-        if report.status not in STATS_STATUSES:
-            continue
         dates.update(report_trip_dates_for_period(report, period_start, period_end))
 
     months = build_calendar_months(period_start, period_end, dates)
@@ -130,7 +129,7 @@ def list_stats_reports(db: Session) -> list[ExpenseReport]:
         db.scalars(
             select(ExpenseReport).where(
                 ExpenseReport.deleted_at.is_(None),
-                ExpenseReport.status.in_(STATS_STATUSES | {"draft"}),
+                ExpenseReport.status != DRAFT_STATUS,
             )
         ).all()
     )
@@ -141,19 +140,17 @@ def summarize_period(reports: list[ExpenseReport], start: date, end: date) -> St
     for report in reports:
         if report.deleted_at is not None or report.report_date is None:
             continue
-        if report.status == PENDING_STATUS:
-            if start <= report.report_date < end:
-                summary.pending_amount = quantize_amount(summary.pending_amount + report.total_amount)
-                summary.pending_count += 1
-        elif report.status == REIMBURSED_STATUS:
-            if start <= report.report_date < end:
-                summary.reimbursed_amount = quantize_amount(summary.reimbursed_amount + report.total_amount)
-                summary.reimbursed_count += 1
-        else:
+        if not start <= report.report_date < end:
             continue
+        summary.total_amount = quantize_amount(summary.total_amount + report.total_amount)
+        summary.total_count += 1
+        if report.status in PENDING_STATUSES:
+            summary.pending_amount = quantize_amount(summary.pending_amount + report.total_amount)
+            summary.pending_count += 1
+        elif report.status == REIMBURSED_STATUS:
+            summary.reimbursed_amount = quantize_amount(summary.reimbursed_amount + report.total_amount)
+            summary.reimbursed_count += 1
         summary.trip_days += count_report_trip_days_in_period(report, start, end)
-    summary.total_amount = quantize_amount(summary.pending_amount + summary.reimbursed_amount)
-    summary.total_count = summary.pending_count + summary.reimbursed_count
     return summary
 
 
@@ -166,28 +163,31 @@ def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) ->
         reimbursed_amount = Decimal("0.00")
         pending_count = 0
         reimbursed_count = 0
+        total_amount = Decimal("0.00")
+        total_count = 0
         trip_days = 0
         for report in reports:
-            if report.status not in STATS_STATUSES or report.report_date is None:
+            if report.report_date is None:
                 continue
             if month_start <= report.report_date < month_end:
-                if report.status == PENDING_STATUS:
+                total_amount += report.total_amount
+                total_count += 1
+                if report.status in PENDING_STATUSES:
                     pending_amount += report.total_amount
                     pending_count += 1
                 elif report.status == REIMBURSED_STATUS:
                     reimbursed_amount += report.total_amount
                     reimbursed_count += 1
             trip_days += count_report_trip_days_in_period(report, month_start, month_end)
-        total_amount = quantize_amount(pending_amount + reimbursed_amount)
         items.append(
             MonthlyTrendItem(
                 month=month_start.strftime("%Y-%m"),
                 pending_amount=quantize_amount(pending_amount),
                 reimbursed_amount=quantize_amount(reimbursed_amount),
-                total_amount=total_amount,
+                total_amount=quantize_amount(total_amount),
                 pending_count=pending_count,
                 reimbursed_count=reimbursed_count,
-                total_count=pending_count + reimbursed_count,
+                total_count=total_count,
                 trip_days=trip_days,
             )
         )
