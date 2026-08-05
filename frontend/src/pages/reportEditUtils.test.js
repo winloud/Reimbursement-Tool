@@ -498,14 +498,18 @@ describe("report edit utilities", () => {
     ];
     const visibleItems = expenseItems.filter((item) => getExpenseItemAmount(item) > 0);
     const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const viewSource = readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8");
     const paperInvoiceSource = readFileSync(
       new URL("../features/report-edit/PaperInvoiceEntry.jsx", import.meta.url),
       "utf8",
     );
 
     assert.deepEqual(visibleItems.map((item) => item.category), ["accommodation"]);
-    assert.match(source, /\.filter\(\(\{ amount \}\) => amount > 0\)/);
-    assert.match(source, /<PaperInvoiceEntry/);
+    assert.match(source, /const summaryPanelView = \{/);
+    assert.match(source, /visibleOtherExpenseItems,/);
+    assert.match(viewSource, /summaryPanel/);
+    assert.match(viewSource, /visibleOtherExpenseItems\.map/);
+    assert.match(viewSource, /<PaperInvoiceEntry/);
     assert.match(paperInvoiceSource, /添加纸质发票/);
   });
 
