@@ -172,7 +172,7 @@ def test_report_pdf_paginates_other_expenses_from_first_page(monkeypatch, tmp_pa
         "住宿费",
         "邮电费",
         "未乘卧铺补助",
-        "过路费",
+        "通行费",
         "燃油补助",
         "宴请",
     ]

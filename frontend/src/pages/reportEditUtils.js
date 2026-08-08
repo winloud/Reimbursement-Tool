@@ -18,7 +18,7 @@ export const EXPENSE_CATEGORIES = [
   { value: "accommodation", label: "住宿费" },
   { value: "postal", label: "邮电费" },
   { value: "no_sleeper_subsidy", label: "未乘卧铺补助" },
-  { value: "toll", label: "过路费" },
+  { value: "toll", label: "通行费" },
   { value: "fuel_subsidy", label: "燃油补助" },
 ];
 

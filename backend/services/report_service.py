@@ -69,7 +69,7 @@ FIXED_CATEGORY_LABELS = {
     "accommodation": "住宿费",
     "postal": "邮电费",
     "no_sleeper_subsidy": "未乘卧铺补助",
-    "toll": "过路费",
+    "toll": "通行费",
     FUEL_SUBSIDY_CATEGORY: "燃油补助",
 }
 FIXED_CATEGORY_LABEL_ALIASES = {
