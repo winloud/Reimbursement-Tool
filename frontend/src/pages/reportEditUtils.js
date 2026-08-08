@@ -12,6 +12,11 @@ export const emptyForm = {
   advance_amount: "0.00",
 };
 
+export const TRIP_CARD_ACTION_POLICY = {
+  directActions: ["start", "end", "return"],
+  overflowActions: ["duplicate", "swap", "delete"],
+};
+
 export const EXPENSE_CATEGORIES = [
   { value: "luggage", label: "行李费" },
   { value: "city_transport", label: "市内交通费" },

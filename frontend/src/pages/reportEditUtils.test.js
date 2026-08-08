@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, it } from "node:test";
 
 import {
+  TRIP_CARD_ACTION_POLICY,
   buildTripDateRanges,
   buildDraftPayload,
   buildCustomExpenseCategory,
@@ -39,6 +40,13 @@ import {
 } from "./reportEditUtils.js";
 
 describe("report edit utilities", () => {
+  it("keeps start, end, and return visible while secondary trip actions use overflow", () => {
+    assert.deepEqual(TRIP_CARD_ACTION_POLICY, {
+      directActions: ["start", "end", "return"],
+      overflowActions: ["duplicate", "swap", "delete"],
+    });
+  });
+
   it("detects an untouched client-side draft as empty and every meaningful edit as non-empty", () => {
     const defaults = {
       report_date: "2026-06-03",

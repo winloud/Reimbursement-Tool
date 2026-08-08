@@ -20,6 +20,9 @@ import {
   IconButton,
   InputAdornment,
   LinearProgress,
+  ListItemIcon,
+  Menu,
+  MenuItem,
   Paper,
   Snackbar,
   Stack,
@@ -37,15 +40,18 @@ import EditIcon from "@mui/icons-material/Edit";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
 import DownloadIcon from "@mui/icons-material/Download";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import SaveIcon from "@mui/icons-material/Save";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import { useState } from "react";
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
 import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
 import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
 import {
+  TRIP_CARD_ACTION_POLICY,
   formatAmount,
   getConfirmedInvoiceCount,
   getConfirmedInvoiceTotal,
@@ -58,6 +64,12 @@ import {
   shouldExpandExpenseItem,
   validateFuelSubsidyAmount,
 } from "./reportEditUtils";
+
+const TRIP_OVERFLOW_ACTION_META = {
+  duplicate: { label: "复制行程", Icon: ContentCopyIcon },
+  swap: { label: "交换出发/到达", Icon: SwapHorizIcon },
+  delete: { label: "删除行程", Icon: DeleteIcon, destructive: true },
+};
 
 const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
 const SECTION_GAP = { xs: 2, md: 2.5 };
@@ -85,7 +97,7 @@ const workCardSx = {
 
 const mainLayoutSx = {
   display: "grid",
-  gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) 360px" },
+  gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) 320px" },
   gap: { xs: 2, md: 2.5, xl: 3 },
   alignItems: "start",
 };
@@ -95,6 +107,31 @@ const repeatedCardGridSx = {
   gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
   gap: SECTION_GAP,
   alignItems: "stretch",
+};
+
+const tripCardTitleSx = {
+  minWidth: 0,
+};
+
+const tripCardMetaRowSx = {
+  minWidth: 0,
+  flexWrap: "nowrap",
+  mt: 0.25,
+};
+
+const tripCardInvoiceChipSx = {
+  flex: "0 0 auto",
+};
+
+const tripCardSummarySx = {
+  minWidth: 0,
+  flex: "1 1 auto",
+};
+
+const tripCardActionsSx = {
+  flex: "0 0 auto",
+  flexWrap: "nowrap",
+  alignSelf: { xs: "flex-end", sm: "auto" },
 };
 
 const tripFieldGridSx = {
@@ -427,6 +464,17 @@ export default function ReportEditView({
     clearToast,
   } = overlays;
 
+  const [tripActionMenu, setTripActionMenu] = useState({ anchorEl: null, index: null });
+  const closeTripActionMenu = () => setTripActionMenu({ anchorEl: null, index: null });
+  const handleTripOverflowAction = (actionId) => {
+    const tripIndex = tripActionMenu.index;
+    closeTripActionMenu();
+    if (tripIndex === null) return;
+    if (actionId === "duplicate") duplicateTrip(tripIndex);
+    if (actionId === "swap") swapTrip(tripIndex);
+    if (actionId === "delete") removeTrip(tripIndex);
+  };
+
   const renderInvoiceList = (items) => (
     <InvoiceList
       items={items}
@@ -734,11 +782,13 @@ export default function ReportEditView({
                     const tripInvoiceColor =
                       tripInvoices.length === 0 && paperInvoiceCount === 0 ? "default" : unconfirmedTripInvoices > 0 ? "warning" : "success";
                     const tripTitle = `${trip.depart_place || "出发地"} -> ${trip.arrive_place || "到达地"}`;
+                    const confirmedInvoiceCount = confirmedElectronicCount + paperInvoiceCount;
+                    const invoiceAmountText = confirmedInvoiceCount > 0 ? ` · 发票 ${formatAmount(confirmedAmount)}` : "";
                     const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
                       trip.depart_place || "出发地"
                     } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
                       trip.arrive_place || "到达地"
-                    }${markerSuffix} · ${trip.transport || "交通工具"} · 发票 ${confirmedElectronicCount + paperInvoiceCount} 张 ${formatAmount(confirmedAmount)}`;
+                    }${markerSuffix} · ${trip.transport || "交通工具"}${invoiceAmountText}`;
 
                     return (
                       <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
@@ -755,71 +805,92 @@ export default function ReportEditView({
                         >
                       <CardContent sx={sectionCardContentSx}>
                         <Stack spacing={2}>
-                          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0 }}>
-                              <DragIndicatorIcon color="disabled" />
-                              <Box sx={{ minWidth: 0 }}>
-                                <Stack direction="row" alignItems="center" spacing={0.75} flexWrap="wrap" useFlexGap>
-                                  <Typography fontWeight={900}>{tripTitle}</Typography>
-                                  <Chip size="small" color={tripInvoiceColor} label={tripInvoiceLabel} />
+                          <Stack
+                            direction={{ xs: "column", sm: "row" }}
+                            alignItems={{ xs: "stretch", sm: "flex-start" }}
+                            justifyContent="space-between"
+                            spacing={1}
+                          >
+                            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flex: "1 1 auto" }}>
+                              <DragIndicatorIcon color="disabled" sx={{ flex: "0 0 auto" }} />
+                              <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
+                                <Tooltip title={tripTitle}>
+                                  <Typography fontWeight={900} noWrap sx={tripCardTitleSx}>
+                                    {tripTitle}
+                                  </Typography>
+                                </Tooltip>
+                                <Stack direction="row" alignItems="center" spacing={0.75} sx={tripCardMetaRowSx}>
+                                  <Chip
+                                    size="small"
+                                    color={tripInvoiceColor}
+                                    variant="outlined"
+                                    label={tripInvoiceLabel}
+                                    sx={tripCardInvoiceChipSx}
+                                  />
+                                  <Tooltip title={summaryText}>
+                                    <Typography variant="body2" color="text.secondary" noWrap sx={tripCardSummarySx}>
+                                      {summaryText}
+                                    </Typography>
+                                  </Tooltip>
                                 </Stack>
-                                <Typography variant="body2" color="text.secondary" noWrap>
-                                  {summaryText}
-                                </Typography>
                               </Box>
                             </Stack>
-                            <Stack direction="row" spacing={0.5} alignItems="center">
-                              <Tooltip title={isFirstTrip ? "出差开始（默认，自动）" : "标记这段为一次出差的开始"}>
+                            <Stack direction="row" spacing={0.5} alignItems="center" sx={tripCardActionsSx}>
+                              {TRIP_CARD_ACTION_POLICY.directActions.includes("start") && (
+                                <Tooltip title={isFirstTrip ? "出差开始（默认，自动）" : "标记这段为一次出差的开始"}>
+                                  <span>
+                                    <Button
+                                      size="small"
+                                      variant={effectiveStart ? "contained" : "outlined"}
+                                      disabled={readonly || isFirstTrip}
+                                      onClick={() => toggleTripMarker(index, "subsidy_start")}
+                                      sx={{ minWidth: 32, px: 0.75 }}
+                                    >
+                                      起
+                                    </Button>
+                                  </span>
+                                </Tooltip>
+                              )}
+                              {TRIP_CARD_ACTION_POLICY.directActions.includes("end") && (
+                                <Tooltip title={isLastTrip ? "出差结束（默认，自动）" : "标记这段为一次出差的结束"}>
+                                  <span>
+                                    <Button
+                                      size="small"
+                                      variant={effectiveEnd ? "contained" : "outlined"}
+                                      disabled={readonly || isLastTrip}
+                                      onClick={() => toggleTripMarker(index, "subsidy_end")}
+                                      sx={{ minWidth: 32, px: 0.75 }}
+                                    >
+                                      止
+                                    </Button>
+                                  </span>
+                                </Tooltip>
+                              )}
+                              {TRIP_CARD_ACTION_POLICY.directActions.includes("return") && (
+                                <Tooltip title="生成返程">
+                                  <span>
+                                    <IconButton
+                                      size="small"
+                                      disabled={readonly}
+                                      onClick={() => returnTrip(index)}
+                                      aria-label={`生成返程：${tripTitle}`}
+                                    >
+                                      <KeyboardReturnIcon fontSize="small" />
+                                    </IconButton>
+                                  </span>
+                                </Tooltip>
+                              )}
+                              <Tooltip title="更多行程操作">
                                 <span>
-                                  <Button
+                                  <IconButton
                                     size="small"
-                                    variant={effectiveStart ? "contained" : "outlined"}
-                                    disabled={readonly || isFirstTrip}
-                                    onClick={() => toggleTripMarker(index, "subsidy_start")}
-                                    sx={{ minWidth: 32, px: 0.75 }}
+                                    disabled={readonly}
+                                    onClick={(event) => setTripActionMenu({ anchorEl: event.currentTarget, index })}
+                                    aria-label={`更多行程操作：${tripTitle}`}
+                                    aria-haspopup="menu"
+                                    aria-expanded={tripActionMenu.index === index ? "true" : undefined}
                                   >
-                                    起
-                                  </Button>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title={isLastTrip ? "出差结束（默认，自动）" : "标记这段为一次出差的结束"}>
-                                <span>
-                                  <Button
-                                    size="small"
-                                    variant={effectiveEnd ? "contained" : "outlined"}
-                                    disabled={readonly || isLastTrip}
-                                    onClick={() => toggleTripMarker(index, "subsidy_end")}
-                                    sx={{ minWidth: 32, px: 0.75 }}
-                                  >
-                                    止
-                                  </Button>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title="复制行程">
-                                <span>
-                                  <IconButton size="small" disabled={readonly} onClick={() => duplicateTrip(index)}>
-                                    <ContentCopyIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title="交换出发/到达">
-                                <span>
-                                  <IconButton size="small" disabled={readonly} onClick={() => swapTrip(index)}>
-                                    <SwapHorizIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title="生成返程">
-                                <span>
-                                  <IconButton size="small" disabled={readonly} onClick={() => returnTrip(index)}>
-                                    <KeyboardReturnIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                              <Tooltip title="删除行程">
-                                <span>
-                                  <IconButton size="small" color="error" disabled={readonly} onClick={() => removeTrip(index)}>
-                                    <DeleteIcon fontSize="small" />
+                                    <MoreVertIcon fontSize="small" />
                                   </IconButton>
                                 </span>
                               </Tooltip>
@@ -991,6 +1062,31 @@ export default function ReportEditView({
                 </Box>
               )}
             </Stack>
+
+            <Menu
+              anchorEl={tripActionMenu.anchorEl}
+              open={Boolean(tripActionMenu.anchorEl)}
+              onClose={closeTripActionMenu}
+              MenuListProps={{ "aria-label": "更多行程操作" }}
+            >
+              {TRIP_CARD_ACTION_POLICY.overflowActions.map((actionId) => {
+                const action = TRIP_OVERFLOW_ACTION_META[actionId];
+                const ActionIcon = action.Icon;
+                return (
+                  <MenuItem
+                    key={actionId}
+                    disabled={readonly}
+                    onClick={() => handleTripOverflowAction(actionId)}
+                    sx={action.destructive ? { color: "error.main" } : undefined}
+                  >
+                    <ListItemIcon sx={action.destructive ? { color: "error.main" } : undefined}>
+                      <ActionIcon fontSize="small" />
+                    </ListItemIcon>
+                    {action.label}
+                  </MenuItem>
+                );
+              })}
+            </Menu>
 
             <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
               <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>

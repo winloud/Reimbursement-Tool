@@ -3,20 +3,31 @@ import {
   Button,
   CssBaseline,
   Divider,
+  IconButton,
   List,
   ListItemButton,
   ListItemIcon,
   ListItemText,
   Paper,
   Stack,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
+import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
 import StorageIcon from "@mui/icons-material/Storage";
 import SettingsIcon from "@mui/icons-material/Settings";
+import { useState } from "react";
 import { Route, Routes, useLocation } from "react-router-dom";
+import {
+  SIDEBAR_COLLAPSED_WIDTH,
+  SIDEBAR_EXPANDED_WIDTH,
+  readSidebarCollapsed,
+  writeSidebarCollapsed,
+} from "./appLayoutUtils";
 import { NavigationGuardProvider, useNavigationGuard } from "./navigationGuard";
 import Dashboard from "./pages/Dashboard";
 import MaintenancePage from "./pages/MaintenancePage";
@@ -43,6 +54,25 @@ const APP_CONTENT_SX = {
 function Sidebar() {
   const location = useLocation();
   const { requestNavigation } = useNavigationGuard();
+  const [collapsed, setCollapsed] = useState(() => {
+    try {
+      return readSidebarCollapsed(window.localStorage);
+    } catch {
+      return false;
+    }
+  });
+
+  const toggleCollapsed = () => {
+    setCollapsed((previous) => {
+      const next = !previous;
+      try {
+        writeSidebarCollapsed(window.localStorage, next);
+      } catch {
+        // localStorage 不可用时仍保留当前会话内的侧栏状态。
+      }
+      return next;
+    });
+  };
 
   const isActive = (to) => {
     if (to === "/") return location.pathname === "/";
@@ -52,9 +82,11 @@ function Sidebar() {
   return (
     <Paper
       component="aside"
+      aria-label="主导航"
       elevation={0}
       sx={{
-        width: { xs: "100%", md: 248 },
+        width: { xs: "100%", md: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH },
+        flexShrink: 0,
         minHeight: { md: "100vh" },
         borderRadius: 0,
         borderRight: { md: 1 },
@@ -64,48 +96,99 @@ function Sidebar() {
         position: { md: "sticky" },
         top: 0,
         zIndex: 1,
+        overflowX: "hidden",
+        transition: (theme) => theme.transitions.create("width", { duration: theme.transitions.duration.shorter }),
       }}
     >
-      <Stack spacing={2} sx={{ p: 2.5 }}>
-        <Box>
-          <Typography variant="h6" fontWeight={800}>
-            报销管理
-          </Typography>
-          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-            本地出差旅费工作台
-          </Typography>
-        </Box>
-
-        <Button
-          variant="contained"
-          startIcon={<AddIcon />}
-          onClick={() => requestNavigation("/reports/new")}
-          sx={{ justifyContent: "flex-start" }}
+      <Stack spacing={2} sx={{ p: { xs: 2.5, md: collapsed ? 1.5 : 2.5 } }}>
+        <Stack
+          direction="row"
+          alignItems="flex-start"
+          justifyContent={{ xs: "space-between", md: collapsed ? "center" : "space-between" }}
+          spacing={1}
         >
-          新增报销单
-        </Button>
+          <Box sx={{ minWidth: 0, display: { xs: "block", md: collapsed ? "none" : "block" } }}>
+            <Typography variant="h6" fontWeight={800} noWrap>
+              报销管理
+            </Typography>
+            <Typography variant="body2" color="text.secondary" noWrap sx={{ mt: 0.25 }}>
+              本地出差旅费工作台
+            </Typography>
+          </Box>
+          <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
+            <IconButton
+              size="small"
+              onClick={(event) => {
+                toggleCollapsed();
+                if (event.detail > 0) event.currentTarget.blur();
+              }}
+              aria-label={collapsed ? "展开侧栏" : "收起侧栏"}
+              sx={{ display: { xs: "none", md: "inline-flex" }, flex: "0 0 auto" }}
+            >
+              {collapsed ? <ChevronRightIcon /> : <ChevronLeftIcon />}
+            </IconButton>
+          </Tooltip>
+        </Stack>
+
+        <Tooltip title={collapsed ? "新增报销单" : ""} placement="right">
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            aria-label="新增报销单"
+            onClick={() => requestNavigation("/reports/new")}
+            sx={{
+              minWidth: 0,
+              justifyContent: { xs: "flex-start", md: collapsed ? "center" : "flex-start" },
+              px: { md: collapsed ? 0 : 2 },
+              "& .MuiButton-startIcon": {
+                ml: { md: collapsed ? 0 : -0.5 },
+                mr: { md: collapsed ? 0 : 1 },
+              },
+            }}
+          >
+            <Box component="span" sx={{ display: { xs: "inline", md: collapsed ? "none" : "inline" } }}>
+              新增报销单
+            </Box>
+          </Button>
+        </Tooltip>
 
         <Divider />
 
         <List disablePadding>
           {NAV_ITEMS.map((item) => (
-            <ListItemButton
-              key={item.to}
-              selected={isActive(item.to)}
-              onClick={() => requestNavigation(item.to)}
-              sx={{
-                borderRadius: 1,
-                mb: 0.5,
-                "&.Mui-selected": {
-                  bgcolor: "primary.50",
-                  color: "primary.dark",
-                  "& .MuiListItemIcon-root": { color: "primary.main" },
-                },
-              }}
-            >
-              <ListItemIcon sx={{ minWidth: 36 }}>{item.icon}</ListItemIcon>
-              <ListItemText primary={item.label} primaryTypographyProps={{ fontWeight: 700 }} />
-            </ListItemButton>
+            <Tooltip key={item.to} title={collapsed ? item.label : ""} placement="right">
+              <ListItemButton
+                selected={isActive(item.to)}
+                onClick={() => requestNavigation(item.to)}
+                aria-label={item.label}
+                sx={{
+                  minHeight: 40,
+                  justifyContent: { xs: "flex-start", md: collapsed ? "center" : "flex-start" },
+                  px: { md: collapsed ? 1 : 2 },
+                  borderRadius: 1,
+                  mb: 0.5,
+                  "&.Mui-selected": {
+                    bgcolor: "primary.50",
+                    color: "primary.dark",
+                    "& .MuiListItemIcon-root": { color: "primary.main" },
+                  },
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    minWidth: { xs: 36, md: collapsed ? 0 : 36 },
+                    justifyContent: "center",
+                  }}
+                >
+                  {item.icon}
+                </ListItemIcon>
+                <ListItemText
+                  primary={item.label}
+                  primaryTypographyProps={{ fontWeight: 700, noWrap: true }}
+                  sx={{ display: { xs: "block", md: collapsed ? "none" : "block" } }}
+                />
+              </ListItemButton>
+            </Tooltip>
           ))}
         </List>
       </Stack>
