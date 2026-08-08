@@ -203,6 +203,15 @@ export const getPaperInvoiceCount = (item = {}) => {
 
 export const hasPaperInvoice = (item = {}) => getPaperInvoiceAmount(item) > 0 || getPaperInvoiceCount(item) > 0;
 
+export const hasExpenseItemData = (item = {}) =>
+  isCustomExpenseCategory(item.category) ||
+  hasPaperInvoice(item) ||
+  String(item.remark ?? "").trim().length > 0 ||
+  (item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined);
+
+export const shouldExpandExpenseItem = (item = {}, invoices = []) =>
+  (Array.isArray(invoices) && invoices.length > 0) || hasExpenseItemData(item);
+
 export const getConfirmedInvoiceTotal = (invoices = []) =>
   invoices.filter((invoice) => invoice.amount_confirmed).reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
 
@@ -265,6 +274,11 @@ export const validateExpenseItems = (expenseItems = []) => {
   }
   return "";
 };
+
+export const validatePurposeForStatusTransition = ({ currentStatus, targetStatus, purpose }) =>
+  currentStatus === "draft" && targetStatus === "checked" && !String(purpose ?? "").trim()
+    ? "出差事由不能为空，请填写后再修改状态"
+    : "";
 
 export const validateTrips = (trips = []) => {
   for (const trip of trips) {
@@ -591,7 +605,7 @@ const moneyChanged = (current, initial) => Number(current || 0) !== Number(initi
 
 export const isEmptyDraft = ({ form, defaults, trips, invoices, expenseItems = [] }) => {
   if (trips.length > 0 || invoices.length > 0) return false;
-  if (expenseItems.some(hasPaperInvoice)) return false;
+  if (expenseItems.some(hasExpenseItemData)) return false;
   const hasCurrentManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
   const hadDefaultManualSubsidy = defaults.manual_subsidy_total !== null && defaults.manual_subsidy_total !== undefined;
   if (hasCurrentManualSubsidy || hadDefaultManualSubsidy) return false;

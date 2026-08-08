@@ -19,10 +19,12 @@ import {
   getFuelSubsidyInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
+  hasExpenseItemData,
   hasPaperInvoice,
   getTripYearRangeLabel,
   isEmptyDraft,
   isSupportedInvoiceFile,
+  shouldExpandExpenseItem,
   validateCustomExpenseName,
   makeBlankTrip,
   makeReturnTripAfter,
@@ -33,10 +35,11 @@ import {
   validateFuelSubsidyAmount,
   validateManualSubsidyTotal,
   validatePaperInvoice,
+  validatePurposeForStatusTransition,
 } from "./reportEditUtils.js";
 
 describe("report edit utilities", () => {
-  it("detects an untouched auto-created draft as empty", () => {
+  it("detects an untouched client-side draft as empty and every meaningful edit as non-empty", () => {
     const defaults = {
       report_date: "2026-06-03",
       department: "财务部",
@@ -53,10 +56,48 @@ describe("report edit utilities", () => {
 
     assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [] }), true);
     assert.equal(isEmptyDraft({ form: { ...form, purpose: "成都出差" }, defaults, trips: [], invoices: [] }), false);
+    assert.equal(isEmptyDraft({ form: { ...form, department: "研发部" }, defaults, trips: [], invoices: [] }), false);
+    assert.equal(isEmptyDraft({ form: { ...form, advance_date_month: "6" }, defaults, trips: [], invoices: [] }), false);
+    assert.equal(isEmptyDraft({ form: { ...form, advance_amount: "1.00" }, defaults, trips: [], invoices: [] }), false);
     assert.equal(isEmptyDraft({ form, defaults, trips: [makeBlankTrip("2026-06-03")], invoices: [] }), false);
+    assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [{ id: 1 }] }), false);
     assert.equal(
       isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ paper_invoice_amount: "18.00", paper_invoice_count: 1 }] }),
       false,
+    );
+    assert.equal(
+      isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ category: "luggage", remark: "打包" }] }),
+      false,
+    );
+    assert.equal(
+      isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ category: "fuel_subsidy", reimbursable_amount: "0" }] }),
+      false,
+    );
+    assert.equal(
+      isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ category: "custom:资料费" }] }),
+      false,
+    );
+  });
+
+  it("expands other expenses only when they contain business data or are custom", () => {
+    const emptyFixed = { category: "luggage", remark: "", reimbursable_amount: "", paper_invoice_amount: "0.00", paper_invoice_count: 0 };
+    assert.equal(hasExpenseItemData(emptyFixed), false);
+    assert.equal(shouldExpandExpenseItem(emptyFixed, []), false);
+    assert.equal(shouldExpandExpenseItem(emptyFixed, [{ id: 1, amount_confirmed: false }]), true);
+    assert.equal(shouldExpandExpenseItem({ ...emptyFixed, paper_invoice_amount: "12.00", paper_invoice_count: 1 }, []), true);
+    assert.equal(shouldExpandExpenseItem({ ...emptyFixed, remark: "无票说明" }, []), true);
+    assert.equal(shouldExpandExpenseItem({ ...emptyFixed, category: "fuel_subsidy", reimbursable_amount: "0" }, []), true);
+    assert.equal(shouldExpandExpenseItem({ ...emptyFixed, category: "custom:资料费" }, []), true);
+  });
+
+  it("requires purpose only for the draft to checked transition", () => {
+    const missingPurpose = { currentStatus: "draft", targetStatus: "checked", purpose: "  " };
+    assert.match(validatePurposeForStatusTransition(missingPurpose), /出差事由不能为空/);
+    assert.equal(validatePurposeForStatusTransition({ ...missingPurpose, purpose: "客户拜访" }), "");
+    assert.equal(validatePurposeForStatusTransition({ ...missingPurpose, targetStatus: "draft" }), "");
+    assert.equal(
+      validatePurposeForStatusTransition({ currentStatus: "checked", targetStatus: "submitted", purpose: "" }),
+      "",
     );
   });
 
@@ -68,10 +109,10 @@ describe("report edit utilities", () => {
     assert.notEqual(handlerEnd, -1);
 
     const handler = source.slice(handlerStart, handlerEnd);
-    const saveIndex = handler.indexOf("ensureSavedBeforeAction()");
+    const saveIndex = handler.indexOf("ensureSavedBeforeAction({ allowEmptyCreate: true })");
     const uploadStateIndex = handler.indexOf("setUploadState");
     const uploadIndex = handler.indexOf("uploadInvoice");
-    const reloadIndex = handler.indexOf("await loadForEdit({ quiet: true })");
+    const reloadIndex = handler.indexOf("await loadForEdit({ quiet: true, reportId: saved.reportId })");
 
     assert.ok(saveIndex > -1);
     assert.ok(saveIndex < uploadStateIndex);

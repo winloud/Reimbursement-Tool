@@ -51,9 +51,10 @@ const warningText = (warning) => {
 const formatMoney = (value) =>
   `¥${Number(value || 0).toLocaleString("zh-CN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
-export default function TicketImportDialog({ open, reportId, onClose, onImported }) {
+export default function TicketImportDialog({ open, reportId, ensureReportId, onClose, onImported }) {
   const [files, setFiles] = useState([]);
   const [preview, setPreview] = useState(null);
+  const [previewReportId, setPreviewReportId] = useState(null);
   const [tickets, setTickets] = useState([]);
   const [breakAfterIds, setBreakAfterIds] = useState(new Set());
   const [mergeByGroup, setMergeByGroup] = useState({});
@@ -63,6 +64,7 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
   const reset = useCallback(() => {
     setFiles([]);
     setPreview(null);
+    setPreviewReportId(null);
     setTickets([]);
     setBreakAfterIds(new Set());
     setMergeByGroup({});
@@ -93,10 +95,6 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
   };
 
   const handlePreview = async () => {
-    if (!reportId) {
-      setError("请先保存报销单，再导入车票");
-      return;
-    }
     if (files.length === 0) {
       setError("请至少选择一张铁路电子客票 PDF");
       return;
@@ -104,7 +102,12 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
     setBusy(true);
     setError("");
     try {
-      const response = await previewRailTickets({ reportId, files });
+      const activeReportId = reportId || (await ensureReportId?.());
+      if (!activeReportId) {
+        setError("保存报销单失败，暂时无法解析车票");
+        return;
+      }
+      const response = await previewRailTickets({ reportId: activeReportId, files });
       if (!response?.success) {
         setError(response?.message || "车票解析失败");
         return;
@@ -115,6 +118,7 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
         setError("没有解析出可确认的车票，请检查 PDF 是否为铁路电子客票");
         return;
       }
+      setPreviewReportId(activeReportId);
       setPreview(data);
       setTickets(candidates);
       setBreakAfterIds(new Set());
@@ -161,11 +165,13 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
 
   const handleImport = async () => {
     if (!preview?.token || tickets.length === 0 || invalidCount > 0) return;
+    const activeReportId = previewReportId || reportId;
+    if (!activeReportId) return;
     setBusy(true);
     setError("");
     try {
       const payload = buildTicketImportPayload({ token: preview.token, tickets, groups, mergeByGroup });
-      const response = await importRailTickets(reportId, payload);
+      const response = await importRailTickets(activeReportId, payload);
       if (!response?.success) {
         setError(response?.message || "车票导入失败");
         return;
@@ -181,8 +187,10 @@ export default function TicketImportDialog({ open, reportId, onClose, onImported
 
   const discardPreview = async () => {
     if (!preview?.token) return;
+    const activeReportId = previewReportId || reportId;
+    if (!activeReportId) return;
     try {
-      await discardRailTicketPreview({ reportId, token: preview.token });
+      await discardRailTicketPreview({ reportId: activeReportId, token: preview.token });
     } catch {
       // The server also expires orphaned previews; closing should not be blocked by cleanup failure.
     }

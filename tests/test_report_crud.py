@@ -30,6 +30,16 @@ def test_create_report_seeds_expense_items(db):
     assert {item.category for item in report.expense_items} == set(EXPENSE_CATEGORIES)
 
 
+def test_draft_can_be_created_and_saved_without_a_purpose(db):
+    report = create_report(db, ReportCreate(purpose=None))
+
+    updated = update_report(db, report.id, ReportUpdate(purpose=None, department="研发部"))
+
+    assert updated.status == "draft"
+    assert updated.purpose is None
+    assert updated.department == "研发部"
+
+
 def test_paper_invoice_values_are_persisted_and_included_in_totals(db):
     report = create_report(
         db,

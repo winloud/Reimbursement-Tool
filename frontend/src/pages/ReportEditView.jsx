@@ -1,4 +1,7 @@
 import {
+  Accordion,
+  AccordionDetails,
+  AccordionSummary,
   Alert,
   Autocomplete,
   Box,
@@ -31,6 +34,7 @@ import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import EditIcon from "@mui/icons-material/Edit";
+import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
 import DownloadIcon from "@mui/icons-material/Download";
 import SaveIcon from "@mui/icons-material/Save";
@@ -51,6 +55,7 @@ import {
   getPaperInvoiceCount,
   hasPaperInvoice,
   isCustomExpenseCategory,
+  shouldExpandExpenseItem,
   validateFuelSubsidyAmount,
 } from "./reportEditUtils";
 
@@ -128,7 +133,7 @@ const editSectionNavSx = {
 };
 
 const sectionAnchorSx = {
-  scrollMarginTop: 24,
+  scrollMarginTop: { xs: 24, lg: 80 },
 };
 
 const subsidyModeSwitchSx = {
@@ -181,7 +186,7 @@ const EDIT_SECTIONS = [
   { id: "basic-info-section", label: "基本信息" },
   { id: "trip-list-section", label: "行程" },
   { id: "expense-section", label: "其他费用" },
-  { id: "summary-section", label: "汇总" },
+  { id: "summary-section", label: "汇总", hideOnXl: true },
 ];
 
 const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
@@ -321,9 +326,9 @@ export default function ReportEditView({
     error,
     uploadState,
     saveState,
-    hasUnsavedChanges,
-    isEdit,
     id,
+    canSaveReport,
+    canCreateOutput,
     statusActions: actions,
     requestNavigation,
     saveReport,
@@ -397,6 +402,7 @@ export default function ReportEditView({
     ticketImportOpen,
     closeTicketImport,
     handleTicketsImported,
+    ensureReportIdForAction,
     subsidyDialogOpen,
     closeSubsidyDialog,
     manualSubsidyDraft,
@@ -417,10 +423,6 @@ export default function ReportEditView({
     pdfPreviewPages,
     pdfBlockedOpen,
     closePdfBlocked,
-    pendingLeave,
-    leaveBusy,
-    resolveLeave,
-    handleDeleteEmptyDraftAndLeave,
     toast,
     clearToast,
   } = overlays;
@@ -433,13 +435,19 @@ export default function ReportEditView({
       onDelete={handleDeleteInvoice}
     />
   );
+  const hasAdvanceInfo = Boolean(
+    form.advance_date_month || form.advance_date_day || Number(form.advance_amount || 0),
+  );
+  const advanceSummary = hasAdvanceInfo
+    ? `${form.advance_date_month || "-"} 月 ${form.advance_date_day || "-"} 日 · ${formatAmount(form.advance_amount)}`
+    : "无预支";
 
   if (loading) {
     return (
       <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
         <Stack spacing={2} alignItems="center">
           <CircularProgress />
-          <Typography color="text.secondary">{creatingDraft ? "正在创建草稿..." : "正在加载报销单..."}</Typography>
+          <Typography color="text.secondary">{creatingDraft ? "正在准备报销单..." : "正在加载报销单..."}</Typography>
         </Stack>
       </Box>
     );
@@ -471,7 +479,7 @@ export default function ReportEditView({
             startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveIcon />}
             variant="contained"
             onClick={() => saveReport({ quiet: false, force: true })}
-            disabled={readonly || saveState === "saving" || (!hasUnsavedChanges && saveState === "saved")}
+            disabled={readonly || saveState === "saving" || !canSaveReport}
           >
             手动保存
           </Button>
@@ -481,7 +489,7 @@ export default function ReportEditView({
               variant="outlined"
               color={action.color === "inherit" ? "inherit" : action.color}
               onClick={() => handleStatusAction(action.target)}
-              disabled={!isEdit || !id || loading || saveState === "saving"}
+              disabled={loading || saveState === "saving"}
             >
               {action.label}
             </Button>
@@ -510,7 +518,13 @@ export default function ReportEditView({
         <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
           <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
             {EDIT_SECTIONS.map((section) => (
-              <Button key={section.id} size="small" variant="text" onClick={() => scrollToSection(section.id)}>
+              <Button
+                key={section.id}
+                size="small"
+                variant="text"
+                onClick={() => scrollToSection(section.id)}
+                sx={section.hideOnXl ? { display: { xs: "inline-flex", xl: "none" } } : undefined}
+              >
                 {section.label}
               </Button>
             ))}
@@ -585,48 +599,84 @@ export default function ReportEditView({
                             minRows={2}
                           />
                         </Box>
-                        <Box sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}>
-                          <Divider />
-                        </Box>
-                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="预支月"
-                            type="number"
-                            value={form.advance_date_month}
-                            disabled={readonly}
-                            onChange={handleChange("advance_date_month")}
-                            inputProps={{ min: 1, max: 12 }}
-                          />
-                        </Box>
-                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="预支日"
-                            type="number"
-                            value={form.advance_date_day}
-                            disabled={readonly}
-                            onChange={handleChange("advance_date_day")}
-                            inputProps={{ min: 1, max: 31 }}
-                          />
-                        </Box>
-                        <Box sx={{ gridColumn: { sm: "span 4" } }}>
-                          <TextField
-                            fullWidth
-                            size="small"
-                            label="预支金额"
-                            type="number"
-                            value={form.advance_amount}
-                            disabled={readonly}
-                            onChange={handleChange("advance_amount")}
-                            InputProps={{
-                              startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                              inputProps: { min: 0, step: "0.01" },
+                        <Accordion
+                          defaultExpanded={hasAdvanceInfo}
+                          disableGutters
+                          elevation={0}
+                          sx={{
+                            gridColumn: { xs: "1 / -1", sm: "span 12" },
+                            border: 1,
+                            borderColor: "divider",
+                            borderRadius: "8px !important",
+                            overflow: "hidden",
+                            "&:before": { display: "none" },
+                          }}
+                        >
+                          <AccordionSummary
+                            expandIcon={<ExpandMoreIcon />}
+                            aria-controls="advance-payment-content"
+                            id="advance-payment-header"
+                            sx={{
+                              minHeight: 48,
+                              px: 1.5,
+                              "& .MuiAccordionSummary-content": { my: 1 },
                             }}
-                          />
-                        </Box>
+                          >
+                            <Stack
+                              direction={{ xs: "column", sm: "row" }}
+                              spacing={{ xs: 0.25, sm: 1 }}
+                              alignItems={{ xs: "flex-start", sm: "center" }}
+                            >
+                              <Typography fontWeight={800}>预支信息</Typography>
+                              <Typography variant="body2" color="text.secondary">
+                                {advanceSummary}
+                              </Typography>
+                            </Stack>
+                          </AccordionSummary>
+                          <AccordionDetails id="advance-payment-content" sx={{ px: 1.5, pt: 0.5, pb: 1.5 }}>
+                            <Box sx={{ ...basicInfoGridSx, gap: { xs: 1.25, sm: 1.5 } }}>
+                              <Box sx={{ gridColumn: { sm: "span 4" } }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="预支月"
+                                  type="number"
+                                  value={form.advance_date_month}
+                                  disabled={readonly}
+                                  onChange={handleChange("advance_date_month")}
+                                  inputProps={{ min: 1, max: 12 }}
+                                />
+                              </Box>
+                              <Box sx={{ gridColumn: { sm: "span 4" } }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="预支日"
+                                  type="number"
+                                  value={form.advance_date_day}
+                                  disabled={readonly}
+                                  onChange={handleChange("advance_date_day")}
+                                  inputProps={{ min: 1, max: 31 }}
+                                />
+                              </Box>
+                              <Box sx={{ gridColumn: { sm: "span 4" } }}>
+                                <TextField
+                                  fullWidth
+                                  size="small"
+                                  label="预支金额"
+                                  type="number"
+                                  value={form.advance_amount}
+                                  disabled={readonly}
+                                  onChange={handleChange("advance_amount")}
+                                  InputProps={{
+                                    startAdornment: <InputAdornment position="start">¥</InputAdornment>,
+                                    inputProps: { min: 0, step: "0.01" },
+                                  }}
+                                />
+                              </Box>
+                            </Box>
+                          </AccordionDetails>
+                        </Accordion>
                       </Box>
                   </Stack>
                 </CardContent>
@@ -980,31 +1030,57 @@ export default function ReportEditView({
                   const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
                   return (
                     <Box key={category.value} sx={{ minWidth: 0 }}>
-                      <Card sx={workCardSx}>
-                        <CardContent sx={sectionCardContentSx}>
+                      <Accordion
+                        defaultExpanded={shouldExpandExpenseItem(item, categoryInvoices)}
+                        disableGutters
+                        elevation={0}
+                        sx={{
+                          border: 1,
+                          borderColor: "divider",
+                          borderRadius: "8px !important",
+                          overflow: "hidden",
+                          "&:before": { display: "none" },
+                        }}
+                      >
+                        <AccordionSummary
+                          expandIcon={<ExpandMoreIcon />}
+                          sx={{
+                            minHeight: 64,
+                            px: { xs: 1.5, md: 2 },
+                            "& .MuiAccordionSummary-content": { my: 1.25, minWidth: 0 },
+                          }}
+                        >
+                          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ width: "100%", minWidth: 0 }}>
+                            <Box sx={{ minWidth: 0 }}>
+                              <Typography fontWeight={800}>{category.label}</Typography>
+                              <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
+                                报销 {formatAmount(getExpenseItemAmount(item, categoryInvoices))} / 发票 {formatAmount(invoiceTotal)} / {invoiceCount} 张
+                              </Typography>
+                            </Box>
+                            {isCustomExpenseCategory(category.value) && (
+                              <Tooltip title="删除自定义费用">
+                                <span>
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    disabled={readonly}
+                                    onClick={(event) => {
+                                      event.stopPropagation();
+                                      handleDeleteCustomCategory(category.value);
+                                    }}
+                                    onMouseDown={(event) => event.stopPropagation()}
+                                    onKeyDown={(event) => event.stopPropagation()}
+                                    onFocus={(event) => event.stopPropagation()}
+                                  >
+                                    <DeleteIcon fontSize="small" />
+                                  </IconButton>
+                                </span>
+                              </Tooltip>
+                            )}
+                          </Stack>
+                        </AccordionSummary>
+                        <AccordionDetails sx={{ px: { xs: 1.5, md: 2 }, pt: 0.5, pb: { xs: 1.5, md: 2 } }}>
                           <Stack spacing={1.5}>
-                            <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1}>
-                              <Box sx={{ minWidth: 0 }}>
-                                <Typography fontWeight={800}>{category.label}</Typography>
-                                <Typography variant="body2" color="text.secondary">
-                                  报销 {formatAmount(getExpenseItemAmount(item, categoryInvoices))} / 发票 {formatAmount(invoiceTotal)} / {invoiceCount} 张
-                                </Typography>
-                              </Box>
-                              {isCustomExpenseCategory(category.value) && (
-                                <Tooltip title="删除自定义费用">
-                                  <span>
-                                    <IconButton
-                                      size="small"
-                                      color="error"
-                                      disabled={readonly}
-                                      onClick={() => handleDeleteCustomCategory(category.value)}
-                                    >
-                                      <DeleteIcon fontSize="small" />
-                                    </IconButton>
-                                  </span>
-                                </Tooltip>
-                              )}
-                            </Stack>
                             {isFuelSubsidy && (
                               <TextField
                                 fullWidth
@@ -1057,8 +1133,8 @@ export default function ReportEditView({
                               </Box>
                             )}
                           </Stack>
-                        </CardContent>
-                      </Card>
+                        </AccordionDetails>
+                      </Accordion>
                     </Box>
                   );
                 })}
@@ -1067,8 +1143,16 @@ export default function ReportEditView({
           </Stack>
         </Box>
 
-        <Box sx={{ minWidth: 0 }}>
-          <Card id="summary-section" sx={{ ...workCardSx, ...sectionAnchorSx, position: { xl: "sticky" }, top: 24 }}>
+        <Box
+          id="summary-section"
+          sx={{
+            minWidth: 0,
+            ...sectionAnchorSx,
+            position: { xl: "sticky" },
+            top: { xl: 80 },
+          }}
+        >
+          <Card sx={workCardSx}>
             <CardContent sx={sectionCardContentSx}>
               <Stack spacing={2}>
                 <Box>
@@ -1213,7 +1297,7 @@ export default function ReportEditView({
                     variant="outlined"
                     startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />}
                     onClick={handlePdfPreview}
-                    disabled={!canAccessPdf || pdfBusy === "download"}
+                    disabled={!canCreateOutput || !canAccessPdf || pdfBusy === "download"}
                     sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
                   >
                     {pdfBusy === "preview" ? "生成中" : hasUnconfirmedInvoices ? "待确认后预览" : "预览"}
@@ -1223,7 +1307,7 @@ export default function ReportEditView({
                     variant="contained"
                     startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
                     onClick={handlePdfDownload}
-                    disabled={!canAccessPdf || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
+                    disabled={!canCreateOutput || !canAccessPdf || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
                     sx={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
                   >
                     {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}
@@ -1253,6 +1337,7 @@ export default function ReportEditView({
       <TicketImportDialog
         open={ticketImportOpen}
         reportId={id}
+        ensureReportId={ensureReportIdForAction}
         onClose={closeTicketImport}
         onImported={handleTicketsImported}
       />
@@ -1366,26 +1451,6 @@ export default function ReportEditView({
         </DialogContent>
         <DialogActions>
           <Button onClick={closePdfBlocked}>知道了</Button>
-        </DialogActions>
-      </Dialog>
-
-      <Dialog open={Boolean(pendingLeave)} onClose={() => !leaveBusy && resolveLeave(false)}>
-        <DialogTitle>空草稿尚未填写</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            当前草稿还没有出差事由、行程或发票。可以删除这个空草稿后离开，也可以保留它稍后继续填写。
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={() => resolveLeave(false)} disabled={leaveBusy}>
-            取消
-          </Button>
-          <Button onClick={() => resolveLeave(true)} disabled={leaveBusy}>
-            保留草稿并离开
-          </Button>
-          <Button onClick={handleDeleteEmptyDraftAndLeave} color="error" disabled={leaveBusy}>
-            {leaveBusy ? "删除中..." : "删除空草稿并离开"}
-          </Button>
         </DialogActions>
       </Dialog>
 

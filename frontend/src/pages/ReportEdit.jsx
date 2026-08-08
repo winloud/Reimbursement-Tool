@@ -7,7 +7,6 @@ import { useNavigationGuard } from "../navigationGuard";
 import {
   createReport,
   deleteInvoice,
-  deleteReport,
   downloadReportPdf,
   getReport,
   getReportPdfPreview,
@@ -18,7 +17,6 @@ import {
 } from "../api/client";
 import {
   buildCustomExpenseCategory,
-  buildDraftPayload,
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
@@ -45,6 +43,7 @@ import {
   validateExpenseItems,
   validateManualSubsidyTotal,
   validatePaperInvoice,
+  validatePurposeForStatusTransition,
   validateTrips,
   validateCustomExpenseName,
 } from "./reportEditUtils";
@@ -56,6 +55,7 @@ import {
 import ReportEditView from "./ReportEditView";
 
 const SAVE_LABELS = {
+  pristine: { text: "无需保存", icon: null, color: "default" },
   idle: { text: "等待修改", icon: null, color: "default" },
   dirty: { text: "有未保存修改", icon: null, color: "warning" },
   saving: { text: "保存中...", icon: <CircularProgress size={14} />, color: "info" },
@@ -63,12 +63,15 @@ const SAVE_LABELS = {
   error: { text: "保存失败，请重试", icon: <ErrorOutlineIcon fontSize="small" />, color: "error" },
 };
 
-const getApiErrorMessage = (err, fallback) =>
-  err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
+const getApiErrorMessage = (err, fallback) => {
+  const detail = err.response?.data?.detail;
+  if (typeof detail === "string") return detail;
+  if (Array.isArray(detail)) return detail.map((item) => item?.msg || String(item)).join("；");
+  return err.response?.data?.message || err.message || fallback;
+};
 
 export default function ReportEdit() {
-  const { id } = useParams();
-  const isEdit = Boolean(id);
+  const { id: routeId } = useParams();
   const navigate = useNavigate();
   const { registerGuard, requestNavigation } = useNavigationGuard();
 
@@ -88,8 +91,7 @@ export default function ReportEdit() {
   const [uploadState, setUploadState] = useState(null);
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
-  const [pendingLeave, setPendingLeave] = useState(null);
-  const [leaveBusy, setLeaveBusy] = useState(false);
+  const [activeReportId, setActiveReportId] = useState(routeId || null);
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customNameError, setCustomNameError] = useState("");
@@ -105,11 +107,12 @@ export default function ReportEdit() {
   const [ticketImportOpen, setTicketImportOpen] = useState(false);
   const [autosaveDelaySeconds, setAutosaveDelaySeconds] = useState(DEFAULT_AUTOSAVE_DELAY_SECONDS);
 
-  const creatingRef = useRef(false);
   const loadedRef = useRef(false);
+  const reportIdRef = useRef(routeId || null);
+  const createRequestRef = useRef(null);
+  const skipRouteLoadRef = useRef(null);
   const autosaveRequestRef = useRef(0);
   const lastSavedPayloadRef = useRef("");
-  const leaveResolverRef = useRef(null);
   const readonly = status !== "draft";
 
   const statusMeta = STATUS_META[status] || { label: status, chipSx: {} };
@@ -120,16 +123,17 @@ export default function ReportEdit() {
     [expenseItems, form, trips],
   );
   const currentPayloadKey = useMemo(() => JSON.stringify(currentPayload), [currentPayload]);
-  const hasUnsavedChanges = isEdit && loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
+  const hasUnsavedChanges = loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
   const expenseItemsError = useMemo(() => validateExpenseItems(expenseItems) || validateTrips(trips), [expenseItems, trips]);
 
   const loadForEdit = useCallback(
-    async ({ quiet = false } = {}) => {
+    async ({ quiet = false, reportId = reportIdRef.current } = {}) => {
+      if (!reportId) return null;
       if (!quiet) setLoading(true);
       setError("");
       try {
         const settingsPromise = getSettings().catch(() => null);
-        const [res, settingsRes] = await Promise.all([getReport(id), settingsPromise]);
+        const [res, settingsRes] = await Promise.all([getReport(reportId), settingsPromise]);
         if (!res.success) {
           setError(res.message || "加载报销单失败");
           return;
@@ -167,6 +171,8 @@ export default function ReportEdit() {
 
         setForm(nextForm);
         setDefaults(nextDefaults);
+        reportIdRef.current = String(report.id);
+        setActiveReportId(String(report.id));
         setStatus(report.status);
         setTrips(nextTrips);
         setExpenseItems(nextItems);
@@ -183,12 +189,10 @@ export default function ReportEdit() {
         if (!quiet) setLoading(false);
       }
     },
-    [id],
+    [],
   );
 
-  const createDraft = useCallback(async () => {
-    if (creatingRef.current) return;
-    creatingRef.current = true;
+  const initializeNewReport = useCallback(async () => {
     setCreatingDraft(true);
     setLoading(true);
     setError("");
@@ -203,27 +207,43 @@ export default function ReportEdit() {
         employee_name: settings.employee_name || "",
         daily_subsidy: toMoney(settings.daily_subsidy),
       };
-      const res = await createReport(buildDraftPayload(draftForm));
-      if (!res.success) {
-        setError(res.message || "创建草稿失败");
-        return;
-      }
-      navigate(`/reports/${res.data.id}/edit`, { replace: true });
+      reportIdRef.current = null;
+      setActiveReportId(null);
+      setForm(draftForm);
+      setDefaults(draftForm);
+      setStatus("draft");
+      setTrips([]);
+      setExpenseItems([]);
+      setInvoices([]);
+      lastSavedPayloadRef.current = JSON.stringify(
+        buildReportPayload({ form: draftForm, trips: [], expenseItems: [] }),
+      );
+      loadedRef.current = true;
+      setSaveState("pristine");
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "创建草稿失败");
+      setError(getApiErrorMessage(err, "初始化报销单失败"));
     } finally {
       setCreatingDraft(false);
       setLoading(false);
     }
-  }, [navigate]);
+  }, []);
 
   useEffect(() => {
-    if (isEdit) {
-      loadForEdit();
-    } else {
-      createDraft();
+    autosaveRequestRef.current += 1;
+    if (routeId) {
+      reportIdRef.current = String(routeId);
+      setActiveReportId(String(routeId));
+      if (skipRouteLoadRef.current === String(routeId)) {
+        skipRouteLoadRef.current = null;
+        return;
+      }
+      loadedRef.current = false;
+      loadForEdit({ reportId: routeId });
+      return;
     }
-  }, [isEdit, loadForEdit, createDraft]);
+    loadedRef.current = false;
+    initializeNewReport();
+  }, [initializeNewReport, loadForEdit, routeId]);
 
   const summary = useMemo(
     () =>
@@ -294,86 +314,172 @@ export default function ReportEdit() {
     [defaults, expenseItems, form, invoices, status, trips],
   );
 
-  const resolveLeave = useCallback((allowed) => {
-    leaveResolverRef.current?.(allowed);
-    leaveResolverRef.current = null;
-    setPendingLeave(null);
-  }, []);
-
   const saveReport = useCallback(
-    async ({ quiet = false, force = false } = {}) => {
-      if (!isEdit || readonly || loading || !loadedRef.current) return true;
+    async ({ quiet = false, force = false, allowEmptyCreate = false } = {}) => {
+      const existingReportId = reportIdRef.current;
+      if (readonly) return { ok: true, reportId: existingReportId };
+      if (loading || !loadedRef.current) return { ok: false, reportId: existingReportId };
+      if (!existingReportId && emptyDraft && !allowEmptyCreate) {
+        setSaveState("pristine");
+        return { ok: true, reportId: null };
+      }
       const payloadKey = currentPayloadKey;
-      if (!force && payloadKey === lastSavedPayloadRef.current) {
+      if (existingReportId && !force && payloadKey === lastSavedPayloadRef.current) {
         setSaveState("saved");
-        return true;
+        return { ok: true, reportId: existingReportId };
       }
       const validationError = expenseItemsError;
       if (validationError) {
         setSaveState("error");
         if (!quiet) setError(validationError);
         setToast(validationError);
-        return false;
+        return { ok: false, reportId: existingReportId };
       }
-      autosaveRequestRef.current += 1;
-      const requestId = autosaveRequestRef.current;
       setSaveState("saving");
       if (!quiet) setError("");
+
+      if (!existingReportId) {
+        let createRequest = createRequestRef.current;
+        if (!createRequest) {
+          createRequest = {
+            promise: createReport(currentPayload),
+            formSnapshot: form,
+            payloadKey,
+            navigationApplied: false,
+          };
+          createRequestRef.current = createRequest;
+        }
+        try {
+          const res = await createRequest.promise;
+          if (!res.success || !res.data?.id) {
+            const message = res.message || "创建报销单失败";
+            setSaveState("error");
+            if (!quiet) setError(message);
+            setToast(message);
+            return { ok: false, reportId: null };
+          }
+          const createdReportId = String(res.data.id);
+          reportIdRef.current = createdReportId;
+          setActiveReportId(createdReportId);
+          if (!createRequest.navigationApplied) {
+            createRequest.navigationApplied = true;
+            skipRouteLoadRef.current = createdReportId;
+            navigate(`/reports/${createdReportId}/edit`, { replace: true });
+          }
+
+          let savedReport = res.data;
+          let savedForm = createRequest.formSnapshot;
+          if (payloadKey !== createRequest.payloadKey) {
+            const updateRes = await updateReport(createdReportId, currentPayload);
+            if (!updateRes.success) {
+              const message = updateRes.message || "保存失败";
+              setSaveState("error");
+              if (!quiet) setError(message);
+              setToast(message);
+              return { ok: false, reportId: createdReportId };
+            }
+            savedReport = updateRes.data;
+            savedForm = form;
+          }
+
+          const nextTrips = [...(savedReport.trips || [])]
+            .sort((a, b) => a.sort_order - b.sort_order)
+            .map(normalizeTrip);
+          const nextItems = (savedReport.expense_items || []).map(normalizeExpenseItem);
+          setStatus(savedReport.status || "draft");
+          setTrips(nextTrips);
+          setExpenseItems(nextItems);
+          setInvoices(savedReport.invoices || []);
+          lastSavedPayloadRef.current = JSON.stringify(
+            buildReportPayload({
+              form: savedForm,
+              trips: nextTrips,
+              expenseItems: nextItems,
+            }),
+          );
+          loadedRef.current = true;
+          setError("");
+          setSaveState("saved");
+          if (!quiet) setToast("已保存");
+          return { ok: true, reportId: createdReportId };
+        } catch (err) {
+          const savedReportId = reportIdRef.current;
+          const message = getApiErrorMessage(err, savedReportId ? "保存失败" : "创建报销单失败");
+          setSaveState("error");
+          if (!quiet) setError(message);
+          setToast(message);
+          return { ok: false, reportId: savedReportId };
+        } finally {
+          if (createRequestRef.current === createRequest) createRequestRef.current = null;
+        }
+      }
+
+      autosaveRequestRef.current += 1;
+      const requestId = autosaveRequestRef.current;
       try {
-        const res = await updateReport(id, currentPayload);
-        if (autosaveRequestRef.current !== requestId) return false;
+        const res = await updateReport(existingReportId, currentPayload);
+        if (autosaveRequestRef.current !== requestId) {
+          return { ok: false, reportId: existingReportId };
+        }
         if (!res.success) {
           const message = res.message || "保存失败";
           setSaveState("error");
           if (!quiet) setError(message);
           setToast(message);
-          return false;
+          return { ok: false, reportId: existingReportId };
         }
         if (res.data?.status) setStatus(res.data.status);
         lastSavedPayloadRef.current = payloadKey;
         setError("");
         setSaveState("saved");
         if (currentPayload.trips.some((trip) => !trip.id)) {
-          await loadForEdit({ quiet: true });
+          await loadForEdit({ quiet: true, reportId: existingReportId });
         } else if (!quiet) {
           setToast("已保存");
         }
-        return true;
+        return { ok: true, reportId: existingReportId };
       } catch (err) {
-        if (autosaveRequestRef.current !== requestId) return false;
+        if (autosaveRequestRef.current !== requestId) {
+          return { ok: false, reportId: existingReportId };
+        }
         const message = getApiErrorMessage(err, "保存失败");
         setSaveState("error");
         if (!quiet) setError(message);
         setToast(message);
-        return false;
+        return { ok: false, reportId: existingReportId };
       }
     },
-    [currentPayload, currentPayloadKey, expenseItemsError, id, isEdit, loadForEdit, loading, readonly],
+    [currentPayload, currentPayloadKey, emptyDraft, expenseItemsError, form, loadForEdit, loading, navigate, readonly],
   );
 
   const ensureSavedBeforeAction = useCallback(
-    async () => saveReport({ quiet: true }),
+    async (options = {}) => saveReport({ quiet: true, ...options }),
     [saveReport],
   );
 
-  useEffect(() => {
-    if (!isEdit) return undefined;
-    return registerGuard(async (to) => {
-      if (!emptyDraft) {
-        return ensureSavedBeforeAction();
-      }
-      setPendingLeave({ to });
-      return new Promise((resolve) => {
-        leaveResolverRef.current = resolve;
-      });
-    });
-  }, [emptyDraft, ensureSavedBeforeAction, isEdit, registerGuard]);
+  const ensureReportIdForAction = useCallback(async () => {
+    const result = await ensureSavedBeforeAction({ allowEmptyCreate: true });
+    return result.ok ? result.reportId : null;
+  }, [ensureSavedBeforeAction]);
 
   useEffect(() => {
-    if (!isEdit || readonly || loading || !loadedRef.current) return undefined;
+    return registerGuard(async () => {
+      if (!reportIdRef.current && emptyDraft) return true;
+      const result = await ensureSavedBeforeAction();
+      return result.ok;
+    });
+  }, [emptyDraft, ensureSavedBeforeAction, registerGuard]);
+
+  useEffect(() => {
+    if (readonly || loading || !loadedRef.current) return undefined;
+    if (!reportIdRef.current && emptyDraft) {
+      autosaveRequestRef.current += 1;
+      setSaveState("pristine");
+      return undefined;
+    }
     if (currentPayloadKey === lastSavedPayloadRef.current) {
       autosaveRequestRef.current += 1;
-      setSaveState("saved");
+      setSaveState(reportIdRef.current ? "saved" : "pristine");
       return undefined;
     }
     if (expenseItemsError) {
@@ -381,42 +487,19 @@ export default function ReportEdit() {
       setSaveState("error");
       return undefined;
     }
-    const requestId = autosaveRequestRef.current + 1;
-    autosaveRequestRef.current = requestId;
     let cancelled = false;
-    const isCurrentAutosave = () => !cancelled && autosaveRequestRef.current === requestId;
 
     setSaveState("dirty");
     const timer = window.setTimeout(async () => {
-      if (!isCurrentAutosave()) return;
-      try {
-        setSaveState("saving");
-        const res = await updateReport(id, currentPayload);
-        if (!isCurrentAutosave()) return;
-        if (!res.success) {
-          setToast(res.message || "自动保存失败");
-          setSaveState("error");
-          return;
-        }
-        if (res.data?.status) setStatus(res.data.status);
-        lastSavedPayloadRef.current = currentPayloadKey;
-        setError("");
-        setSaveState("saved");
-        if (currentPayload.trips.some((trip) => !trip.id)) {
-          await loadForEdit({ quiet: true });
-        }
-      } catch (err) {
-        if (!isCurrentAutosave()) return;
-        setToast(getApiErrorMessage(err, "自动保存失败"));
-        setSaveState("error");
-      }
+      if (cancelled) return;
+      await saveReport({ quiet: true });
     }, autosaveDelaySeconds * 1000);
 
     return () => {
       cancelled = true;
       window.clearTimeout(timer);
     };
-  }, [autosaveDelaySeconds, currentPayload, currentPayloadKey, expenseItemsError, isEdit, loadForEdit, loading, readonly]);
+  }, [autosaveDelaySeconds, currentPayloadKey, emptyDraft, expenseItemsError, loading, readonly, saveReport]);
 
   const handleChange = (field) => (event) => {
     setForm((prev) => ({ ...prev, [field]: event.target.value }));
@@ -462,14 +545,13 @@ export default function ReportEdit() {
     setTrips((prev) => appendTripWithAutoStart(prev, makeBlankTrip(form.report_date)));
   };
 
-  const handleOpenTicketImport = async () => {
-    if (readonly || !id) return;
-    if (!(await ensureSavedBeforeAction())) return;
+  const handleOpenTicketImport = () => {
+    if (readonly) return;
     setTicketImportOpen(true);
   };
 
   const handleTicketsImported = async (result) => {
-    const report = await loadForEdit({ quiet: true });
+    const report = await loadForEdit({ quiet: true, reportId: reportIdRef.current });
     const importedIds = new Set((result?.invoice_ids || []).map(Number));
     const importedInvoices = (report?.invoices || []).filter((invoice) => importedIds.has(Number(invoice.id)));
     if (importedInvoices.length > 0) {
@@ -506,9 +588,11 @@ export default function ReportEdit() {
     invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id);
 
   const updateExpenseItem = (category, patch) => {
-    setExpenseItems((prev) =>
-      prev.map((item) => (item.category === category ? { ...item, ...patch } : item)),
-    );
+    setExpenseItems((prev) => {
+      const existingItem = prev.find((item) => item.category === category);
+      if (!existingItem) return [...prev, normalizeExpenseItem({ category, ...patch })];
+      return prev.map((item) => (item.category === category ? { ...item, ...patch } : item));
+    });
   };
 
   const openPaperInvoiceEditor = (target, value) => {
@@ -562,16 +646,28 @@ export default function ReportEdit() {
   };
 
   const handleStatusAction = async (target) => {
-    if (!id) return;
-    if (!(await ensureSavedBeforeAction())) return;
+    const saved = await ensureSavedBeforeAction();
+    if (!saved.ok) return;
+    const purposeError = validatePurposeForStatusTransition({
+      currentStatus: status,
+      targetStatus: target,
+      purpose: form.purpose,
+    });
+    if (purposeError) {
+      setError(purposeError);
+      setToast(purposeError);
+      scrollToSection("basic-info-section");
+      return;
+    }
     if (target === "checked" && hasFuelSubsidyInvoiceShortfall) {
       setPdfBlockedOpen(true);
       return;
     }
+    if (!saved.reportId) return;
     setSaveState("saving");
     setError("");
     try {
-      const res = await updateReportStatus(id, target);
+      const res = await updateReportStatus(saved.reportId, target);
       if (res.success) {
         setStatus(res.data.status);
         setToast("状态已更新");
@@ -581,7 +677,7 @@ export default function ReportEdit() {
         setSaveState("error");
       }
     } catch (err) {
-      setError(err.response?.data?.message || err.message || "状态更新失败");
+      setError(getApiErrorMessage(err, "状态更新失败"));
       setSaveState("error");
     }
   };
@@ -591,17 +687,18 @@ export default function ReportEdit() {
       setPdfBlockedOpen(true);
       return;
     }
-    if (!(await ensureSavedBeforeAction())) return;
+    const saved = await ensureSavedBeforeAction();
+    if (!saved.ok || !saved.reportId) return;
     setPdfBusy("preview");
     setError("");
     try {
-      const res = await getReportPdfPreview(id);
+      const res = await getReportPdfPreview(saved.reportId);
       if (!res.success) {
         setError(res.message || "生成 PDF 预览失败");
         return;
       }
       setPdfPreviewPages(res.data?.pages || []);
-      await loadForEdit({ quiet: true });
+      await loadForEdit({ quiet: true, reportId: saved.reportId });
       setPdfPreviewOpen(true);
     } catch (err) {
       setError(getApiErrorMessage(err, "生成 PDF 预览失败"));
@@ -615,11 +712,12 @@ export default function ReportEdit() {
       setPdfBlockedOpen(true);
       return;
     }
-    if (!(await ensureSavedBeforeAction())) return;
+    const saved = await ensureSavedBeforeAction();
+    if (!saved.ok || !saved.reportId) return;
     setPdfBusy("download");
     setError("");
     try {
-      const { blob, filename } = await downloadReportPdf(id);
+      const { blob, filename } = await downloadReportPdf(saved.reportId);
       const url = window.URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;
@@ -628,7 +726,7 @@ export default function ReportEdit() {
       link.click();
       link.remove();
       window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-      await loadForEdit({ quiet: true });
+      await loadForEdit({ quiet: true, reportId: saved.reportId });
       setToast("PDF 已生成并开始下载");
     } catch (err) {
       setError(getApiErrorMessage(err, "下载 PDF 失败"));
@@ -639,8 +737,9 @@ export default function ReportEdit() {
 
   const handleFilesUpload = async ({ files, expenseCategory, tripId = null, key }) => {
     const fileList = Array.from(files || []);
-    if (fileList.length === 0 || readonly || !id) return;
-    if (!(await ensureSavedBeforeAction())) return;
+    if (fileList.length === 0 || readonly) return;
+    const saved = await ensureSavedBeforeAction({ allowEmptyCreate: true });
+    if (!saved.ok || !saved.reportId) return;
 
     const uploaded = [];
     const issues = [];
@@ -652,7 +751,7 @@ export default function ReportEdit() {
         const file = fileList[index];
         setUploadState({ key, current: index + 1, total: fileList.length, name: file.name });
         try {
-          const res = await uploadInvoice({ reportId: id, tripId, expenseCategory, file });
+          const res = await uploadInvoice({ reportId: saved.reportId, tripId, expenseCategory, file });
           if (!res.success) {
             throw new Error(res.message || "上传失败");
           }
@@ -681,7 +780,7 @@ export default function ReportEdit() {
 
       let confirmationQueue = uploaded;
       if (uploaded.length > 0) {
-        const report = await loadForEdit({ quiet: true });
+        const report = await loadForEdit({ quiet: true, reportId: saved.reportId });
         const refreshedById = new Map((report?.invoices || []).map((invoice) => [Number(invoice.id), invoice]));
         const refreshedUploaded = uploaded.map((invoice) => refreshedById.get(Number(invoice.id))).filter(Boolean);
         confirmationQueue = refreshedUploaded.length === uploaded.length ? refreshedUploaded : uploaded;
@@ -790,25 +889,6 @@ export default function ReportEdit() {
     });
   };
 
-  const handleDeleteEmptyDraftAndLeave = async () => {
-    setLeaveBusy(true);
-    setError("");
-    try {
-      const res = await deleteReport(id);
-      if (!res.success) {
-        setError(res.message || "删除空草稿失败");
-        resolveLeave(false);
-        return;
-      }
-      resolveLeave(true);
-    } catch (err) {
-      setError(err.response?.data?.message || err.message || "删除空草稿失败");
-      resolveLeave(false);
-    } finally {
-      setLeaveBusy(false);
-    }
-  };
-
   const handleTripDragStart = (index) => {
     setDragIndex(index);
   };
@@ -882,9 +962,9 @@ export default function ReportEdit() {
     error,
     uploadState,
     saveState,
-    hasUnsavedChanges,
-    isEdit,
-    id,
+    id: activeReportId,
+    canSaveReport: activeReportId ? hasUnsavedChanges : !emptyDraft,
+    canCreateOutput: Boolean(activeReportId) || !emptyDraft,
     statusActions: actions,
     requestNavigation,
     saveReport,
@@ -967,6 +1047,7 @@ export default function ReportEdit() {
     ticketImportOpen,
     closeTicketImport,
     handleTicketsImported,
+    ensureReportIdForAction,
     subsidyDialogOpen,
     closeSubsidyDialog,
     manualSubsidyDraft,
@@ -987,10 +1068,6 @@ export default function ReportEdit() {
     pdfPreviewPages,
     pdfBlockedOpen,
     closePdfBlocked,
-    pendingLeave,
-    leaveBusy,
-    resolveLeave,
-    handleDeleteEmptyDraftAndLeave,
     toast,
     clearToast,
   };
