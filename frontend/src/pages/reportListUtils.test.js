@@ -4,12 +4,21 @@ import test from "node:test";
 import {
   deleteDialogActionLabels,
   formatBatchPdfFailureMessage,
+  getReportRowInteractionPolicy,
   getSubsidyDaysLabel,
   isReportStatusVisible,
   isTrashStatus,
   reportFilterActionsSx,
   reportFilterMoreButtonSx,
   reportFilterToolbarSx,
+  reportTableActionCellSx,
+  reportTableDateCellSx,
+  reportTableHeadSx,
+  reportTableMoreActionButtonSx,
+  reportTableNoWrapCellSx,
+  reportTablePrimaryActionButtonSx,
+  reportTablePrimaryActionsSx,
+  reportTableTrashActionCellSx,
   toggleCurrentPageSelection,
   toggleReportSelection,
 } from "./reportListUtils.js";
@@ -56,6 +65,31 @@ test("report filter toolbar wraps controls without squeezing button content", ()
   assert.equal(reportFilterActionsSx.flexWrap, "wrap");
   assert.equal(reportFilterMoreButtonSx.flexShrink, 0);
   assert.equal(reportFilterMoreButtonSx.minWidth, "max-content");
+});
+
+test("report table keeps dense semantic columns and primary actions on one line", () => {
+  assert.equal(reportTableHeadSx["& .MuiTableCell-root"].whiteSpace, "nowrap");
+  assert.equal(reportTableDateCellSx.minWidth, 112);
+  assert.equal(reportTableDateCellSx.whiteSpace, "nowrap");
+  assert.equal(reportTableNoWrapCellSx.whiteSpace, "nowrap");
+  assert.equal(reportTableActionCellSx.minWidth, 192);
+  assert.equal(reportTableTrashActionCellSx.minWidth, 112);
+  assert.equal(reportTablePrimaryActionsSx.flexWrap, "nowrap");
+  assert.equal(reportTablePrimaryActionButtonSx.minWidth, 0);
+  assert.equal(reportTableMoreActionButtonSx.width, 32);
+});
+
+test("report row interaction policy keeps recycle-bin status read-only and purge in overflow", () => {
+  assert.deepEqual(getReportRowInteractionPolicy(true), {
+    statusMutable: false,
+    primaryActions: ["restore"],
+    overflowActions: ["purge"],
+  });
+  assert.deepEqual(getReportRowInteractionPolicy(false), {
+    statusMutable: true,
+    primaryActions: ["preview", "download"],
+    overflowActions: ["open", "delete"],
+  });
 });
 
 test("getSubsidyDaysLabel distinguishes manual subsidy including zero", () => {

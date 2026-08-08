@@ -40,6 +40,72 @@ export const reportFilterResetButtonSx = {
   flexShrink: 0,
 };
 
+export const reportTableHeadSx = {
+  "& .MuiTableCell-root": {
+    whiteSpace: "nowrap",
+  },
+};
+
+export const reportTableDateCellSx = {
+  width: 112,
+  minWidth: 112,
+  whiteSpace: "nowrap",
+};
+
+export const reportTableNoWrapCellSx = {
+  whiteSpace: "nowrap",
+};
+
+export const reportTableActionCellSx = {
+  width: 192,
+  minWidth: 192,
+  whiteSpace: "nowrap",
+};
+
+export const reportTableTrashActionCellSx = {
+  width: 112,
+  minWidth: 112,
+  whiteSpace: "nowrap",
+};
+
+export const reportTablePrimaryActionsSx = {
+  display: "inline-flex",
+  flexWrap: "nowrap",
+  alignItems: "center",
+  justifyContent: "flex-end",
+  gap: 0.25,
+  whiteSpace: "nowrap",
+};
+
+export const reportTablePrimaryActionButtonSx = {
+  minWidth: 0,
+  px: 0.75,
+  whiteSpace: "nowrap",
+  "& .MuiButton-startIcon": {
+    mr: 0.5,
+  },
+};
+
+export const reportTableMoreActionButtonSx = {
+  width: 32,
+  height: 32,
+  p: 0,
+  flex: "0 0 auto",
+};
+
+export const getReportRowInteractionPolicy = (isTrash) =>
+  isTrash
+    ? {
+        statusMutable: false,
+        primaryActions: ["restore"],
+        overflowActions: ["purge"],
+      }
+    : {
+        statusMutable: true,
+        primaryActions: ["preview", "download"],
+        overflowActions: ["open", "delete"],
+      };
+
 export const toggleCurrentPageSelection = (selectedIds, pageIds, checked) => {
   const next = new Set(selectedIds);
   if (checked) {

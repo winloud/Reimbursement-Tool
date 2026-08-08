@@ -13,6 +13,7 @@ import {
   DialogContentText,
   DialogTitle,
   FormControlLabel,
+  IconButton,
   InputAdornment,
   Menu,
   MenuItem,
@@ -27,16 +28,21 @@ import {
   TableRow,
   Tabs,
   TextField,
+  Tooltip,
   Typography,
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
+import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
+import MoreVertIcon from "@mui/icons-material/MoreVert";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
+import { useState } from "react";
 import { Link as RouterLink } from "react-router-dom";
 import {
+  getReportRowInteractionPolicy,
   getSubsidyDaysLabel,
   reportFilterActionsSx,
   reportFilterCategorySx,
@@ -45,7 +51,30 @@ import {
   reportFilterMoreButtonSx,
   reportFilterResetButtonSx,
   reportFilterToolbarSx,
+  reportTableActionCellSx,
+  reportTableDateCellSx,
+  reportTableHeadSx,
+  reportTableMoreActionButtonSx,
+  reportTableNoWrapCellSx,
+  reportTablePrimaryActionButtonSx,
+  reportTablePrimaryActionsSx,
+  reportTableTrashActionCellSx,
 } from "./reportListUtils";
+import {
+  copyImportConflictUid,
+  getImportConflictViewModel,
+  importConflictAtomicTextSx,
+  importConflictLocalIdCellSx,
+  importConflictMobileCardSx,
+  importConflictMobileListSx,
+  importConflictReasonCellSx,
+  importConflictReasonTextSx,
+  importConflictTableContainerSx,
+  importConflictTableSx,
+  importConflictTypeCellSx,
+  importConflictUidCellSx,
+  importConflictUidTextSx,
+} from "./importConflictTableUtils";
 import { STATUS_META } from "./reportStatus";
 import ReportStatusStepControl from "./ReportStatusStepControl";
 
@@ -167,6 +196,16 @@ export default function ReportListView(props) {
     setConfirmReimbursedOverwrite,
     handleExecuteImport,
   } = props;
+
+  const [rowActionMenu, setRowActionMenu] = useState({ anchorEl: null, report: null, mode: null });
+  const rowActionReport = rowActionMenu.report;
+  const rowActionMenuOpen = Boolean(rowActionMenu.anchorEl && rowActionReport);
+  const rowInteractionPolicy = getReportRowInteractionPolicy(isTrash);
+  const rowActionMenuMode = rowInteractionPolicy.overflowActions.includes("purge") ? "trash" : "active";
+
+  const closeRowActionMenu = () => {
+    setRowActionMenu({ anchorEl: null, report: null, mode: null });
+  };
 
   return (
     <Stack spacing={3}>
@@ -463,7 +502,7 @@ export default function ReportListView(props) {
 
         <TableContainer>
           <Table sx={{ minWidth: isTrash ? 1130 : 1050 }}>
-            <TableHead>
+            <TableHead sx={reportTableHeadSx}>
               <TableRow>
                 <TableCell padding="checkbox">
                   <Checkbox
@@ -475,16 +514,16 @@ export default function ReportListView(props) {
                     inputProps={{ "aria-label": "选择当前页全部报销单" }}
                   />
                 </TableCell>
-                <TableCell>出差开始日期</TableCell>
-                <TableCell>出差结束日期</TableCell>
-                <TableCell>报销日期</TableCell>
+                <TableCell sx={reportTableDateCellSx}>出差开始日期</TableCell>
+                <TableCell sx={reportTableDateCellSx}>出差结束日期</TableCell>
+                <TableCell sx={reportTableDateCellSx}>报销日期</TableCell>
                 <TableCell>出差事由</TableCell>
                 <TableCell align="center">补贴天数</TableCell>
                 <TableCell align="right">报销总金额</TableCell>
                 <TableCell align="center">发票总数</TableCell>
                 <TableCell align="center">状态</TableCell>
                 {isTrash && <TableCell>删除时间</TableCell>}
-                <TableCell align="right">操作</TableCell>
+                <TableCell align="right" sx={isTrash ? reportTableTrashActionCellSx : reportTableActionCellSx}>操作</TableCell>
               </TableRow>
             </TableHead>
             <TableBody>
@@ -523,39 +562,83 @@ export default function ReportListView(props) {
                           }}
                         />
                       </TableCell>
-                      <TableCell>{formatDate(report.trip_start_date)}</TableCell>
-                      <TableCell>{formatDate(report.trip_end_date)}</TableCell>
-                      <TableCell>{formatDate(report.report_date)}</TableCell>
-                      <TableCell>{report.purpose || "—"}</TableCell>
-                      <TableCell align="center">{getSubsidyDaysLabel(report)}</TableCell>
-                      <TableCell align="right" sx={{ fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace', fontWeight: 800 }}>
+                      <TableCell sx={reportTableDateCellSx}>{formatDate(report.trip_start_date)}</TableCell>
+                      <TableCell sx={reportTableDateCellSx}>{formatDate(report.trip_end_date)}</TableCell>
+                      <TableCell sx={reportTableDateCellSx}>{formatDate(report.report_date)}</TableCell>
+                      <TableCell sx={{ minWidth: 144, maxWidth: 260 }}>
+                        <Typography variant="body2" noWrap title={report.purpose || undefined}>
+                          {report.purpose || "—"}
+                        </Typography>
+                      </TableCell>
+                      <TableCell align="center" sx={reportTableNoWrapCellSx}>{getSubsidyDaysLabel(report)}</TableCell>
+                      <TableCell
+                        align="right"
+                        sx={{
+                          ...reportTableNoWrapCellSx,
+                          fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace',
+                          fontWeight: 800,
+                        }}
+                      >
                         {formatAmount(report.total_amount)}
                       </TableCell>
-                      <TableCell align="center">{report.invoice_count ?? 0}</TableCell>
-                      <TableCell align="center">
-                        <ReportStatusStepControl
-                          reportId={report.id}
-                          status={report.status}
-                          loading={reportStatusUpdating}
-                          disabled={reportStatusUpdating || batchStatusUpdating}
-                          onStatusChange={(target) => handleSingleStatusRequest(report, target)}
-                        />
+                      <TableCell align="center" sx={reportTableNoWrapCellSx}>{report.invoice_count ?? 0}</TableCell>
+                      <TableCell align="center" sx={reportTableNoWrapCellSx}>
+                        {rowInteractionPolicy.statusMutable ? (
+                          <ReportStatusStepControl
+                            reportId={report.id}
+                            status={report.status}
+                            loading={reportStatusUpdating}
+                            disabled={reportStatusUpdating || batchStatusUpdating}
+                            onStatusChange={(target) => handleSingleStatusRequest(report, target)}
+                          />
+                        ) : (
+                          <Chip
+                            size="small"
+                            label={STATUS_META[report.status]?.label || report.status}
+                            sx={STATUS_META[report.status]?.chipSx}
+                            aria-label={`报销单 ${report.id} 状态：${STATUS_META[report.status]?.label || report.status}（回收站，只读）`}
+                          />
+                        )}
                       </TableCell>
-                      {isTrash && <TableCell>{formatDateTime(report.deleted_at)}</TableCell>}
-                      <TableCell align="right" onClick={(event) => event.stopPropagation()}>
-                        <Box sx={{ display: "flex", flexWrap: "wrap", gap: 0.75, justifyContent: "flex-end" }}>
-                          {isTrash ? (
+                      {isTrash && <TableCell sx={reportTableNoWrapCellSx}>{formatDateTime(report.deleted_at)}</TableCell>}
+                      <TableCell
+                        align="right"
+                        sx={isTrash ? reportTableTrashActionCellSx : reportTableActionCellSx}
+                        onClick={(event) => event.stopPropagation()}
+                      >
+                        <Box sx={reportTablePrimaryActionsSx}>
+                          {rowInteractionPolicy.primaryActions.includes("restore") ? (
                             <>
-                              <Button size="small" onClick={() => handleRestoreReport(report)} disabled={deleting}>
+                              <Button
+                                size="small"
+                                onClick={() => handleRestoreReport(report)}
+                                disabled={deleting}
+                                sx={reportTablePrimaryActionButtonSx}
+                              >
                                 恢复
                               </Button>
-                              <Button size="small" color="error" onClick={() => setPendingPurge(report)} disabled={deleting}>
-                                彻底删除
-                              </Button>
+                              <Tooltip title="更多操作">
+                                <IconButton
+                                  size="small"
+                                  aria-label={`更多操作：回收站报销单 ${report.id}`}
+                                  aria-haspopup="menu"
+                                  aria-controls={rowActionMenuOpen && rowActionReport?.id === report.id ? "report-row-action-menu" : undefined}
+                                  aria-expanded={rowActionMenuOpen && rowActionReport?.id === report.id ? "true" : undefined}
+                                  onClick={(event) => setRowActionMenu({ anchorEl: event.currentTarget, report, mode: rowActionMenuMode })}
+                                  sx={reportTableMoreActionButtonSx}
+                                >
+                                  <MoreVertIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </>
                           ) : (
                             <>
-                              <Button size="small" startIcon={<VisibilityIcon />} onClick={() => handlePreviewReport(report)}>
+                              <Button
+                                size="small"
+                                startIcon={<VisibilityIcon />}
+                                onClick={() => handlePreviewReport(report)}
+                                sx={reportTablePrimaryActionButtonSx}
+                              >
                                 预览
                               </Button>
                               <Button
@@ -563,20 +646,23 @@ export default function ReportListView(props) {
                                 startIcon={<FileDownloadIcon />}
                                 onClick={() => handleDownloadReport(report)}
                                 disabled={downloadingId === report.id}
+                                sx={reportTablePrimaryActionButtonSx}
                               >
                                 {downloadingId === report.id ? "下载中" : "下载"}
                               </Button>
-                              <Button size="small" onClick={() => navigate(`/reports/${report.id}/edit`)}>
-                                {report.status === "draft" ? "编辑" : "查看"}
-                              </Button>
-                              <Button
-                                size="small"
-                                color="error"
-                                disabled={report.status !== "draft"}
-                                onClick={() => setPendingDelete(report)}
-                              >
-                                删除
-                              </Button>
+                              <Tooltip title="更多操作">
+                                <IconButton
+                                  size="small"
+                                  aria-label={`更多操作：报销单 ${report.id}`}
+                                  aria-haspopup="menu"
+                                  aria-controls={rowActionMenuOpen && rowActionReport?.id === report.id ? "report-row-action-menu" : undefined}
+                                  aria-expanded={rowActionMenuOpen && rowActionReport?.id === report.id ? "true" : undefined}
+                                  onClick={(event) => setRowActionMenu({ anchorEl: event.currentTarget, report, mode: rowActionMenuMode })}
+                                  sx={reportTableMoreActionButtonSx}
+                                >
+                                  <MoreVertIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
                             </>
                           )}
                         </Box>
@@ -603,6 +689,53 @@ export default function ReportListView(props) {
           labelRowsPerPage="每页行数"
         />
       </Card>
+
+      <Menu
+        id="report-row-action-menu"
+        anchorEl={rowActionMenu.anchorEl}
+        open={rowActionMenuOpen}
+        onClose={closeRowActionMenu}
+        MenuListProps={{
+          "aria-label": rowActionReport ? `报销单 ${rowActionReport.id} 的更多操作` : "报销单更多操作",
+        }}
+      >
+        {rowActionMenu.mode === "trash" ? (
+          <MenuItem
+            disabled={!rowActionReport || deleting}
+            onClick={() => {
+              const report = rowActionReport;
+              closeRowActionMenu();
+              if (report) setPendingPurge(report);
+            }}
+            sx={{ color: "error.main" }}
+          >
+            彻底删除
+          </MenuItem>
+        ) : (
+          <>
+            <MenuItem
+              onClick={() => {
+                const report = rowActionReport;
+                closeRowActionMenu();
+                if (report) navigate(`/reports/${report.id}/edit`);
+              }}
+            >
+              {rowActionReport?.status === "draft" ? "编辑" : "查看"}
+            </MenuItem>
+            <MenuItem
+              disabled={!rowActionReport || rowActionReport.status !== "draft" || deleting}
+              onClick={() => {
+                const report = rowActionReport;
+                closeRowActionMenu();
+                if (report) setPendingDelete(report);
+              }}
+              sx={{ color: "error.main" }}
+            >
+              删除
+            </MenuItem>
+          </>
+        )}
+      </Menu>
 
       <Menu
         anchorEl={batchStatusMenuAnchor}
@@ -831,7 +964,9 @@ export default function ReportListView(props) {
                   }}
                 />
               </Button>
-              <Typography color="text.secondary">{importFile ? importFile.name : "未选择文件"}</Typography>
+              <Typography color="text.secondary" sx={{ minWidth: 0, overflowWrap: "anywhere" }}>
+                {importFile ? importFile.name : "未选择文件"}
+              </Typography>
               <Button onClick={handlePreviewImport} disabled={!importFile || importLoading} variant="contained">
                 {importLoading && !importPreview ? "预览中..." : "生成预览"}
               </Button>
@@ -846,28 +981,136 @@ export default function ReportListView(props) {
                 </Alert>
 
                 {importPreview.conflicts.length > 0 && (
-                  <Box sx={{ maxHeight: 220, overflow: "auto", border: 1, borderColor: "divider", borderRadius: 1 }}>
-                    <Table size="small">
-                      <TableHead>
-                        <TableRow>
-                          <TableCell>类型</TableCell>
-                          <TableCell>来源 UID</TableCell>
-                          <TableCell>本地 ID</TableCell>
-                          <TableCell>原因</TableCell>
-                        </TableRow>
-                      </TableHead>
-                      <TableBody>
-                        {importPreview.conflicts.map((conflict, index) => (
-                          <TableRow key={`${conflict.item_type}-${conflict.source_uid}-${index}`}>
-                            <TableCell>{conflict.item_type === "report" ? "报销单" : "发票"}</TableCell>
-                            <TableCell>{conflict.source_uid}</TableCell>
-                            <TableCell>{conflict.local_id || "—"}</TableCell>
-                            <TableCell>{conflict.reason}</TableCell>
+                  <>
+                    <Stack component="ul" spacing={1} aria-label="导入冲突明细" sx={importConflictMobileListSx}>
+                      {importPreview.conflicts.map((conflict, index) => {
+                        const row = getImportConflictViewModel(conflict);
+                        return (
+                          <Box
+                            component="li"
+                            key={`${conflict.item_type}-${conflict.source_uid}-${index}-mobile`}
+                            sx={importConflictMobileCardSx}
+                          >
+                            <Stack direction="row" justifyContent="space-between" alignItems="baseline" spacing={1}>
+                              <Typography variant="subtitle2" sx={importConflictAtomicTextSx}>
+                                {row.typeLabel}
+                              </Typography>
+                              <Typography variant="caption" color="text.secondary" sx={importConflictAtomicTextSx}>
+                                本地 ID：
+                                <Box component="span" sx={{ fontFamily: '"Roboto Mono", Consolas, monospace' }}>
+                                  {row.localId}
+                                </Box>
+                              </Typography>
+                            </Stack>
+
+                            <Typography component="div" variant="caption" color="text.secondary" sx={{ mt: 1 }}>
+                              来源 UID
+                            </Typography>
+                            <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+                              <Tooltip title={row.sourceUid} placement="top-start">
+                                <Typography
+                                  variant="body2"
+                                  noWrap
+                                  tabIndex={0}
+                                  aria-label={`来源 UID：${row.sourceUid}`}
+                                  sx={importConflictUidTextSx}
+                                >
+                                  {row.sourceUid}
+                                </Typography>
+                              </Tooltip>
+                              <Tooltip title="复制来源 UID">
+                                <IconButton
+                                  size="small"
+                                  aria-label={`复制来源 UID：${row.sourceUid}`}
+                                  onClick={() => void copyImportConflictUid(row.sourceUid)}
+                                >
+                                  <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                </IconButton>
+                              </Tooltip>
+                            </Stack>
+
+                            <Typography component="div" variant="caption" color="text.secondary" sx={{ mt: 0.75 }}>
+                              原因
+                            </Typography>
+                            <Tooltip title={row.reason} placement="top-start">
+                              <Typography
+                                variant="body2"
+                                tabIndex={0}
+                                aria-label={`冲突原因：${row.reason}`}
+                                sx={importConflictReasonTextSx}
+                              >
+                                {row.reason}
+                              </Typography>
+                            </Tooltip>
+                          </Box>
+                        );
+                      })}
+                    </Stack>
+
+                    <TableContainer sx={importConflictTableContainerSx}>
+                      <Table stickyHeader size="small" aria-label="导入冲突明细" sx={importConflictTableSx}>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell sx={importConflictTypeCellSx}>类型</TableCell>
+                            <TableCell sx={importConflictUidCellSx}>来源 UID</TableCell>
+                            <TableCell sx={importConflictLocalIdCellSx}>本地 ID</TableCell>
+                            <TableCell sx={importConflictReasonCellSx}>原因</TableCell>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
-                  </Box>
+                        </TableHead>
+                        <TableBody>
+                          {importPreview.conflicts.map((conflict, index) => {
+                            const row = getImportConflictViewModel(conflict);
+                            return (
+                              <TableRow key={`${conflict.item_type}-${conflict.source_uid}-${index}`}>
+                                <TableCell sx={importConflictTypeCellSx}>{row.typeLabel}</TableCell>
+                                <TableCell sx={importConflictUidCellSx}>
+                                  <Stack direction="row" spacing={0.5} alignItems="center" sx={{ minWidth: 0 }}>
+                                    <Tooltip title={row.sourceUid} placement="top-start">
+                                      <Typography
+                                        variant="body2"
+                                        noWrap
+                                        tabIndex={0}
+                                        aria-label={`来源 UID：${row.sourceUid}`}
+                                        sx={importConflictUidTextSx}
+                                      >
+                                        {row.sourceUid}
+                                      </Typography>
+                                    </Tooltip>
+                                    <Tooltip title="复制来源 UID">
+                                      <IconButton
+                                        size="small"
+                                        aria-label={`复制来源 UID：${row.sourceUid}`}
+                                        onClick={() => void copyImportConflictUid(row.sourceUid)}
+                                      >
+                                        <ContentCopyIcon sx={{ fontSize: 16 }} />
+                                      </IconButton>
+                                    </Tooltip>
+                                  </Stack>
+                                </TableCell>
+                                <TableCell sx={importConflictLocalIdCellSx}>
+                                  <Typography component="span" variant="body2" sx={{ fontFamily: '"Roboto Mono", Consolas, monospace' }}>
+                                    {row.localId}
+                                  </Typography>
+                                </TableCell>
+                                <TableCell sx={importConflictReasonCellSx}>
+                                  <Tooltip title={row.reason} placement="top-start">
+                                    <Typography
+                                      variant="body2"
+                                      tabIndex={0}
+                                      aria-label={`冲突原因：${row.reason}`}
+                                      sx={importConflictReasonTextSx}
+                                    >
+                                      {row.reason}
+                                    </Typography>
+                                  </Tooltip>
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+                  </>
                 )}
 
                 <TextField
