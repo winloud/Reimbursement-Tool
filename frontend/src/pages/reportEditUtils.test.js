@@ -16,6 +16,8 @@ import {
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
   getClipboardInvoiceFiles,
+  getClipboardReportAttachmentFilename,
+  getClipboardReportAttachmentFiles,
   getExpenseItemAmount,
   getFuelSubsidyInvoiceShortfall,
   getInvoiceUploadFeedback,
@@ -24,6 +26,7 @@ import {
   hasPaperInvoice,
   getTripYearRangeLabel,
   isEmptyDraft,
+  isSupportedReportAttachmentFile,
   isSupportedInvoiceFile,
   shouldExpandExpenseItem,
   validateCustomExpenseName,
@@ -69,6 +72,7 @@ describe("report edit utilities", () => {
     assert.equal(isEmptyDraft({ form: { ...form, advance_amount: "1.00" }, defaults, trips: [], invoices: [] }), false);
     assert.equal(isEmptyDraft({ form, defaults, trips: [makeBlankTrip("2026-06-03")], invoices: [] }), false);
     assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [{ id: 1 }] }), false);
+    assert.equal(isEmptyDraft({ form, defaults, trips: [], invoices: [], attachments: [{ id: 1 }] }), false);
     assert.equal(
       isEmptyDraft({ form, defaults, trips: [], invoices: [], expenseItems: [{ paper_invoice_amount: "18.00", paper_invoice_count: 1 }] }),
       false,
@@ -128,6 +132,32 @@ describe("report edit utilities", () => {
     assert.ok(saveIndex < reloadIndex);
   });
 
+  it("renders one report-level non-invoice attachment area after all other expenses with shared section and upload feedback", () => {
+    const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const viewSource = readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8");
+    const attachmentSource = readFileSync(
+      new URL("../features/report-edit/ReportAttachmentSection.jsx", import.meta.url),
+      "utf8",
+    );
+    const handlerStart = source.indexOf("const handleAttachmentFilesUpload = async");
+    const handlerEnd = source.indexOf("const handleDeleteReportAttachment", handlerStart);
+    const handler = source.slice(handlerStart, handlerEnd);
+
+    assert.equal((viewSource.match(/<ReportAttachmentSection/g) || []).length, 1);
+    assert.ok(viewSource.indexOf('<Stack id="expense-section"') < viewSource.indexOf("<ReportAttachmentSection"));
+    assert.ok(handler.indexOf("ensureSavedBeforeAction({ allowEmptyCreate: true })") < handler.indexOf("uploadReportAttachment"));
+    assert.match(viewSource, /<Stack id="basic-info-section"[^>]*>[\s\S]*?基本信息[\s\S]*?<Card sx=\{workCardSx\}>/);
+    assert.doesNotMatch(viewSource, /<Card id="basic-info-section"/);
+    assert.match(attachmentSource, /<Stack\s+id="report-attachment-section"[\s\S]*?非发票附件[\s\S]*?<Paper variant="outlined"/);
+    assert.match(attachmentSource, /不计入发票数量，导出时排在全部发票之后/);
+    assert.match(attachmentSource, /暂无非发票附件/);
+    assert.match(attachmentSource, /const dropzoneConfirm = keyframes/);
+    assert.match(attachmentSource, /transform: activeVisual \? "translateY\(-2px\)"/);
+    assert.match(attachmentSource, /animation: received \? `\$\{dropzoneConfirm\} 480ms ease-out`/);
+    assert.match(attachmentSource, /transition: activeVisual \? "transform 700ms ease"/);
+    assert.match(attachmentSource, /playReceiveFeedback\(\);\s*onFiles\(event\.dataTransfer\.files\)/);
+  });
+
   it("accepts supported invoice files from clipboard items or file fallback", () => {
     const png = { name: "", type: "image/png" };
     const pdf = { name: "invoice.PDF", type: "" };
@@ -154,6 +184,20 @@ describe("report edit utilities", () => {
     assert.equal(getClipboardInvoiceFilename({ name: "invoice.webp", type: "image/webp" }, 0, 1234), "invoice.webp");
     assert.equal(getClipboardInvoiceFilename({ name: "", type: "image/png" }, 1, 1234), "clipboard-invoice-1234-2.png");
     assert.equal(getClipboardInvoiceFilename({ name: "clipboard", type: "application/pdf" }, 0, 1234), "clipboard-invoice-1234-1.pdf");
+  });
+
+  it("uses the same supported file boundary for report-level non-invoice attachments", () => {
+    const png = { name: "", type: "image/png" };
+    const pdf = { name: "evidence.pdf", type: "application/pdf" };
+    const unsupported = { name: "notes.txt", type: "text/plain" };
+
+    assert.equal(isSupportedReportAttachmentFile(png), true);
+    assert.equal(isSupportedReportAttachmentFile(unsupported), false);
+    assert.deepEqual(getClipboardReportAttachmentFiles({ items: [], files: [unsupported, pdf] }), [pdf]);
+    assert.equal(
+      getClipboardReportAttachmentFilename(png, 0, 1234),
+      "clipboard-attachment-1234-1.png",
+    );
   });
 
   it("classifies invoice upload issues and keeps their filenames", () => {

@@ -19,6 +19,7 @@ from backend.runtime_paths import DATA_DIR, DATABASE_PATH, PROJECT_ROOT, UPLOAD_
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
+from backend.models.report_attachment import ReportAttachment
 from backend.models.trip import Trip
 from backend.schemas.data_transfer import (
     DataExportRequest,
@@ -29,12 +30,13 @@ from backend.schemas.data_transfer import (
     ImportSummaryRead,
 )
 from backend.schemas.report import REPORT_STATUS_VALUES
-from backend.services.invoice_service import build_invoice_storage_path, calculate_file_hash
+from backend.services.invoice_service import build_invoice_storage_path
+from backend.services.report_attachment_service import build_report_attachment_storage_path
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
 
-SCHEMA_VERSION = 4
-SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, SCHEMA_VERSION}
+SCHEMA_VERSION = 5
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, 4, SCHEMA_VERSION}
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -93,6 +95,12 @@ def _parse_date(value: str | None) -> date_type | None:
     if not value:
         return None
     return date_type.fromisoformat(value)
+
+
+def _parse_datetime(value: str | None) -> datetime | None:
+    if not value:
+        return None
+    return datetime.fromisoformat(value)
 
 
 def _safe_zip_path(path: str) -> str:
@@ -181,6 +189,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
         for item in report.expense_items
     ]
     invoices = []
+    report_attachments = []
     attachments = []
     for invoice in report.active_invoices:
         path = _invoice_file_path(invoice.file_path)
@@ -201,6 +210,29 @@ def _serialize_report(report: ExpenseReport) -> dict:
                 "amount": _money(invoice.amount),
                 "amount_confirmed": invoice.amount_confirmed,
                 "created_at": _datetime(invoice.created_at),
+                "attachment_path": attachment_path,
+                "attachment_hash": file_hash,
+            }
+        )
+        attachments.append((attachment_path, path))
+    for attachment in report.active_attachments:
+        path = _invoice_file_path(attachment.file_path)
+        if not path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"非发票附件文件不存在：{attachment.original_filename}",
+            )
+        attachment_path = (
+            f"report-attachments/{report.report_uid}/{attachment.attachment_uid}{path.suffix.lower()}"
+        )
+        file_hash = _file_hash(path)
+        report_attachments.append(
+            {
+                "original_id": attachment.id,
+                "attachment_uid": attachment.attachment_uid,
+                "original_filename": attachment.original_filename,
+                "file_type": attachment.file_type,
+                "created_at": _datetime(attachment.created_at),
                 "attachment_path": attachment_path,
                 "attachment_hash": file_hash,
             }
@@ -233,6 +265,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
         "trips": trips,
         "expense_items": expense_items,
         "invoices": invoices,
+        "report_attachments": report_attachments,
         "_attachments": attachments,
     }
 
@@ -284,12 +317,16 @@ def _read_manifest(package_path: Path) -> tuple[dict, zipfile.ZipFile]:
 def _validate_manifest_attachments(manifest: dict, archive: zipfile.ZipFile) -> None:
     names = set(archive.namelist())
     for report_item in manifest.get("reports", []):
-        for invoice in report_item.get("invoices", []):
-            attachment_path = _safe_zip_path(invoice.get("attachment_path") or "")
+        attachment_items = [
+            *report_item.get("invoices", []),
+            *report_item.get("report_attachments", []),
+        ]
+        for attachment in attachment_items:
+            attachment_path = _safe_zip_path(attachment.get("attachment_path") or "")
             if attachment_path not in names:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"导入包缺少附件：{attachment_path}")
             payload = archive.read(attachment_path)
-            if _bytes_hash(payload) != invoice.get("attachment_hash"):
+            if _bytes_hash(payload) != attachment.get("attachment_hash"):
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"附件 hash 不一致：{attachment_path}")
 
 
@@ -337,6 +374,7 @@ def _preview_from_manifest(db: Session, manifest: dict) -> ImportPreviewRead:
                         requires_reimbursed_confirm=local_invoice.report.status == "reimbursed",
                     )
                 )
+        attachments_total += len(report_item.get("report_attachments", []))
     report_conflicts = [item for item in conflicts if item.item_type == "report"]
     invoice_conflicts = [item for item in conflicts if item.item_type == "invoice"]
     return ImportPreviewRead(
@@ -465,6 +503,8 @@ def _create_or_overwrite_report(
     for invoice in target_report.invoices:
         invoice.deleted_at = datetime.utcnow()
         invoice.trip_id = None
+    for attachment in target_report.attachments:
+        attachment.deleted_at = datetime.utcnow()
     target_report.trips[:] = []
     target_report.expense_items[:] = []
     db.flush()
@@ -562,6 +602,7 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                     invoice_date=_parse_date(invoice_payload.get("invoice_date")),
                     amount=_decimal(invoice_payload.get("amount")),
                     amount_confirmed=bool(invoice_payload.get("amount_confirmed")),
+                    created_at=_parse_datetime(invoice_payload.get("created_at")) or datetime.utcnow(),
                 )
                 report.invoices.append(invoice)
                 db.flush()
@@ -576,6 +617,32 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 invoice.file_path = final_relative.as_posix()
                 pending_files.append((temp_file, _invoice_file_path(final_relative)))
                 result.invoices_created += 1
+                result.attachments_written += 1
+            for attachment_payload in report_item.get("report_attachments", []):
+                attachment_uid = attachment_payload.get("attachment_uid") or uuid4().hex
+                if db.scalar(select(ReportAttachment).where(ReportAttachment.attachment_uid == attachment_uid)) is not None:
+                    attachment_uid = uuid4().hex
+                attachment = ReportAttachment(
+                    attachment_uid=attachment_uid,
+                    original_filename=attachment_payload.get("original_filename") or "未命名附件",
+                    file_path="",
+                    file_type=attachment_payload["file_type"],
+                    created_at=_parse_datetime(attachment_payload.get("created_at")) or datetime.utcnow(),
+                )
+                report.attachments.append(attachment)
+                db.flush()
+                temp_file = _copy_zip_attachment_to_temp(
+                    archive,
+                    attachment_payload["attachment_path"],
+                    staging_dir,
+                )
+                final_relative = build_report_attachment_storage_path(
+                    report_id=report.id,
+                    attachment_uid=attachment.attachment_uid,
+                    extension=Path(attachment_payload["attachment_path"]).suffix or attachment.file_type,
+                )
+                attachment.file_path = final_relative.as_posix()
+                pending_files.append((temp_file, _invoice_file_path(final_relative)))
                 result.attachments_written += 1
             recalculate_report_totals(report)
         db.commit()

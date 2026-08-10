@@ -128,6 +128,9 @@ def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> Repor
             report.deleted_at = deleted_at
             for invoice in report.invoices:
                 invoice.deleted_at = deleted_at
+            for attachment in report.attachments:
+                if attachment.deleted_at is None:
+                    attachment.deleted_at = deleted_at
         db.commit()
 
     return ReportBatchDeleteResult(deleted_count=len(candidates), skipped_count=len(skipped), skipped=skipped)

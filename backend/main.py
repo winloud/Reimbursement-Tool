@@ -6,7 +6,7 @@ from fastapi.responses import FileResponse
 
 from backend.app_metadata import APP_TITLE, APP_VERSION
 from backend.database.connection import create_db_and_tables
-from backend.routers import data_transfer, health, invoices, maintenance, reports, settings, stats, tickets
+from backend.routers import data_transfer, health, invoices, maintenance, report_attachments, reports, settings, stats, tickets
 from backend.runtime_paths import FRONTEND_DIST_DIR
 
 
@@ -32,6 +32,7 @@ def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool
     app.include_router(settings.router)
     app.include_router(reports.router)
     app.include_router(invoices.router)
+    app.include_router(report_attachments.router)
     app.include_router(tickets.router)
     app.include_router(stats.router)
     app.include_router(data_transfer.router)

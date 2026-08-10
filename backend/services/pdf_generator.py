@@ -22,6 +22,7 @@ from reportlab.pdfgen import canvas
 from backend import runtime_paths
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
+from backend.models.report_attachment import ReportAttachment
 from backend.models.trip import Trip
 from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, resource_path, uploaded_path
 from backend.services.amount_converter import amount_to_chinese_upper, quantize_currency
@@ -227,6 +228,29 @@ def _active_invoices(report: ExpenseReport) -> list[Invoice]:
     return [invoice for invoice in report.invoices if invoice.deleted_at is None]
 
 
+def _ordered_active_invoices(report: ExpenseReport) -> list[Invoice]:
+    invoices = _active_invoices(report)
+    trip_order = {trip.id: index for index, trip in enumerate(sorted(report.trips, key=lambda item: item.sort_order))}
+    other_categories = _ordered_other_categories(report)
+    category_order = {category: index for index, category in enumerate(other_categories)}
+
+    def upload_key(invoice: Invoice) -> tuple[object, int]:
+        return invoice.created_at, invoice.id or 0
+
+    travel_invoices = sorted(
+        (invoice for invoice in invoices if invoice.expense_category == "transport_fare"),
+        key=lambda invoice: (trip_order.get(invoice.trip_id, len(trip_order)), *upload_key(invoice)),
+    )
+    other_invoices = sorted(
+        (invoice for invoice in invoices if invoice.expense_category != "transport_fare"),
+        key=lambda invoice: (
+            category_order.get(invoice.expense_category, len(category_order)),
+            *upload_key(invoice),
+        ),
+    )
+    return travel_invoices + other_invoices
+
+
 def _confirmed_invoices(report: ExpenseReport) -> list[Invoice]:
     return [invoice for invoice in _active_invoices(report) if invoice.amount_confirmed]
 
@@ -286,7 +310,11 @@ def _trip_values(trip: Trip) -> dict[str, object]:
 def _ordered_other_categories(report: ExpenseReport) -> list[str]:
     categories = list(OTHER_EXPENSE_CATEGORIES)
     seen = set(categories)
-    for item in report.expense_items:
+    custom_items = sorted(
+        (item for item in report.expense_items if is_custom_category(item.category)),
+        key=lambda item: (item.created_at, item.id or 0),
+    )
+    for item in custom_items:
         if not is_custom_category(item.category) or item.category in seen:
             continue
         categories.append(item.category)
@@ -482,8 +510,8 @@ def _invoice_attachment_copies(invoice: Invoice, double_print_vat_special_invoic
     return 2 if (invoice.invoice_type or "").strip() == INVOICE_TYPE_VAT_SPECIAL else 1
 
 
-def _append_single_invoice_attachment(writer: PdfWriter, invoice: Invoice, path: Path) -> None:
-    if invoice.file_type == "pdf":
+def _append_file_attachment(writer: PdfWriter, file_type: str, path: Path) -> None:
+    if file_type == "pdf":
         reader = PdfReader(str(path))
         for page in reader.pages:
             writer.add_page(page)
@@ -493,12 +521,24 @@ def _append_single_invoice_attachment(writer: PdfWriter, invoice: Invoice, path:
 
 
 def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport, double_print_vat_special_invoices: bool) -> None:
-    for invoice in _active_invoices(report):
+    for invoice in _ordered_active_invoices(report):
         path = _invoice_file_path(invoice.file_path)
         if not path.exists():
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"发票文件不存在：{invoice.file_path}")
         for _copy_index in range(_invoice_attachment_copies(invoice, double_print_vat_special_invoices)):
-            _append_single_invoice_attachment(writer, invoice, path)
+            _append_file_attachment(writer, invoice.file_type, path)
+
+
+def _append_report_attachments(writer: PdfWriter, report: ExpenseReport) -> None:
+    attachments: list[ReportAttachment] = report.active_attachments
+    for attachment in attachments:
+        path = _invoice_file_path(attachment.file_path)
+        if not path.exists():
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"非发票附件文件不存在：{attachment.original_filename}",
+            )
+        _append_file_attachment(writer, attachment.file_type, path)
 
 
 def build_merged_report_pdf(
@@ -512,6 +552,7 @@ def build_merged_report_pdf(
     for page in PdfReader(BytesIO(report_pdf)).pages:
         writer.add_page(page)
     _append_invoice_attachments(writer, report, double_print_vat_special_invoices)
+    _append_report_attachments(writer, report)
 
     output = BytesIO()
     writer.write(output)

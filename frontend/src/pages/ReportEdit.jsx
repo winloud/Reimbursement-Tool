@@ -6,6 +6,7 @@ import { useNavigate, useParams } from "react-router-dom";
 import { useNavigationGuard } from "../navigationGuard";
 import {
   createReport,
+  deleteReportAttachment,
   deleteInvoice,
   downloadReportPdf,
   getReport,
@@ -13,6 +14,7 @@ import {
   getSettings,
   updateReport,
   updateReportStatus,
+  uploadReportAttachment,
   uploadInvoice,
 } from "../api/client";
 import {
@@ -81,6 +83,7 @@ export default function ReportEdit() {
   const [trips, setTrips] = useState([]);
   const [expenseItems, setExpenseItems] = useState([]);
   const [invoices, setInvoices] = useState([]);
+  const [attachments, setAttachments] = useState([]);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceQueue, setInvoiceQueue] = useState([]);
   const [uploadResult, setUploadResult] = useState(null);
@@ -161,6 +164,7 @@ export default function ReportEdit() {
           .map(normalizeTrip);
         const nextItems = (report.expense_items || []).map(normalizeExpenseItem);
         const nextInvoices = report.invoices || [];
+        const nextAttachments = report.attachments || [];
         const nextDefaults = {
           ...nextForm,
           purpose: "",
@@ -177,6 +181,7 @@ export default function ReportEdit() {
         setTrips(nextTrips);
         setExpenseItems(nextItems);
         setInvoices(nextInvoices);
+        setAttachments(nextAttachments);
         lastSavedPayloadRef.current = JSON.stringify(
           buildReportPayload({ form: nextForm, trips: nextTrips, expenseItems: nextItems }),
         );
@@ -215,6 +220,7 @@ export default function ReportEdit() {
       setTrips([]);
       setExpenseItems([]);
       setInvoices([]);
+      setAttachments([]);
       lastSavedPayloadRef.current = JSON.stringify(
         buildReportPayload({ form: draftForm, trips: [], expenseItems: [] }),
       );
@@ -310,8 +316,8 @@ export default function ReportEdit() {
       : "暂无已确认发票，可先录入行程和费用。";
 
   const emptyDraft = useMemo(
-    () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices, expenseItems }),
-    [defaults, expenseItems, form, invoices, status, trips],
+    () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices, expenseItems, attachments }),
+    [attachments, defaults, expenseItems, form, invoices, status, trips],
   );
 
   const saveReport = useCallback(
@@ -390,6 +396,7 @@ export default function ReportEdit() {
           setTrips(nextTrips);
           setExpenseItems(nextItems);
           setInvoices(savedReport.invoices || []);
+          setAttachments(savedReport.attachments || []);
           lastSavedPayloadRef.current = JSON.stringify(
             buildReportPayload({
               form: savedForm,
@@ -829,6 +836,59 @@ export default function ReportEdit() {
     }
   };
 
+  const handleAttachmentFilesUpload = async (files) => {
+    const fileList = Array.from(files || []);
+    if (fileList.length === 0 || readonly) return;
+    const saved = await ensureSavedBeforeAction({ allowEmptyCreate: true });
+    if (!saved.ok || !saved.reportId) return;
+
+    let successfulFileCount = 0;
+    const issues = [];
+    setError("");
+    setUploadState({ key: "report-attachments", current: 0, total: fileList.length, name: fileList[0].name });
+    try {
+      for (let index = 0; index < fileList.length; index += 1) {
+        const file = fileList[index];
+        setUploadState({ key: "report-attachments", current: index + 1, total: fileList.length, name: file.name });
+        try {
+          const res = await uploadReportAttachment({ reportId: saved.reportId, file });
+          if (!res.success) throw new Error(res.message || "附件上传失败");
+          successfulFileCount += 1;
+        } catch (err) {
+          issues.push(`${file.name || "未命名文件"}：${getApiErrorMessage(err, "附件上传失败")}`);
+        }
+      }
+
+      if (successfulFileCount > 0) {
+        await loadForEdit({ quiet: true, reportId: saved.reportId });
+      }
+      if (issues.length > 0) {
+        setError(`部分附件未上传：\n${issues.join("\n")}`);
+      }
+      if (successfulFileCount > 0) {
+        setToast(
+          issues.length > 0
+            ? `已上传 ${successfulFileCount} 个附件，${issues.length} 个失败`
+            : `已上传 ${successfulFileCount} 个附件`,
+        );
+      }
+    } finally {
+      setUploadState(null);
+    }
+  };
+
+  const handleDeleteReportAttachment = async (attachmentId) => {
+    setError("");
+    try {
+      const res = await deleteReportAttachment(attachmentId);
+      if (!res.success) throw new Error(res.message || "删除附件失败");
+      setToast("附件已删除");
+      await loadForEdit({ quiet: true });
+    } catch (err) {
+      setError(getApiErrorMessage(err, "删除附件失败"));
+    }
+  };
+
   const handleOpenCustomDialog = () => {
     setCustomName("");
     setCustomNameError("");
@@ -1009,6 +1069,14 @@ export default function ReportEdit() {
     requestPaperInvoiceClear,
   };
 
+  const reportAttachmentView = {
+    attachments,
+    uploading: uploadState?.key === "report-attachments",
+    handleFilesUpload: handleAttachmentFilesUpload,
+    handleDelete: handleDeleteReportAttachment,
+    onUploadError: handleInvoiceUploadError,
+  };
+
   const summaryPanelView = {
     summary,
     pdfBlockMessage,
@@ -1078,6 +1146,7 @@ export default function ReportEdit() {
       basicInfo={basicInfoView}
       tripEditor={tripEditorView}
       expenseEditor={expenseEditorView}
+      reportAttachments={reportAttachmentView}
       summaryPanel={summaryPanelView}
       invoiceFlow={invoiceFlowView}
       overlays={overlayView}

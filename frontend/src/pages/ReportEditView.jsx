@@ -50,6 +50,7 @@ import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
 import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
 import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
+import ReportAttachmentSection from "../features/report-edit/ReportAttachmentSection";
 import {
   TRIP_CARD_ACTION_POLICY,
   formatAmount,
@@ -350,6 +351,7 @@ export default function ReportEditView({
   basicInfo,
   tripEditor,
   expenseEditor,
+  reportAttachments,
   summaryPanel,
   invoiceFlow,
   overlays,
@@ -403,6 +405,13 @@ export default function ReportEditView({
     closePaperInvoiceEditor,
     requestPaperInvoiceClear,
   } = expenseEditor;
+  const {
+    attachments,
+    uploading: attachmentUploading,
+    handleFilesUpload: handleAttachmentFilesUpload,
+    handleDelete: handleDeleteReportAttachment,
+    onUploadError: onAttachmentUploadError,
+  } = reportAttachments;
   const {
     summary,
     pdfBlockMessage,
@@ -550,7 +559,7 @@ export default function ReportEditView({
           {error}
         </Alert>
       )}
-      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改报销单内容、发票和车票。</Alert>}
+      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改报销单内容、发票、附件和车票。</Alert>}
       {uploadState && (
         <Alert severity="info">
           <Stack spacing={1}>
@@ -583,13 +592,13 @@ export default function ReportEditView({
       <Box sx={mainLayoutSx}>
         <Box sx={{ minWidth: 0 }}>
           <Stack spacing={SECTION_GAP}>
-              <Card id="basic-info-section" sx={{ ...workCardSx, ...sectionAnchorSx }}>
+            <Stack id="basic-info-section" spacing={1.5} sx={sectionAnchorSx}>
+              <Typography variant="h6" fontWeight={800}>
+                基本信息
+              </Typography>
+              <Card sx={workCardSx}>
                 <CardContent sx={sectionCardContentSx}>
-                  <Stack spacing={2}>
-                      <Typography variant="h6" fontWeight={800}>
-                        基本信息
-                      </Typography>
-                      <Box sx={basicInfoGridSx}>
+                  <Box sx={basicInfoGridSx}>
                         <Box sx={{ gridColumn: { sm: "span 6" } }}>
                           <TextField
                             fullWidth
@@ -725,10 +734,10 @@ export default function ReportEditView({
                             </Box>
                           </AccordionDetails>
                         </Accordion>
-                      </Box>
-                  </Stack>
+                  </Box>
                 </CardContent>
               </Card>
+            </Stack>
 
             <Stack id="trip-list-section" spacing={1.5} sx={sectionAnchorSx}>
               <Stack direction="row" alignItems="center" justifyContent="space-between">
@@ -1236,6 +1245,15 @@ export default function ReportEditView({
                 })}
               </Box>
             </Stack>
+
+            <ReportAttachmentSection
+              attachments={attachments}
+              readonly={readonly}
+              uploading={attachmentUploading}
+              onFiles={handleAttachmentFilesUpload}
+              onDelete={handleDeleteReportAttachment}
+              onUploadError={onAttachmentUploadError}
+            />
           </Stack>
         </Box>
 

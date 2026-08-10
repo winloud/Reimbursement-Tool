@@ -345,6 +345,24 @@ export const deleteInvoice = async (id) => {
 
 export const getInvoiceFileUrl = (id) => `${apiClient.defaults.baseURL}/api/invoices/${id}/file`;
 
+export const uploadReportAttachment = async ({ reportId, file }) => {
+  const formData = new FormData();
+  formData.append("report_id", reportId);
+  formData.append("file", file);
+  const response = await apiClient.post("/api/report-attachments/upload", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+  });
+  return response.data;
+};
+
+export const deleteReportAttachment = async (id) => {
+  const response = await apiClient.delete(`/api/report-attachments/${encodeURIComponent(id)}`);
+  return response.data;
+};
+
+export const getReportAttachmentFileUrl = (id) =>
+  `${apiClient.defaults.baseURL}/api/report-attachments/${encodeURIComponent(id)}/file`;
+
 export const previewRailTickets = async ({ reportId, files }) => {
   const formData = new FormData();
   formData.append("report_id", String(reportId));

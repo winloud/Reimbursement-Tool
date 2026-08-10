@@ -35,10 +35,18 @@ class ExpenseReport(Base):
     trips = relationship("Trip", back_populates="report", cascade="all, delete-orphan")
     expense_items = relationship("ExpenseItem", back_populates="report", cascade="all, delete-orphan")
     invoices = relationship("Invoice", back_populates="report", cascade="all, delete-orphan")
+    attachments = relationship("ReportAttachment", back_populates="report", cascade="all, delete-orphan")
 
     @property
     def active_invoices(self):
         return [invoice for invoice in self.invoices if invoice.deleted_at is None]
+
+    @property
+    def active_attachments(self):
+        return sorted(
+            (attachment for attachment in self.attachments if attachment.deleted_at is None),
+            key=lambda attachment: (attachment.created_at, attachment.id),
+        )
 
     @property
     def invoice_count(self) -> int:

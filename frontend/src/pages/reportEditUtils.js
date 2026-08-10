@@ -89,6 +89,18 @@ export const getClipboardInvoiceFilename = (file, index = 0, timestamp = Date.no
   return extension ? `clipboard-invoice-${timestamp}-${index + 1}${extension}` : currentName;
 };
 
+export const isSupportedReportAttachmentFile = isSupportedInvoiceFile;
+
+export const getClipboardReportAttachmentFiles = (clipboardData) =>
+  getClipboardInvoiceFiles(clipboardData);
+
+export const getClipboardReportAttachmentFilename = (file, index = 0, timestamp = Date.now()) => {
+  const currentName = String(file?.name || "").trim();
+  if (SUPPORTED_INVOICE_EXTENSIONS.has(getFileExtension(currentName))) return currentName;
+  const extension = CLIPBOARD_EXTENSION_BY_MIME[String(file?.type || "").trim().toLowerCase()];
+  return extension ? `clipboard-attachment-${timestamp}-${index + 1}${extension}` : currentName;
+};
+
 export const createInvoiceUploadIssue = (fileName, message, statusCode) => ({
   fileName: String(fileName || "").trim() || "未命名文件",
   message: String(message || "").trim() || "上传失败",
@@ -608,8 +620,8 @@ export const appendTripWithAutoStart = (trips, blankTrip) => {
 const textChanged = (current, initial) => String(current ?? "").trim() !== String(initial ?? "").trim();
 const moneyChanged = (current, initial) => Number(current || 0) !== Number(initial || 0);
 
-export const isEmptyDraft = ({ form, defaults, trips, invoices, expenseItems = [] }) => {
-  if (trips.length > 0 || invoices.length > 0) return false;
+export const isEmptyDraft = ({ form, defaults, trips, invoices, expenseItems = [], attachments = [] }) => {
+  if (trips.length > 0 || invoices.length > 0 || attachments.length > 0) return false;
   if (expenseItems.some(hasExpenseItemData)) return false;
   const hasCurrentManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
   const hadDefaultManualSubsidy = defaults.manual_subsidy_total !== null && defaults.manual_subsidy_total !== undefined;

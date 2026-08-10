@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
+from backend.models.report_attachment import ReportAttachment
 from backend.models.trip import Trip
 from backend.schemas.report import (
     ExpenseItemWrite,
@@ -560,6 +561,15 @@ def active_invoices(report: ExpenseReport, include_deleted: bool = False) -> lis
     return [invoice for invoice in report.invoices if invoice.deleted_at is None]
 
 
+def active_report_attachments(
+    report: ExpenseReport,
+    include_deleted: bool = False,
+) -> list[ReportAttachment]:
+    if include_deleted:
+        return list(report.attachments)
+    return [attachment for attachment in report.attachments if attachment.deleted_at is None]
+
+
 def paper_invoice_count(report: ExpenseReport) -> int:
     return sum(int(trip.paper_invoice_count or 0) for trip in report.trips) + sum(
         int(item.paper_invoice_count or 0) for item in report.expense_items
@@ -617,7 +627,11 @@ def report_matches_filters(report: ExpenseReport, filters: ReportFilters, includ
         return False
     if not report_matches_category(report, filters.category, include_deleted_invoices=include_deleted_invoices):
         return False
-    if filters.has_attachment is not None and bool(active_invoices(report, include_deleted=include_deleted_invoices)) != filters.has_attachment:
+    has_file_attachment = bool(
+        active_invoices(report, include_deleted=include_deleted_invoices)
+        or active_report_attachments(report, include_deleted=include_deleted_invoices)
+    )
+    if filters.has_attachment is not None and has_file_attachment != filters.has_attachment:
         return False
     has_subsidy_days_filter = filters.subsidy_days_min is not None or filters.subsidy_days_max is not None
     if has_subsidy_days_filter and report.manual_subsidy_total is not None:
@@ -770,28 +784,40 @@ def soft_delete_report(db: Session, report_id: int) -> None:
     report.deleted_at = datetime.utcnow()
     for invoice in report.invoices:
         invoice.deleted_at = report.deleted_at
+    for attachment in report.attachments:
+        if attachment.deleted_at is None:
+            attachment.deleted_at = report.deleted_at
     db.commit()
 
 
 def restore_deleted_report(db: Session, report_id: int) -> ExpenseReport:
     report = get_deleted_report_or_404(db, report_id)
     ensure_report_deletable(report)
+    report_deleted_at = report.deleted_at
     report.deleted_at = None
     for invoice in report.invoices:
         invoice.deleted_at = None
+    for attachment in report.attachments:
+        if attachment.deleted_at == report_deleted_at:
+            attachment.deleted_at = None
     db.commit()
     db.refresh(report)
     return report
 
 
-def _safe_invoice_file_paths(report: ExpenseReport) -> list[Path]:
+def _safe_report_file_paths(report: ExpenseReport) -> list[Path]:
     upload_root = UPLOAD_ROOT.resolve()
     paths: list[Path] = []
     seen: set[Path] = set()
-    for invoice in report.invoices:
-        path = _invoice_file_path(invoice.file_path).resolve()
+    stored_files = [
+        (invoice.file_path, "发票附件") for invoice in report.invoices
+    ] + [
+        (attachment.file_path, "非发票附件") for attachment in report.attachments
+    ]
+    for file_path, label in stored_files:
+        path = _invoice_file_path(file_path).resolve()
         if not path.is_relative_to(upload_root):
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="发票附件路径不安全，无法彻底删除")
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{label}路径不安全，无法彻底删除")
         if path not in seen:
             paths.append(path)
             seen.add(path)
@@ -801,7 +827,7 @@ def _safe_invoice_file_paths(report: ExpenseReport) -> list[Path]:
 def purge_report(db: Session, report_id: int) -> int:
     report = get_report_any_state_or_404(db, report_id)
     ensure_report_deletable(report)
-    file_paths = _safe_invoice_file_paths(report)
+    file_paths = _safe_report_file_paths(report)
     db.delete(report)
     db.commit()
 

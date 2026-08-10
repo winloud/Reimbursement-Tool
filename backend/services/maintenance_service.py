@@ -700,6 +700,25 @@ def _append_duplicate_uid_checks(
             message="存在重复发票 UID",
             detail_builder=lambda row: f"{row['invoice_uid']} ({row['duplicate_count']} 条)",
         )
+    if "report_attachments" in tables:
+        rows = connection.execute(
+            """
+            SELECT attachment_uid, COUNT(*) AS duplicate_count
+            FROM report_attachments
+            WHERE attachment_uid IS NOT NULL AND TRIM(attachment_uid) <> ''
+            GROUP BY attachment_uid
+            HAVING COUNT(*) > 1
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="duplicate_report_attachment_uid",
+            message="存在重复非发票附件 UID",
+            detail_builder=lambda row: f"{row['attachment_uid']} ({row['duplicate_count']} 条)",
+        )
 
 
 def _append_business_integrity_checks(
@@ -800,6 +819,43 @@ def _append_business_integrity_checks(
             detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
         )
 
+    if {"report_attachments", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT report_attachments.id, report_attachments.report_id
+            FROM report_attachments
+            LEFT JOIN expense_reports ON expense_reports.id = report_attachments.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_report_attachment",
+            message="存在无所属报销单的非发票附件",
+            detail_builder=lambda row: f"attachment_id={row['id']}, report_id={row['report_id']}",
+        )
+
+        rows = connection.execute(
+            """
+            SELECT report_attachments.id, report_attachments.report_id
+            FROM report_attachments
+            JOIN expense_reports ON expense_reports.id = report_attachments.report_id
+            WHERE expense_reports.deleted_at IS NOT NULL AND report_attachments.deleted_at IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="active_report_attachment_in_deleted_report",
+            message="已删除报销单下仍存在未删除的非发票附件",
+            detail_builder=lambda row: f"attachment_id={row['id']}, report_id={row['report_id']}",
+        )
+
     if {"invoices", "trips"}.issubset(tables):
         rows = connection.execute(
             """
@@ -868,30 +924,36 @@ def _append_attachment_checks(
     tables: set[str],
     issues: list[DatabaseIntegrityIssueRead],
 ) -> None:
-    if "invoices" not in tables:
+    attachment_tables = [
+        ("invoices", "invoice_id"),
+        ("report_attachments", "attachment_id"),
+    ]
+    available_tables = [(table, id_label) for table, id_label in attachment_tables if table in tables]
+    if not available_tables:
         return
-    rows = connection.execute(
-        """
-        SELECT id, file_path
-        FROM invoices
-        WHERE deleted_at IS NULL AND file_path IS NOT NULL AND TRIM(file_path) <> ''
-        """
-    ).fetchall()
     upload_root = UPLOAD_ROOT.resolve()
     unsafe: list[str] = []
     missing: list[str] = []
-    for row in rows:
-        file_path = str(row["file_path"])
-        try:
-            resolved = uploaded_path(file_path, UPLOAD_ROOT).resolve()
-        except OSError as exc:
-            unsafe.append(f"invoice_id={row['id']}, path={file_path}, error={exc}")
-            continue
-        if resolved != upload_root and not resolved.is_relative_to(upload_root):
-            unsafe.append(f"invoice_id={row['id']}, path={file_path}")
-            continue
-        if not resolved.exists():
-            missing.append(f"invoice_id={row['id']}, path={file_path}")
+    for table, id_label in available_tables:
+        rows = connection.execute(
+            f"""
+            SELECT id, file_path
+            FROM {_quote_identifier(table)}
+            WHERE deleted_at IS NULL AND file_path IS NOT NULL AND TRIM(file_path) <> ''
+            """
+        ).fetchall()
+        for row in rows:
+            file_path = str(row["file_path"])
+            try:
+                resolved = uploaded_path(file_path, UPLOAD_ROOT).resolve()
+            except OSError as exc:
+                unsafe.append(f"{id_label}={row['id']}, path={file_path}, error={exc}")
+                continue
+            if resolved != upload_root and not resolved.is_relative_to(upload_root):
+                unsafe.append(f"{id_label}={row['id']}, path={file_path}")
+                continue
+            if not resolved.exists():
+                missing.append(f"{id_label}={row['id']}, path={file_path}")
 
     if unsafe:
         issues.append(
@@ -899,7 +961,7 @@ def _append_attachment_checks(
                 "error",
                 "attachments",
                 "unsafe_attachment_path",
-                "存在越界或不可解析的发票附件路径",
+                "存在越界或不可解析的附件路径",
                 count=len(unsafe),
                 details=unsafe[:20],
             )
@@ -910,7 +972,7 @@ def _append_attachment_checks(
                 "warning",
                 "attachments",
                 "missing_attachment_file",
-                "存在缺失的发票附件文件",
+                "存在缺失的附件文件",
                 count=len(missing),
                 details=missing[:20],
             )

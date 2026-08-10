@@ -275,7 +275,7 @@ def test_export_import_preserves_checked_status_and_accepts_v3(db, monkeypatch, 
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
 
-    assert manifest["schema_version"] == 4
+    assert manifest["schema_version"] == data_transfer_service.SCHEMA_VERSION
     assert manifest["reports"][0]["report"]["status"] == "checked"
 
     manifest["schema_version"] = 3

@@ -23,7 +23,7 @@ engine = create_engine(
 def create_db_and_tables() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    from backend.models import expense_item, invoice, report, settings, trip  # noqa: F401
+    from backend.models import expense_item, invoice, report, report_attachment, settings, trip  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     migrate_sqlite_schema()

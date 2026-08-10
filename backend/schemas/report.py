@@ -4,6 +4,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from backend.schemas.report_attachment import ReportAttachmentRead
+
 REPORT_STATUS_VALUES = ("draft", "checked", "printed", "reimbursed")
 ReportStatus = Literal["draft", "checked", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
@@ -231,3 +233,4 @@ class ReportDetailRead(ReportRead):
     trips: list[TripRead] = Field(default_factory=list)
     expense_items: list[ExpenseItemRead] = Field(default_factory=list)
     invoices: list[InvoiceRead] = Field(default_factory=list, validation_alias="active_invoices")
+    attachments: list[ReportAttachmentRead] = Field(default_factory=list, validation_alias="active_attachments")

@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from backend.database.connection import Base
-from backend.models import expense_item, invoice, report, settings, trip  # noqa: F401
+from backend.models import expense_item, invoice, report, report_attachment, settings, trip  # noqa: F401
 
 
 @pytest.fixture()
