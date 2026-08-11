@@ -95,6 +95,7 @@ export default function RegularReportEdit() {
   const skipRouteLoadRef = useRef(null);
   const autosaveRequestRef = useRef(0);
   const latestPayloadRef = useRef(null);
+  const regularItemClientKeysRef = useRef(new Map());
   const readonly = status !== "draft";
 
   const currentPayload = useMemo(
@@ -113,7 +114,7 @@ export default function RegularReportEdit() {
     [attachments, invoices, items, mode],
   );
 
-  const applyReport = useCallback((report, { markSaved = true } = {}) => {
+  const applyReport = useCallback((report, { markSaved = true, previousItems = [] } = {}) => {
     const nextMode = report.regular_mode;
     if (report.report_type !== "regular" || !isRegularMode(nextMode)) {
       throw new Error("该记录不是常规报销单");
@@ -122,7 +123,28 @@ export default function RegularReportEdit() {
       report_date: report.report_date || regularToday(),
       employee_name: report.employee_name || "",
     };
-    const nextItems = sortAndNormalizeRegularItems(report.regular_items || []);
+    const previousById = new Map(
+      previousItems
+        .filter((item) => item?.id && item?.clientKey)
+        .map((item) => [String(item.id), item.clientKey]),
+    );
+    const previousBySortOrder = new Map(
+      previousItems
+        .filter((item) => item?.clientKey)
+        .map((item) => [Number(item.sort_order), item.clientKey]),
+    );
+    const nextItems = sortAndNormalizeRegularItems(report.regular_items || []).map((item, index) => {
+      const stableClientKey =
+        (item.id && regularItemClientKeysRef.current.get(String(item.id))) ||
+        (item.id && previousById.get(String(item.id))) ||
+        previousBySortOrder.get(Number(item.sort_order || index + 1)) ||
+        previousItems[index]?.clientKey ||
+        item.clientKey;
+      if (item.id && stableClientKey) {
+        regularItemClientKeysRef.current.set(String(item.id), stableClientKey);
+      }
+      return stableClientKey === item.clientKey ? item : { ...item, clientKey: stableClientKey };
+    });
     setMode(nextMode);
     setForm(nextForm);
     setDefaults((current) => loadedRef.current ? current : nextForm);
@@ -262,14 +284,14 @@ export default function RegularReportEdit() {
           savedReport = updateResponse.data;
         }
         if (latestPayloadKeyRef.current === savedPayloadKey) {
-          applyReport(savedReport);
+          applyReport(savedReport, { previousItems: items });
           if (!quiet) setToast("已保存");
         } else {
           lastSavedPayloadRef.current = savedPayloadKey;
           loadedRef.current = true;
           setSaveState("dirty");
         }
-        return { ok: true, reportId: createdId };
+        return { ok: true, reportId: createdId, report: savedReport };
       } catch (saveError) {
         const message = apiErrorMessage(saveError, "创建常规报销单失败");
         setError(message);
@@ -288,12 +310,12 @@ export default function RegularReportEdit() {
       if (!response.success) throw new Error(response.message || "保存常规报销单失败");
       lastSavedPayloadRef.current = payloadKey;
       if (latestPayloadKeyRef.current === payloadKey) {
-        applyReport(response.data);
+        applyReport(response.data, { previousItems: items });
       } else {
         setSaveState("dirty");
       }
       if (!quiet) setToast("已保存");
-      return { ok: true, reportId: existingReportId };
+      return { ok: true, reportId: existingReportId, report: response.data };
     } catch (saveError) {
       if (requestId !== autosaveRequestRef.current) return { ok: false, reportId: existingReportId };
       const message = apiErrorMessage(saveError, "保存常规报销单失败");
@@ -301,7 +323,7 @@ export default function RegularReportEdit() {
       setSaveState("error");
       return { ok: false, reportId: existingReportId };
     }
-  }, [applyReport, currentPayload, currentPayloadKey, emptyDraft, loading, navigate, readonly]);
+  }, [applyReport, currentPayload, currentPayloadKey, emptyDraft, items, loading, navigate, readonly]);
 
   const ensureSaved = useCallback((options = {}) => saveReport({ quiet: true, ...options }), [saveReport]);
 
@@ -362,11 +384,30 @@ export default function RegularReportEdit() {
     return refreshed;
   };
 
-  const handleInvoiceFiles = async (regularItemId, files) => {
+  const resolveSavedRegularItemId = (report, item) => {
+    if (item?.id) return Number(item.id);
+    const savedItems = report?.regular_items || [];
+    const itemIndex = items.findIndex((candidate) => candidate.clientKey === item?.clientKey);
+    const savedItem =
+      savedItems.find((candidate) => Number(candidate.sort_order) === Number(item?.sort_order)) ||
+      savedItems[itemIndex];
+    return savedItem?.id ? Number(savedItem.id) : null;
+  };
+
+  const handleInvoiceFiles = async (item, files) => {
     const fileList = Array.from(files || []);
-    if (fileList.length === 0 || readonly || !regularItemId) return;
+    if (fileList.length === 0 || readonly || !item) return;
     const saved = await ensureSaved({ allowEmptyCreate: true });
     if (!saved.ok || !saved.reportId) return;
+    let regularItemId = resolveSavedRegularItemId(saved.report, item);
+    if (!regularItemId) {
+      const refreshed = await loadForEdit({ quiet: true, reportId: saved.reportId });
+      regularItemId = resolveSavedRegularItemId(refreshed, item);
+    }
+    if (!regularItemId) {
+      setError("报销项目尚未保存完成，请稍后重试上传");
+      return;
+    }
     const uploaded = [];
     const issues = [];
     let successfulFileCount = 0;
@@ -407,11 +448,20 @@ export default function RegularReportEdit() {
     }
   };
 
-  const handleEvidenceFiles = async (regularItemId, files) => {
+  const handleEvidenceFiles = async (item, files) => {
     const fileList = Array.from(files || []);
-    if (fileList.length === 0 || readonly || !regularItemId) return;
+    if (fileList.length === 0 || readonly || !item) return;
     const saved = await ensureSaved({ allowEmptyCreate: true });
     if (!saved.ok || !saved.reportId) return;
+    let regularItemId = resolveSavedRegularItemId(saved.report, item);
+    if (!regularItemId) {
+      const refreshed = await loadForEdit({ quiet: true, reportId: saved.reportId });
+      regularItemId = resolveSavedRegularItemId(refreshed, item);
+    }
+    if (!regularItemId) {
+      setError("报销项目尚未保存完成，请稍后重试上传");
+      return;
+    }
     let uploadedCount = 0;
     const issues = [];
     setError("");

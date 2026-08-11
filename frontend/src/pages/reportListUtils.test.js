@@ -14,9 +14,7 @@ import {
   reportTableActionCellSx,
   reportTableDateCellSx,
   reportTableHeadSx,
-  reportTableMoreActionButtonSx,
   reportTableNoWrapCellSx,
-  reportTablePrimaryActionButtonSx,
   reportTablePrimaryActionsSx,
   reportTableTrashActionCellSx,
   toggleCurrentPageSelection,
@@ -67,7 +65,7 @@ test("report filter toolbar wraps controls without squeezing button content", ()
   assert.equal(reportFilterMoreButtonSx.minWidth, "max-content");
 });
 
-test("report table keeps dense semantic columns and primary actions on one line", () => {
+test("report table keeps semantic columns and icon actions on one line", () => {
   assert.equal(reportTableHeadSx["& .MuiTableCell-root"].whiteSpace, "nowrap");
   assert.equal(reportTableDateCellSx.minWidth, 112);
   assert.equal(reportTableDateCellSx.whiteSpace, "nowrap");
@@ -75,20 +73,16 @@ test("report table keeps dense semantic columns and primary actions on one line"
   assert.equal(reportTableActionCellSx.minWidth, 192);
   assert.equal(reportTableTrashActionCellSx.minWidth, 112);
   assert.equal(reportTablePrimaryActionsSx.flexWrap, "nowrap");
-  assert.equal(reportTablePrimaryActionButtonSx.minWidth, 0);
-  assert.equal(reportTableMoreActionButtonSx.width, 32);
 });
 
-test("report row interaction policy keeps recycle-bin status read-only and purge in overflow", () => {
+test("report row interaction policy keeps recycle-bin status read-only and exposes direct actions", () => {
   assert.deepEqual(getReportRowInteractionPolicy(true), {
     statusMutable: false,
-    primaryActions: ["restore"],
-    overflowActions: ["purge"],
+    primaryActions: ["restore", "purge"],
   });
   assert.deepEqual(getReportRowInteractionPolicy(false), {
     statusMutable: true,
-    primaryActions: ["preview", "download"],
-    overflowActions: ["open", "delete"],
+    primaryActions: ["open", "preview", "download", "delete"],
   });
 });
 

@@ -102,7 +102,8 @@ function Sidebar() {
       sx={{
         width: { xs: "100%", md: collapsed ? SIDEBAR_COLLAPSED_WIDTH : SIDEBAR_EXPANDED_WIDTH },
         flexShrink: 0,
-        minHeight: { md: "100vh" },
+        alignSelf: { md: "flex-start" },
+        height: { md: "100vh" },
         borderRadius: 0,
         borderRight: { md: 1 },
         borderBottom: { xs: 1, md: 0 },
@@ -112,6 +113,7 @@ function Sidebar() {
         top: 0,
         zIndex: 1,
         overflowX: "hidden",
+        overflowY: { md: "auto" },
         transition: (theme) => theme.transitions.create("width", { duration: theme.transitions.duration.shorter }),
       }}
     >

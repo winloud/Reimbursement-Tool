@@ -88,21 +88,62 @@ const listItemNames = (report) => {
 const reportDocumentCount = (report) =>
   Number(report.document_count ?? report.regular_document_count ?? report.invoice_count ?? 0);
 
+const REGULAR_SUMMARY_CARD_META = {
+  total_amount: { color: "#2454A6", label: "总览", secondary: "常规报销合计" },
+  report_count: { color: "#3A668F", label: "数量", secondary: "常规报销单数" },
+  pending_amount: { color: "#B66B18", label: "待处理", secondary: "当前待报销金额" },
+  pending_count: { color: "#B66B18", label: "数量", secondary: "当前待处理报销单" },
+};
+
 function SummaryCards({ cards, loading, unavailable = false }) {
   return (
-    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: { xs: 1, sm: 1.5 } }}>
-      {cards.map((card) => (
-        <Card sx={{ height: "100%", minWidth: 0 }} key={card.key}>
-          <CardContent sx={{ p: { xs: 1.5, sm: 2 }, "&:last-child": { pb: { xs: 1.5, sm: 2 } } }}>
-            <Typography variant="caption" color="text.secondary" fontWeight={800}>
-              {card.title}
-            </Typography>
-            <Typography variant="h6" fontWeight={900} sx={{ mt: 0.5, whiteSpace: "nowrap", fontSize: { xs: "1.05rem", sm: "1.25rem" } }}>
-              {loading || unavailable ? "—" : card.value}
-            </Typography>
-          </CardContent>
-        </Card>
-      ))}
+    <Box sx={{ display: "grid", gridTemplateColumns: { xs: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, minmax(0, 1fr))" }, gap: 2.5 }}>
+      {cards.map((card) => {
+        const meta = REGULAR_SUMMARY_CARD_META[card.key] || REGULAR_SUMMARY_CARD_META.total_amount;
+        return (
+          <Card
+            key={card.key}
+            sx={{
+              height: "100%",
+              minWidth: 0,
+              borderLeft: "5px solid",
+              borderLeftColor: meta.color,
+            }}
+          >
+            <CardContent sx={{ height: "100%" }}>
+              <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 1 }}>
+                <Typography color="text.secondary" fontWeight={800}>
+                  {card.title}
+                </Typography>
+                <Typography
+                  variant="caption"
+                  sx={{
+                    color: meta.color,
+                    bgcolor: "rgba(36, 84, 166, 0.08)",
+                    borderRadius: 1,
+                    px: 0.75,
+                    py: 0.25,
+                    fontWeight: 900,
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {meta.label}
+                </Typography>
+              </Stack>
+              <Typography
+                variant="h5"
+                fontWeight={900}
+                sx={{ mb: 1, whiteSpace: "nowrap", fontFamily: '"DIN Alternate", "Roboto Mono", Consolas, monospace' }}
+              >
+                {loading || unavailable ? "—" : card.value}
+              </Typography>
+              <Typography variant="body2" color="text.secondary">
+                {meta.secondary}
+              </Typography>
+            </CardContent>
+          </Card>
+        );
+      })}
     </Box>
   );
 }
@@ -110,7 +151,7 @@ function SummaryCards({ cards, loading, unavailable = false }) {
 function ReportActions({ report, isTrash, busy, onOpen, onPreview, onDownload, onDelete, onRestore, onPurge }) {
   if (isTrash) {
     return (
-      <Stack direction="row" spacing={0.25} justifyContent="flex-end">
+      <Stack direction="row" spacing={0.25} justifyContent="flex-end" onClick={(event) => event.stopPropagation()}>
         <Tooltip title="恢复">
           <IconButton size="small" disabled={busy} onClick={() => onRestore(report)} aria-label={`恢复报销单 ${report.id}`}>
             <RestoreIcon fontSize="small" />
@@ -125,7 +166,7 @@ function ReportActions({ report, isTrash, busy, onOpen, onPreview, onDownload, o
     );
   }
   return (
-    <Stack direction="row" spacing={0.15} justifyContent="flex-end">
+    <Stack direction="row" spacing={0.15} justifyContent="flex-end" onClick={(event) => event.stopPropagation()}>
       <Tooltip title={report.status === "draft" ? "编辑" : "查看"}>
         <IconButton size="small" onClick={() => onOpen(report)} aria-label={`打开报销单 ${report.id}`}>
           <EditOutlinedIcon fontSize="small" />
@@ -441,25 +482,59 @@ export default function RegularReportList() {
 
   return (
     <Stack spacing={{ xs: 2, md: 3 }}>
-      <Stack direction={{ xs: "column", md: "row" }} justifyContent="space-between" spacing={1.5}>
+      <Stack
+        direction={{ xs: "column", lg: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "stretch", lg: "center" }}
+        spacing={2}
+      >
         <Box>
-          <Typography variant="h5" fontWeight={850}>常规报销单</Typography>
-          <Typography variant="body2" color="text.secondary">管理无票和有票常规报销，出差数据不会显示在此处。</Typography>
+          <Typography variant="h5" fontWeight={700}>常规报销单</Typography>
+          <Typography color="text.secondary">管理无票和有票常规报销，出差数据不会显示在此处。</Typography>
         </Box>
-        <Stack direction="row" useFlexGap flexWrap="wrap" spacing={1} sx={{ width: { xs: "100%", sm: "auto" } }}>
-          <Button variant="outlined" startIcon={<UploadFileIcon />} onClick={() => navigate("/reports?import_data=1")}>
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(4, auto)" },
+            gap: 1,
+            alignItems: "center",
+            width: { xs: "100%", lg: "auto" },
+          }}
+        >
+          <Button
+            variant="outlined"
+            startIcon={<UploadFileIcon />}
+            onClick={() => navigate("/reports?import_data=1")}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             导入数据包
           </Button>
-          <Button variant="outlined" startIcon={<FileDownloadIcon />} disabled={exporting || isTrash} onClick={handleExport}>
+          <Button
+            variant="outlined"
+            startIcon={<FileDownloadIcon />}
+            disabled={exporting || isTrash}
+            onClick={handleExport}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             {exporting ? "导出中..." : "导出当前筛选"}
           </Button>
-          <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={() => navigate("/regular-reports/new?mode=no_invoice")}>
+          <Button
+            variant="outlined"
+            startIcon={<AddIcon />}
+            onClick={() => navigate("/regular-reports/new?mode=no_invoice")}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             新建无票报销
           </Button>
-          <Button fullWidth variant="contained" startIcon={<AddIcon />} onClick={() => navigate("/regular-reports/new?mode=invoice")}>
+          <Button
+            variant="contained"
+            startIcon={<AddIcon />}
+            onClick={() => navigate("/regular-reports/new?mode=invoice")}
+            sx={{ minWidth: 0, px: 1.5, whiteSpace: "nowrap" }}
+          >
             新建有票报销
           </Button>
-        </Stack>
+        </Box>
       </Stack>
 
       <SummaryCards cards={summaryCards} loading={summaryLoading} unavailable={Boolean(summaryError)} />
@@ -548,12 +623,11 @@ export default function RegularReportList() {
           <>
             <Box sx={{ display: { xs: "none", md: "block" } }}>
               <TableContainer>
-                <Table size="small">
+                <Table>
                   <TableHead>
                     <TableRow>
                       <TableCell padding="checkbox"><Checkbox checked={allSelected} indeterminate={!allSelected && partlySelected} onChange={(event) => togglePage(event.target.checked)} inputProps={{ "aria-label": "选择当前页" }} /></TableCell>
                       <TableCell>报销日期</TableCell>
-                      <TableCell>报销人</TableCell>
                       <TableCell>模式</TableCell>
                       <TableCell sx={{ minWidth: 180 }}>项目摘要</TableCell>
                       <TableCell align="right">总金额</TableCell>
@@ -564,10 +638,17 @@ export default function RegularReportList() {
                   </TableHead>
                   <TableBody>
                     {items.map((report) => (
-                      <TableRow key={report.id} hover selected={selectedIds.includes(report.id)}>
-                        <TableCell padding="checkbox"><Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleReport(report.id)} inputProps={{ "aria-label": `选择报销单 ${report.id}` }} /></TableCell>
+                      <TableRow
+                        key={report.id}
+                        hover
+                        selected={selectedIds.includes(report.id)}
+                        onClick={() => {
+                          if (!isTrash) navigate(`/regular-reports/${report.id}/edit`);
+                        }}
+                        sx={!isTrash ? { cursor: "pointer" } : undefined}
+                      >
+                        <TableCell padding="checkbox" onClick={(event) => event.stopPropagation()}><Checkbox checked={selectedIds.includes(report.id)} onChange={() => toggleReport(report.id)} inputProps={{ "aria-label": `选择报销单 ${report.id}` }} /></TableCell>
                         <TableCell sx={{ whiteSpace: "nowrap" }}>{report.report_date || "—"}</TableCell>
-                        <TableCell sx={{ whiteSpace: "nowrap", fontWeight: 700 }}>{report.employee_name || "—"}</TableCell>
                         <TableCell><Chip size="small" variant="outlined" label={getRegularModeLabel(report.regular_mode)} /></TableCell>
                         <TableCell><Tooltip title={listItemNames(report)}><Typography variant="body2" noWrap sx={{ maxWidth: 260 }}>{listItemNames(report)}</Typography></Tooltip></TableCell>
                         <TableCell align="right" sx={{ fontWeight: 800, whiteSpace: "nowrap" }}>{formatRegularAmount(report.total_amount)}</TableCell>
@@ -577,7 +658,7 @@ export default function RegularReportList() {
                             <ReportStatusStepControl reportId={report.id} status={report.status} loading={statusUpdatingId === report.id} disabled={busy || statusUpdatingId !== null} onStatusChange={(target) => handleStatusUpdate(report, target)} />
                           )}
                         </TableCell>
-                        <TableCell align="right"><ReportActions report={report} {...actionProps} /></TableCell>
+                        <TableCell align="right" onClick={(event) => event.stopPropagation()}><ReportActions report={report} {...actionProps} /></TableCell>
                       </TableRow>
                     ))}
                   </TableBody>
@@ -587,7 +668,14 @@ export default function RegularReportList() {
 
             <Stack spacing={1} sx={{ display: { xs: "flex", md: "none" }, p: 1 }}>
               {items.map((report) => (
-                <Card key={report.id} variant="outlined" sx={{ bgcolor: selectedIds.includes(report.id) ? "primary.50" : "background.paper" }}>
+                <Card
+                  key={report.id}
+                  variant="outlined"
+                  onClick={() => {
+                    if (!isTrash) navigate(`/regular-reports/${report.id}/edit`);
+                  }}
+                  sx={{ bgcolor: selectedIds.includes(report.id) ? "primary.50" : "background.paper", cursor: !isTrash ? "pointer" : undefined }}
+                >
                   <CardContent sx={{ p: 1.25, "&:last-child": { pb: 1.25 } }}>
                     <Stack spacing={1}>
                       <Stack direction="row" alignItems="flex-start" spacing={1}>
@@ -595,15 +683,15 @@ export default function RegularReportList() {
                           size="small"
                           checked={selectedIds.includes(report.id)}
                           onChange={() => toggleReport(report.id)}
+                          onClick={(event) => event.stopPropagation()}
                           inputProps={{ "aria-label": `选择报销单 ${report.id}` }}
                           sx={{ p: 0.25 }}
                         />
                         <Box sx={{ minWidth: 0, flex: 1 }}>
                           <Stack direction="row" justifyContent="space-between" spacing={1}>
-                            <Typography fontWeight={800} noWrap>{report.employee_name || "未填写报销人"}</Typography>
+                            <Typography fontWeight={800} noWrap>{listItemNames(report)}</Typography>
                             <Typography variant="body2" color="text.secondary" sx={{ whiteSpace: "nowrap" }}>{report.report_date || "—"}</Typography>
                           </Stack>
-                          <Typography variant="body2" color="text.secondary" noWrap sx={{ mt: 0.25 }}>{listItemNames(report)}</Typography>
                         </Box>
                       </Stack>
                       <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>

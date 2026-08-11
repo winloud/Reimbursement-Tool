@@ -134,6 +134,7 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   const travelEditSource = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
   const editSource = readFileSync(new URL("./RegularReportEdit.jsx", import.meta.url), "utf8");
   const viewSource = readFileSync(new URL("./RegularReportEditView.jsx", import.meta.url), "utf8");
+  const evidenceSource = readFileSync(new URL("../features/regular-report/RegularEvidenceSection.jsx", import.meta.url), "utf8");
   const invoiceViewerSource = readFileSync(new URL("../components/InvoiceViewer.jsx", import.meta.url), "utf8");
   assert.ok(appSource.indexOf('label: "出差报销单"') < appSource.indexOf('key: "report-type-divider"'));
   assert.ok(appSource.indexOf('key: "report-type-divider"') < appSource.indexOf('label: "常规报销单"'));
@@ -163,5 +164,9 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.equal((regularListSource.match(/`选择报销单 \$\{report\.id\}`/g) || []).length, 2);
   assert.match(viewSource, /InvoiceDropzone/);
   assert.match(viewSource, /RegularEvidenceSection/);
+  assert.ok(viewSource.indexOf("invoices.map") < viewSource.indexOf("!readonly && uploadSlot"));
+  assert.ok(evidenceSource.indexOf("attachments.map") < evidenceSource.indexOf("<FileUploadPlaceholder"));
+  assert.match(evidenceSource, /attachments\.length === 0 && disabled/);
+  assert.match(evidenceSource, /暂无报销凭据/);
   assert.doesNotMatch(viewSource, /PaperInvoiceEntry/);
 });

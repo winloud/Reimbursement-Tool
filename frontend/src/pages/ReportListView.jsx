@@ -33,8 +33,11 @@ import {
 } from "@mui/material";
 import FileDownloadIcon from "@mui/icons-material/FileDownload";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
+import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
+import DownloadIcon from "@mui/icons-material/Download";
+import EditOutlinedIcon from "@mui/icons-material/EditOutlined";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import MoreVertIcon from "@mui/icons-material/MoreVert";
+import RestoreIcon from "@mui/icons-material/Restore";
 import SearchIcon from "@mui/icons-material/Search";
 import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
@@ -54,9 +57,7 @@ import {
   reportTableActionCellSx,
   reportTableDateCellSx,
   reportTableHeadSx,
-  reportTableMoreActionButtonSx,
   reportTableNoWrapCellSx,
-  reportTablePrimaryActionButtonSx,
   reportTablePrimaryActionsSx,
   reportTableTrashActionCellSx,
 } from "./reportListUtils";
@@ -197,15 +198,7 @@ export default function ReportListView(props) {
     handleExecuteImport,
   } = props;
 
-  const [rowActionMenu, setRowActionMenu] = useState({ anchorEl: null, report: null, mode: null });
-  const rowActionReport = rowActionMenu.report;
-  const rowActionMenuOpen = Boolean(rowActionMenu.anchorEl && rowActionReport);
   const rowInteractionPolicy = getReportRowInteractionPolicy(isTrash);
-  const rowActionMenuMode = rowInteractionPolicy.overflowActions.includes("purge") ? "trash" : "active";
-
-  const closeRowActionMenu = () => {
-    setRowActionMenu({ anchorEl: null, report: null, mode: null });
-  };
 
   return (
     <Stack spacing={3}>
@@ -609,60 +602,71 @@ export default function ReportListView(props) {
                         <Box sx={reportTablePrimaryActionsSx}>
                           {rowInteractionPolicy.primaryActions.includes("restore") ? (
                             <>
-                              <Button
-                                size="small"
-                                onClick={() => handleRestoreReport(report)}
-                                disabled={deleting}
-                                sx={reportTablePrimaryActionButtonSx}
-                              >
-                                恢复
-                              </Button>
-                              <Tooltip title="更多操作">
+                              <Tooltip title="恢复">
                                 <IconButton
                                   size="small"
-                                  aria-label={`更多操作：回收站报销单 ${report.id}`}
-                                  aria-haspopup="menu"
-                                  aria-controls={rowActionMenuOpen && rowActionReport?.id === report.id ? "report-row-action-menu" : undefined}
-                                  aria-expanded={rowActionMenuOpen && rowActionReport?.id === report.id ? "true" : undefined}
-                                  onClick={(event) => setRowActionMenu({ anchorEl: event.currentTarget, report, mode: rowActionMenuMode })}
-                                  sx={reportTableMoreActionButtonSx}
+                                  disabled={deleting}
+                                  onClick={() => handleRestoreReport(report)}
+                                  aria-label={`恢复报销单 ${report.id}`}
                                 >
-                                  <MoreVertIcon fontSize="small" />
+                                  <RestoreIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="彻底删除">
+                                <IconButton
+                                  size="small"
+                                  color="error"
+                                  disabled={deleting}
+                                  onClick={() => setPendingPurge(report)}
+                                  aria-label={`彻底删除报销单 ${report.id}`}
+                                >
+                                  <DeleteOutlineIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
                             </>
                           ) : (
                             <>
-                              <Button
-                                size="small"
-                                startIcon={<VisibilityIcon />}
-                                onClick={() => handlePreviewReport(report)}
-                                sx={reportTablePrimaryActionButtonSx}
-                              >
-                                预览
-                              </Button>
-                              <Button
-                                size="small"
-                                startIcon={<FileDownloadIcon />}
-                                onClick={() => handleDownloadReport(report)}
-                                disabled={downloadingId === report.id}
-                                sx={reportTablePrimaryActionButtonSx}
-                              >
-                                {downloadingId === report.id ? "下载中" : "下载"}
-                              </Button>
-                              <Tooltip title="更多操作">
+                              <Tooltip title={report.status === "draft" ? "编辑" : "查看"}>
                                 <IconButton
                                   size="small"
-                                  aria-label={`更多操作：报销单 ${report.id}`}
-                                  aria-haspopup="menu"
-                                  aria-controls={rowActionMenuOpen && rowActionReport?.id === report.id ? "report-row-action-menu" : undefined}
-                                  aria-expanded={rowActionMenuOpen && rowActionReport?.id === report.id ? "true" : undefined}
-                                  onClick={(event) => setRowActionMenu({ anchorEl: event.currentTarget, report, mode: rowActionMenuMode })}
-                                  sx={reportTableMoreActionButtonSx}
+                                  onClick={() => navigate(`/reports/${report.id}/edit`)}
+                                  aria-label={`打开报销单 ${report.id}`}
                                 >
-                                  <MoreVertIcon fontSize="small" />
+                                  <EditOutlinedIcon fontSize="small" />
                                 </IconButton>
                               </Tooltip>
+                              <Tooltip title="预览 PDF">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handlePreviewReport(report)}
+                                  aria-label={`预览报销单 ${report.id}`}
+                                >
+                                  <VisibilityIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="下载 PDF">
+                                <IconButton
+                                  size="small"
+                                  onClick={() => handleDownloadReport(report)}
+                                  disabled={downloadingId === report.id}
+                                  aria-label={`下载报销单 ${report.id}`}
+                                >
+                                  <DownloadIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              {report.status === "draft" && (
+                                <Tooltip title="放入回收站">
+                                  <IconButton
+                                    size="small"
+                                    color="error"
+                                    disabled={deleting}
+                                    onClick={() => setPendingDelete(report)}
+                                    aria-label={`删除报销单 ${report.id}`}
+                                  >
+                                    <DeleteOutlineIcon fontSize="small" />
+                                  </IconButton>
+                                </Tooltip>
+                              )}
                             </>
                           )}
                         </Box>
@@ -689,53 +693,6 @@ export default function ReportListView(props) {
           labelRowsPerPage="每页行数"
         />
       </Card>
-
-      <Menu
-        id="report-row-action-menu"
-        anchorEl={rowActionMenu.anchorEl}
-        open={rowActionMenuOpen}
-        onClose={closeRowActionMenu}
-        MenuListProps={{
-          "aria-label": rowActionReport ? `报销单 ${rowActionReport.id} 的更多操作` : "报销单更多操作",
-        }}
-      >
-        {rowActionMenu.mode === "trash" ? (
-          <MenuItem
-            disabled={!rowActionReport || deleting}
-            onClick={() => {
-              const report = rowActionReport;
-              closeRowActionMenu();
-              if (report) setPendingPurge(report);
-            }}
-            sx={{ color: "error.main" }}
-          >
-            彻底删除
-          </MenuItem>
-        ) : (
-          <>
-            <MenuItem
-              onClick={() => {
-                const report = rowActionReport;
-                closeRowActionMenu();
-                if (report) navigate(`/reports/${report.id}/edit`);
-              }}
-            >
-              {rowActionReport?.status === "draft" ? "编辑" : "查看"}
-            </MenuItem>
-            <MenuItem
-              disabled={!rowActionReport || rowActionReport.status !== "draft" || deleting}
-              onClick={() => {
-                const report = rowActionReport;
-                closeRowActionMenu();
-                if (report) setPendingDelete(report);
-              }}
-              sx={{ color: "error.main" }}
-            >
-              删除
-            </MenuItem>
-          </>
-        )}
-      </Menu>
 
       <Menu
         anchorEl={batchStatusMenuAnchor}

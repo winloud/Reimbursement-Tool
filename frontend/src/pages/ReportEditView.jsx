@@ -229,7 +229,7 @@ const EDIT_SECTIONS = [
 
 const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
 
-function InvoiceList({ items, readonly, onSelect, onDelete }) {
+function InvoiceList({ items, readonly, uploadSlot, onSelect, onDelete }) {
   return (
     <Stack spacing={0.5}>
       <Stack direction="row" alignItems="center" spacing={0.5}>
@@ -253,7 +253,7 @@ function InvoiceList({ items, readonly, onSelect, onDelete }) {
         </Box>
         <Divider sx={{ flex: 1 }} />
       </Stack>
-      {items.length === 0 ? (
+      {items.length === 0 && readonly ? (
         <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
           暂无发票
         </Typography>
@@ -276,6 +276,8 @@ function InvoiceList({ items, readonly, onSelect, onDelete }) {
                 variant="outlined"
                 sx={{
                   minWidth: 0,
+                  minHeight: 54,
+                  height: "100%",
                   px: 0.75,
                   py: 0.5,
                   borderRadius: 1,
@@ -340,6 +342,7 @@ function InvoiceList({ items, readonly, onSelect, onDelete }) {
               </Paper>
             );
           })}
+          {!readonly && uploadSlot}
         </Box>
       )}
     </Stack>
@@ -484,10 +487,11 @@ export default function ReportEditView({
     if (actionId === "delete") removeTrip(tripIndex);
   };
 
-  const renderInvoiceList = (items) => (
+  const renderInvoiceList = (items, uploadSlot) => (
     <InvoiceList
       items={items}
       readonly={readonly}
+      uploadSlot={uploadSlot}
       onSelect={onSelectInvoice}
       onDelete={handleDeleteInvoice}
     />
@@ -1033,20 +1037,22 @@ export default function ReportEditView({
                                     </Typography>
                                   )}
                                 </Stack>
-                                <InvoiceDropzone
-                                  disabled={uploadDisabled}
-                                  uploading={uploading}
-                                  onPasteError={onUploadError}
-                                  onFiles={(files) =>
-                                    handleFilesUpload({
-                                      files,
-                                      expenseCategory: "transport_fare",
-                                      tripId: trip.id,
-                                      key: uploadKey,
-                                    })
-                                  }
-                                />
-                                {renderInvoiceList(tripInvoices)}
+                                {renderInvoiceList(
+                                  tripInvoices,
+                                  <InvoiceDropzone
+                                    disabled={uploadDisabled}
+                                    uploading={uploading}
+                                    onPasteError={onUploadError}
+                                    onFiles={(files) =>
+                                      handleFilesUpload({
+                                        files,
+                                        expenseCategory: "transport_fare",
+                                        tripId: trip.id,
+                                        key: uploadKey,
+                                      })
+                                    }
+                                  />,
+                                )}
                                 {(!readonly || hasPaperInvoice(trip)) && (
                                   <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
                                     <PaperInvoiceEntry
@@ -1210,19 +1216,21 @@ export default function ReportEditView({
                                 }}
                               />
                             )}
-                            <InvoiceDropzone
-                              disabled={readonly || saveState === "saving"}
-                              uploading={uploading}
-                              onPasteError={onUploadError}
-                              onFiles={(files) =>
-                                handleFilesUpload({
-                                  files,
-                                  expenseCategory: category.value,
-                                  key: uploadKey,
-                                })
-                              }
-                            />
-                            {renderInvoiceList(categoryInvoices)}
+                            {renderInvoiceList(
+                              categoryInvoices,
+                              <InvoiceDropzone
+                                disabled={readonly || saveState === "saving"}
+                                uploading={uploading}
+                                onPasteError={onUploadError}
+                                onFiles={(files) =>
+                                  handleFilesUpload({
+                                    files,
+                                    expenseCategory: category.value,
+                                    key: uploadKey,
+                                  })
+                                }
+                              />,
+                            )}
                             {(!readonly || hasPaperInvoice(item)) && (
                               <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
                                 <PaperInvoiceEntry

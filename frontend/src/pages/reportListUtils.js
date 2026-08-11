@@ -77,33 +77,15 @@ export const reportTablePrimaryActionsSx = {
   whiteSpace: "nowrap",
 };
 
-export const reportTablePrimaryActionButtonSx = {
-  minWidth: 0,
-  px: 0.75,
-  whiteSpace: "nowrap",
-  "& .MuiButton-startIcon": {
-    mr: 0.5,
-  },
-};
-
-export const reportTableMoreActionButtonSx = {
-  width: 32,
-  height: 32,
-  p: 0,
-  flex: "0 0 auto",
-};
-
 export const getReportRowInteractionPolicy = (isTrash) =>
   isTrash
     ? {
         statusMutable: false,
-        primaryActions: ["restore"],
-        overflowActions: ["purge"],
+        primaryActions: ["restore", "purge"],
       }
     : {
         statusMutable: true,
-        primaryActions: ["preview", "download"],
-        overflowActions: ["open", "delete"],
+        primaryActions: ["open", "preview", "download", "delete"],
       };
 
 export const toggleCurrentPageSelection = (selectedIds, pageIds, checked) => {

@@ -139,6 +139,10 @@ describe("report edit utilities", () => {
       new URL("../features/report-edit/ReportAttachmentSection.jsx", import.meta.url),
       "utf8",
     );
+    const uploadPlaceholderSource = readFileSync(
+      new URL("../components/FileUploadPlaceholder.jsx", import.meta.url),
+      "utf8",
+    );
     const handlerStart = source.indexOf("const handleAttachmentFilesUpload = async");
     const handlerEnd = source.indexOf("const handleDeleteReportAttachment", handlerStart);
     const handler = source.slice(handlerStart, handlerEnd);
@@ -151,11 +155,15 @@ describe("report edit utilities", () => {
     assert.match(attachmentSource, /<Stack\s+id="report-attachment-section"[\s\S]*?非发票附件[\s\S]*?<Paper variant="outlined"/);
     assert.match(attachmentSource, /不计入发票数量，导出时排在全部发票之后/);
     assert.match(attachmentSource, /暂无非发票附件/);
-    assert.match(attachmentSource, /const dropzoneConfirm = keyframes/);
-    assert.match(attachmentSource, /transform: activeVisual \? "translateY\(-2px\)"/);
-    assert.match(attachmentSource, /animation: received \? `\$\{dropzoneConfirm\} 480ms ease-out`/);
-    assert.match(attachmentSource, /transition: activeVisual \? "transform 700ms ease"/);
-    assert.match(attachmentSource, /playReceiveFeedback\(\);\s*onFiles\(event\.dataTransfer\.files\)/);
+    assert.ok(attachmentSource.indexOf("attachments.map") < attachmentSource.indexOf("<FileUploadPlaceholder"));
+    assert.match(uploadPlaceholderSource, /const uploadConfirm = keyframes/);
+    assert.match(uploadPlaceholderSource, /transform: activeVisual \? "translateY\(-2px\)"/);
+    assert.match(uploadPlaceholderSource, /animation: received \? `\$\{uploadConfirm\} 480ms ease-out`/);
+    assert.match(uploadPlaceholderSource, /transition: activeVisual \? "transform 700ms ease"/);
+    assert.match(uploadPlaceholderSource, /submitFiles\(event\.dataTransfer\.files\)/);
+    assert.match(uploadPlaceholderSource, /event\.currentTarget\.focus\(\)/);
+    assert.match(uploadPlaceholderSource, /<Button component="label"/);
+    assert.match(uploadPlaceholderSource, /Ctrl\+V/);
   });
 
   it("accepts supported invoice files from clipboard items or file fallback", () => {

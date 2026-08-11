@@ -25,13 +25,14 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
+import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DownloadIcon from "@mui/icons-material/Download";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import SaveOutlinedIcon from "@mui/icons-material/SaveOutlined";
+import SaveIcon from "@mui/icons-material/Save";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
@@ -44,43 +45,148 @@ import {
   getRegularModeLabel,
 } from "./regularReportUtils";
 
-function InvoiceRows({ invoices, readonly, onSelect, onDelete }) {
-  if (invoices.length === 0) {
-    return <Typography variant="body2" color="text.secondary">暂未上传发票</Typography>;
-  }
+const repeatedCardGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
+  gap: { xs: 2, md: 2.5 },
+  alignItems: "stretch",
+};
+
+function InvoiceRows({ invoices, readonly, uploadSlot, onSelect, onDelete }) {
   return (
     <Stack spacing={0.5}>
-      {invoices.map((invoice) => (
-        <Paper key={invoice.id} variant="outlined" sx={{ px: 1, py: 0.6, bgcolor: "#F8FAFC" }}>
-          <Stack direction="row" alignItems="center" spacing={0.75} useFlexGap flexWrap="wrap" sx={{ minWidth: 0 }}>
-            <Box sx={{ minWidth: 88, flex: "1 1 120px" }}>
-              <Typography variant="body2" fontWeight={700} noWrap>
-                {invoice.original_filename || invoice.file_name || invoice.invoice_no || `发票 #${invoice.id}`}
-              </Typography>
-              <Typography variant="caption" color="text.secondary">
-                {invoice.invoice_date || "日期待确认"}
-              </Typography>
-            </Box>
-            <Typography variant="body2" fontWeight={800} sx={{ whiteSpace: "nowrap" }}>
-              {formatRegularAmount(invoice.amount)}
-            </Typography>
-            <Chip
-              size="small"
-              color={invoice.amount_confirmed ? "success" : "warning"}
-              label={invoice.amount_confirmed ? "已确认" : "待确认"}
-            />
-            <Button size="small" onClick={() => onSelect(invoice)}>
-              {readonly ? "查看" : "核验"}
-            </Button>
-            {!readonly && (
-              <IconButton size="small" color="error" onClick={() => onDelete(invoice.id)} aria-label={`删除发票 ${invoice.id}`}>
-                <DeleteOutlineIcon fontSize="small" />
-              </IconButton>
-            )}
-          </Stack>
-        </Paper>
-      ))}
+      <Stack direction="row" alignItems="center" spacing={0.5}>
+        <Typography variant="caption" fontWeight={800} color="text.secondary">
+          已上传发票
+        </Typography>
+        <Box
+          sx={{
+            px: 0.625,
+            py: 0,
+            borderRadius: 999,
+            bgcolor: "#EEF1F4",
+            color: "text.secondary",
+            fontSize: 11,
+            fontWeight: 700,
+            lineHeight: 1.5,
+            whiteSpace: "nowrap",
+          }}
+        >
+          {invoices.length} 张
+        </Box>
+        <Divider sx={{ flex: 1 }} />
+      </Stack>
+      {invoices.length === 0 && readonly ? (
+        <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
+          暂无发票
+        </Typography>
+      ) : (
+        <Box
+          sx={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+            gap: 0.5,
+            alignItems: "stretch",
+          }}
+        >
+          {invoices.map((invoice) => {
+            const invoiceNumber = invoice.invoice_no || "无发票号码";
+            const confirmationLabel = invoice.amount_confirmed ? "已确认" : "待确认";
+            const fileType = String(invoice.file_type || "file").toUpperCase();
+
+            return (
+              <Paper
+                key={invoice.id}
+                variant="outlined"
+                sx={{
+                  minWidth: 0,
+                  minHeight: 54,
+                  height: "100%",
+                  px: 0.75,
+                  py: 0.5,
+                  borderRadius: 1,
+                  bgcolor: "#F8FAFC",
+                  borderColor: "divider",
+                  borderLeft: 3,
+                  borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
+                }}
+              >
+                <Stack spacing={0.125} sx={{ minWidth: 0 }}>
+                  <Stack direction="row" spacing={0.5} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
+                    <Tooltip title={formatRegularAmount(invoice.amount)}>
+                      <Typography
+                        variant="body2"
+                        fontWeight={800}
+                        noWrap
+                        sx={{ fontVariantNumeric: "tabular-nums", lineHeight: 1.2, minWidth: 0, maxWidth: "100%" }}
+                      >
+                        {formatRegularAmount(invoice.amount)}
+                      </Typography>
+                    </Tooltip>
+                    <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
+                      <Box component="span" sx={{ fontWeight: 700 }}>{fileType}</Box>
+                      <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>·</Box>
+                      <Box component="span" color={invoice.amount_confirmed ? "success.dark" : "warning.dark"} sx={{ fontWeight: 700 }}>
+                        {confirmationLabel}
+                      </Box>
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
+                    <Tooltip title={invoiceNumber}>
+                      <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
+                        {invoiceNumber}
+                      </Typography>
+                    </Tooltip>
+                    <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
+                      <Tooltip title="查看发票">
+                        <IconButton size="small" aria-label="查看发票" onClick={() => onSelect(invoice)}>
+                          <VisibilityIcon fontSize="small" />
+                        </IconButton>
+                      </Tooltip>
+                      <Tooltip title="删除发票">
+                        <span>
+                          <IconButton
+                            size="small"
+                            color="error"
+                            aria-label="删除发票"
+                            disabled={readonly}
+                            onClick={() => onDelete(invoice.id)}
+                          >
+                            <DeleteIcon fontSize="small" />
+                          </IconButton>
+                        </span>
+                      </Tooltip>
+                    </Stack>
+                  </Stack>
+                </Stack>
+              </Paper>
+            );
+          })}
+          {!readonly && uploadSlot}
+        </Box>
+      )}
     </Stack>
+  );
+}
+
+function AddRegularItemPlaceholder({ onClick }) {
+  return (
+    <Button
+      fullWidth
+      variant="outlined"
+      startIcon={<AddIcon />}
+      onClick={onClick}
+      sx={{
+        minHeight: { xs: 96, md: 132 },
+        borderStyle: "dashed",
+        borderColor: "divider",
+        bgcolor: "#F8FAFC",
+        color: "text.secondary",
+        "&:hover": { borderStyle: "dashed", borderColor: "primary.main", bgcolor: "primary.50" },
+      }}
+    >
+      添加报销项目
+    </Button>
   );
 }
 
@@ -96,7 +202,6 @@ function RegularItemCard({
   onUpdate,
   onMove,
   onDelete,
-  onSave,
   onInvoiceFiles,
   onEvidenceFiles,
   onSelectInvoice,
@@ -110,7 +215,7 @@ function RegularItemCard({
 
   return (
     <Accordion
-      defaultExpanded={index === 0}
+      defaultExpanded={index === 0 || !item.id}
       disableGutters
       sx={{
         border: 1,
@@ -118,6 +223,7 @@ function RegularItemCard({
         borderRadius: "8px !important",
         overflow: "hidden",
         boxShadow: "none",
+        height: "100%",
         "&::before": { display: "none" },
       }}
     >
@@ -199,32 +305,28 @@ function RegularItemCard({
                 {mode === "invoice" ? "金额由已确认发票自动汇总" : "凭据可选，页数自动计入单据张数"}
               </Typography>
             </Stack>
-            {!item.id ? (
-              <Alert
-                severity="info"
-                action={!readonly ? <Button size="small" onClick={onSave}>立即保存</Button> : undefined}
-              >
-                项目保存并获得编号后开放上传。
-              </Alert>
-            ) : mode === "invoice" ? (
-              <Stack spacing={1}>
-                {!readonly && (
+            {mode === "invoice" ? (
+              <InvoiceRows
+                invoices={derived.invoices}
+                readonly={readonly}
+                uploadSlot={
                   <InvoiceDropzone
                     disabled={readonly}
                     uploading={uploading && uploadState?.kind === "invoice"}
-                    onFiles={(files) => onInvoiceFiles(item.id, files)}
+                    onFiles={(files) => onInvoiceFiles(item, files)}
                     onPasteError={onUploadError}
-                    hint="上传本项目发票"
+                    hint="上传发票"
                   />
-                )}
-                <InvoiceRows invoices={derived.invoices} readonly={readonly} onSelect={onSelectInvoice} onDelete={onDeleteInvoice} />
-              </Stack>
+                }
+                onSelect={onSelectInvoice}
+                onDelete={onDeleteInvoice}
+              />
             ) : (
               <RegularEvidenceSection
                 attachments={derived.attachments}
                 disabled={readonly}
                 uploading={uploading && uploadState?.kind === "evidence"}
-                onFiles={(files) => onEvidenceFiles(item.id, files)}
+                onFiles={(files) => onEvidenceFiles(item, files)}
                 onDelete={onDeleteEvidence}
                 onError={onUploadError}
               />
@@ -289,20 +391,51 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
 
   return (
     <Stack spacing={{ xs: 2, md: 2.5 }}>
-      <Stack direction="row" alignItems="center" spacing={1}>
-        <IconButton onClick={onBack} aria-label="返回常规报销单列表"><ArrowBackIcon /></IconButton>
-        <Box sx={{ minWidth: 0, flex: 1 }}>
-          <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap" useFlexGap>
-            <Typography variant="h5" fontWeight={850}>{reportId ? `常规报销单 #${reportId}` : "新建常规报销单"}</Typography>
+      <Stack
+        direction={{ xs: "column", md: "row" }}
+        justifyContent="space-between"
+        alignItems={{ xs: "stretch", md: "center" }}
+        spacing={2}
+      >
+        <Box>
+          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
+            <Typography variant="h5" fontWeight={800}>
+              {reportId ? `常规报销单 #${reportId}` : "新建常规报销单"}
+            </Typography>
             <Chip size="small" icon={<LockOutlinedIcon />} label={getRegularModeLabel(mode)} color={mode === "invoice" ? "primary" : "default"} />
-            <Chip size="small" label={statusMeta.label} sx={statusMeta.chipSx} />
+            <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
+            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
           </Stack>
-          <Typography variant="caption" color="text.secondary">报销模式创建后不可切换</Typography>
+          <Typography color="text.secondary">报销模式创建后不可切换。</Typography>
         </Box>
-        <Chip size="small" icon={saveMeta.icon} color={saveMeta.color} variant="outlined" label={saveMeta.text} sx={{ display: { xs: "none", sm: "inline-flex" } }} />
+        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ "& > .MuiButton-root": { whiteSpace: "nowrap" } }}>
+          <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={onBack}>
+            返回列表
+          </Button>
+          <Button
+            startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveIcon />}
+            variant="contained"
+            onClick={onSave}
+            disabled={readonly || saveState === "saving"}
+          >
+            手动保存
+          </Button>
+          {statusActions.map((action) => (
+            <Button
+              key={action.target}
+              variant="outlined"
+              color={action.color === "inherit" ? "inherit" : action.color}
+              onClick={() => onStatusAction(action.target)}
+              disabled={saveState === "saving"}
+            >
+              {action.label}
+            </Button>
+          ))}
+        </Stack>
       </Stack>
 
       {error && <Alert severity="error" sx={{ whiteSpace: "pre-wrap" }}>{error}</Alert>}
+      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改常规报销单内容、发票和凭据。</Alert>}
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "180px minmax(220px, 1fr)" }, gap: 1.25, alignItems: "start" }}>
         <TextField
@@ -328,42 +461,38 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
 
       <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "minmax(0, 1fr) 300px" }, gap: 2, alignItems: "start" }}>
         <Stack spacing={1.25} sx={{ minWidth: 0 }}>
-          <Stack direction="row" justifyContent="space-between" alignItems="center">
-            <Box>
-              <Typography variant="h6" fontWeight={850}>报销项目</Typography>
-              <Typography variant="body2" color="text.secondary">一行一个自定义项目，可排序并独立管理单据。</Typography>
-            </Box>
-            {!readonly && <Button variant="outlined" size="small" startIcon={<AddIcon />} onClick={onAdd}>添加项目</Button>}
-          </Stack>
-          {items.length === 0 ? (
-            <Paper variant="outlined" sx={{ py: 5, px: 2, textAlign: "center", borderStyle: "dashed" }}>
-              <Typography fontWeight={800}>尚未添加报销项目</Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>添加后可填写发生日期、名称和金额或发票。</Typography>
-              {!readonly && <Button startIcon={<AddIcon />} onClick={onAdd} sx={{ mt: 1.5 }}>添加第一个项目</Button>}
-            </Paper>
-          ) : items.map((item, index) => (
-            <RegularItemCard
-              key={item.clientKey || item.id}
-              item={item}
-              index={index}
-              totalItems={items.length}
-              mode={mode}
-              invoices={invoices}
-              attachments={attachments}
-              readonly={readonly}
-              uploadState={uploadState}
-              onUpdate={onUpdate}
-              onMove={onMove}
-              onDelete={onDelete}
-              onSave={onSave}
-              onInvoiceFiles={onInvoiceFiles}
-              onEvidenceFiles={onEvidenceFiles}
-              onSelectInvoice={onSelectInvoice}
-              onDeleteInvoice={onDeleteInvoice}
-              onDeleteEvidence={onDeleteEvidence}
-              onUploadError={onUploadError}
-            />
-          ))}
+          <Box>
+            <Typography variant="h6" fontWeight={800}>报销项目</Typography>
+            <Typography variant="body2" color="text.secondary">一行一个自定义项目，可排序并独立管理单据。</Typography>
+          </Box>
+          <Box sx={repeatedCardGridSx}>
+            {items.map((item, index) => (
+              <RegularItemCard
+                key={item.clientKey || item.id}
+                item={item}
+                index={index}
+                totalItems={items.length}
+                mode={mode}
+                invoices={invoices}
+                attachments={attachments}
+                readonly={readonly}
+                uploadState={uploadState}
+                onUpdate={onUpdate}
+                onMove={onMove}
+                onDelete={onDelete}
+                onInvoiceFiles={onInvoiceFiles}
+                onEvidenceFiles={onEvidenceFiles}
+                onSelectInvoice={onSelectInvoice}
+                onDeleteInvoice={onDeleteInvoice}
+                onDeleteEvidence={onDeleteEvidence}
+                onUploadError={onUploadError}
+              />
+            ))}
+            {!readonly && <AddRegularItemPlaceholder onClick={onAdd} />}
+            {items.length === 0 && readonly && (
+              <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>暂无报销项目。</Alert>
+            )}
+          </Box>
         </Stack>
 
         <Box sx={{ position: { lg: "sticky" }, top: { lg: 24 } }}>
@@ -376,11 +505,6 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                   <Typography variant="body2" color="text.secondary">{items.length} 个项目 · {summary.documentCount} 张单据</Typography>
                 </Box>
                 <Divider />
-                {!readonly && (
-                  <Button variant="outlined" startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveOutlinedIcon />} onClick={onSave} disabled={saveState === "saving"}>
-                    {saveState === "saving" ? "保存中" : "立即保存"}
-                  </Button>
-                )}
                 <Stack direction="row" spacing={1}>
                   <Button fullWidth variant="outlined" startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />} onClick={onPreview} disabled={pdfBusy !== ""}>
                     预览
@@ -389,12 +513,6 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                     下载
                   </Button>
                 </Stack>
-                {statusActions.length > 0 && <Divider />}
-                {statusActions.map((action) => (
-                  <Button key={action.target} color={action.color} variant={action.color === "primary" || action.color === "success" ? "contained" : "text"} onClick={() => onStatusAction(action.target)}>
-                    {action.label}
-                  </Button>
-                ))}
               </Stack>
             </CardContent>
           </Card>
