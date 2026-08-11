@@ -22,6 +22,7 @@
 - 发布治理与不可变 tag：[decisions/0003-release-governance.md](decisions/0003-release-governance.md)
 - 铁路客票文本解码与中转分组：[decisions/0004-rail-ticket-pdf-text-decoding.md](decisions/0004-rail-ticket-pdf-text-decoding.md)
 - 桌面端视口支持边界：[decisions/0005-desktop-viewport-support.md](decisions/0005-desktop-viewport-support.md)
+- 常规报销数据模型：[decisions/0006-regular-reimbursement-model.md](decisions/0006-regular-reimbursement-model.md)
 
 ## 测试依据
 - testing/

@@ -20,6 +20,7 @@ from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.report_attachment import ReportAttachment
+from backend.models.regular_item import RegularItem
 from backend.models.trip import Trip
 from backend.schemas.data_transfer import (
     DataExportRequest,
@@ -33,10 +34,15 @@ from backend.schemas.report import REPORT_STATUS_VALUES
 from backend.services.invoice_service import build_invoice_storage_path
 from backend.services.report_attachment_service import build_report_attachment_storage_path
 from backend.services.maintenance_service import create_safety_snapshot
-from backend.services.report_service import ReportFilters, list_reports, recalculate_report_totals
+from backend.services.report_service import (
+    ReportFilters,
+    ensure_report_ready_to_leave_draft,
+    list_reports,
+    recalculate_report_totals,
+)
 
-SCHEMA_VERSION = 5
-SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, 4, SCHEMA_VERSION}
+SCHEMA_VERSION = 6
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, 4, 5, SCHEMA_VERSION}
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -91,6 +97,42 @@ def _optional_nonnegative_money(value, field_label: str) -> Decimal | None:
         ) from exc
 
 
+def _positive_int(value, field_label: str, default: int | None = 1) -> int:
+    if value is None:
+        if default is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_label}必须是正整数")
+        return default
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}必须是正整数",
+        ) from exc
+    if parsed < 1 or isinstance(value, float) and not value.is_integer():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"{field_label}必须是正整数")
+    return parsed
+
+
+def _mapped_original_id(mapping: dict[int, int], value, field_label: str) -> int | None:
+    if value is None:
+        return None
+    try:
+        original_id = int(value)
+    except (TypeError, ValueError) as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}关联值无效",
+        ) from exc
+    mapped_id = mapping.get(original_id)
+    if mapped_id is None:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"{field_label}关联的明细不存在",
+        )
+    return mapped_id
+
+
 def _parse_date(value: str | None) -> date_type | None:
     if not value:
         return None
@@ -127,6 +169,8 @@ def _bytes_hash(payload: bytes) -> str:
 
 def _filters_from_export_request(payload: DataExportRequest) -> ReportFilters:
     return ReportFilters(
+        report_type=payload.report_type,
+        regular_mode=payload.regular_mode,
         report_status=payload.status,
         report_statuses=_parse_export_statuses(payload.statuses),
         report_start=payload.report_start,
@@ -188,6 +232,18 @@ def _serialize_report(report: ExpenseReport) -> dict:
         }
         for item in report.expense_items
     ]
+    regular_items = [
+        {
+            "original_id": item.id,
+            "sort_order": item.sort_order,
+            "occurred_on": _date(item.occurred_on),
+            "description": item.description,
+            "amount": _money(item.amount),
+            "document_count": item.document_count,
+            "remark": item.remark,
+        }
+        for item in sorted(report.regular_items, key=lambda item: (item.sort_order, item.id or 0))
+    ]
     invoices = []
     report_attachments = []
     attachments = []
@@ -202,6 +258,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
                 "original_id": invoice.id,
                 "invoice_uid": invoice.invoice_uid,
                 "trip_original_id": invoice.trip_id,
+                "regular_item_id": invoice.regular_item_id,
                 "expense_category": invoice.expense_category,
                 "file_type": invoice.file_type,
                 "invoice_type": invoice.invoice_type,
@@ -232,6 +289,8 @@ def _serialize_report(report: ExpenseReport) -> dict:
                 "attachment_uid": attachment.attachment_uid,
                 "original_filename": attachment.original_filename,
                 "file_type": attachment.file_type,
+                "regular_item_id": attachment.regular_item_id,
+                "page_count": attachment.page_count,
                 "created_at": _datetime(attachment.created_at),
                 "attachment_path": attachment_path,
                 "attachment_hash": file_hash,
@@ -242,6 +301,8 @@ def _serialize_report(report: ExpenseReport) -> dict:
         "report": {
             "original_id": report.id,
             "report_uid": report.report_uid,
+            "report_type": report.report_type,
+            "regular_mode": report.regular_mode,
             "status": report.status,
             "report_date": _date(report.report_date),
             "department": report.department,
@@ -264,6 +325,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
         },
         "trips": trips,
         "expense_items": expense_items,
+        "regular_items": regular_items,
         "invoices": invoices,
         "report_attachments": report_attachments,
         "_attachments": attachments,
@@ -451,11 +513,25 @@ def _copy_zip_attachment_to_temp(archive: zipfile.ZipFile, attachment_path: str,
     return temp_path
 
 
-def _report_field_payload(report_payload: dict) -> dict:
+def _report_field_payload(report_payload: dict, schema_version: int) -> dict:
     report_status = report_payload.get("status") or "draft"
     if report_status not in REPORT_STATUS_VALUES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包包含无效报销单状态")
+    if schema_version >= 6 and "report_type" not in report_payload:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v6 导入包的报销单缺少 report_type")
+    report_type = report_payload["report_type"] if "report_type" in report_payload else "travel"
+    if schema_version < 6 and report_type != "travel":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v1-v5 导入包仅支持差旅报销单")
+    regular_mode = report_payload.get("regular_mode")
+    if report_type not in {"travel", "regular"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包包含无效报销单类型")
+    if report_type == "travel" and regular_mode is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销单不能包含常规报销模式")
+    if report_type == "regular" and regular_mode not in {"no_invoice", "invoice"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单必须包含有效模式")
     return {
+        "report_type": report_type,
+        "regular_mode": regular_mode,
         "status": report_status,
         "report_date": _parse_date(report_payload.get("report_date")),
         "department": report_payload.get("department"),
@@ -477,14 +553,44 @@ def _report_field_payload(report_payload: dict) -> dict:
     }
 
 
+def _regular_report_has_travel_scalar_values(data: dict) -> bool:
+    return bool(
+        str(data.get("department") or "").strip()
+        or str(data.get("purpose") or "").strip()
+        or Decimal(data.get("daily_subsidy") or 0) != Decimal("0.00")
+        or int(data.get("subsidy_days") or 0) != 0
+        or Decimal(data.get("subsidy_total") or 0) != Decimal("0.00")
+        or data.get("manual_subsidy_total") is not None
+        or data.get("advance_date_month") is not None
+        or data.get("advance_date_day") is not None
+        or Decimal(data.get("advance_amount") or 0) != Decimal("0.00")
+        or Decimal(data.get("shortfall") or 0) != Decimal("0.00")
+        or Decimal(data.get("surplus") or 0) != Decimal("0.00")
+    )
+
+
 def _create_or_overwrite_report(
     db: Session,
     report_item: dict,
     target_report: ExpenseReport | None,
     preserve_uid: bool,
-) -> tuple[ExpenseReport, dict[int, int]]:
+    schema_version: int,
+) -> tuple[ExpenseReport, dict[int, int], dict[int, int]]:
     report_payload = report_item.get("report", {})
-    data = _report_field_payload(report_payload)
+    data = _report_field_payload(report_payload, schema_version)
+    if data["report_type"] == "travel" and report_item.get("regular_items"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销单不能包含常规报销项目")
+    if data["report_type"] == "regular" and (report_item.get("trips") or report_item.get("expense_items")):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单不能包含差旅明细")
+    if data["report_type"] == "regular" and _regular_report_has_travel_scalar_values(data):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="常规报销单不能包含部门、出差事由、补贴、预支或补领归还数据",
+        )
+    if data["report_type"] == "regular" and data["regular_mode"] == "no_invoice" and report_item.get("invoices"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无票常规报销单不能包含发票")
+    if data["report_type"] == "regular" and data["regular_mode"] == "invoice" and report_item.get("report_attachments"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="有票常规报销单不能包含无票凭据")
     if target_report is None:
         report_uid = report_payload.get("report_uid") or uuid4().hex
         if db.scalar(select(ExpenseReport).where(ExpenseReport.report_uid == report_uid)) is not None:
@@ -503,10 +609,13 @@ def _create_or_overwrite_report(
     for invoice in target_report.invoices:
         invoice.deleted_at = datetime.utcnow()
         invoice.trip_id = None
+        invoice.regular_item_id = None
     for attachment in target_report.attachments:
         attachment.deleted_at = datetime.utcnow()
+        attachment.regular_item_id = None
     target_report.trips[:] = []
     target_report.expense_items[:] = []
+    target_report.regular_items[:] = []
     db.flush()
 
     trip_id_map: dict[int, int] = {}
@@ -542,8 +651,24 @@ def _create_or_overwrite_report(
                 paper_invoice_count=int(item_payload.get("paper_invoice_count") or 0),
             )
         )
+    regular_item_id_map: dict[int, int] = {}
+    for item_payload in report_item.get("regular_items", []):
+        manual_amount = None
+        if target_report.regular_mode == "no_invoice":
+            manual_amount = _optional_nonnegative_money(item_payload.get("amount"), "常规报销项目金额")
+        item = RegularItem(
+            sort_order=_positive_int(item_payload.get("sort_order"), "常规报销项目排序", default=None),
+            occurred_on=_parse_date(item_payload.get("occurred_on")),
+            description=item_payload.get("description"),
+            manual_amount=manual_amount,
+            remark=item_payload.get("remark"),
+        )
+        target_report.regular_items.append(item)
+        db.flush()
+        if item_payload.get("original_id") is not None:
+            regular_item_id_map[int(item_payload["original_id"])] = item.id
     db.flush()
-    return target_report, trip_id_map
+    return target_report, trip_id_map, regular_item_id_map
 
 
 def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteRead:
@@ -576,11 +701,12 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 result.reports_skipped += 1
                 continue
             target = local_report if payload.strategy == "overwrite" and has_conflict else None
-            report, trip_id_map = _create_or_overwrite_report(
+            report, trip_id_map, regular_item_id_map = _create_or_overwrite_report(
                 db,
                 report_item,
                 target_report=target,
                 preserve_uid=target is not None,
+                schema_version=int(manifest["schema_version"]),
             )
             if target is None:
                 result.reports_created += 1
@@ -588,12 +714,27 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 result.reports_overwritten += 1
 
             for invoice_payload in report_item.get("invoices", []):
+                if report.report_type == "regular" and invoice_payload.get("regular_item_id") is None:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销发票缺少项目关联")
+                if report.report_type == "regular" and invoice_payload.get("expense_category") != "regular":
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销发票费用类别必须为 regular")
+                if report.report_type == "travel" and invoice_payload.get("expense_category") == "regular":
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="差旅报销发票不能使用 regular 费用类别")
                 invoice_uid = invoice_payload.get("invoice_uid") or uuid4().hex
                 if db.scalar(select(Invoice).where(Invoice.invoice_uid == invoice_uid)) is not None:
                     invoice_uid = uuid4().hex
                 invoice = Invoice(
                     invoice_uid=invoice_uid,
-                    trip_id=trip_id_map.get(invoice_payload.get("trip_original_id")),
+                    trip_id=_mapped_original_id(
+                        trip_id_map,
+                        invoice_payload.get("trip_original_id"),
+                        "发票行程",
+                    ),
+                    regular_item_id=_mapped_original_id(
+                        regular_item_id_map,
+                        invoice_payload.get("regular_item_id"),
+                        "发票常规报销项目",
+                    ),
                     expense_category=invoice_payload["expense_category"],
                     file_path="",
                     file_type=invoice_payload["file_type"],
@@ -619,14 +760,22 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 result.invoices_created += 1
                 result.attachments_written += 1
             for attachment_payload in report_item.get("report_attachments", []):
+                if report.report_type == "regular" and attachment_payload.get("regular_item_id") is None:
+                    raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销凭据缺少项目关联")
                 attachment_uid = attachment_payload.get("attachment_uid") or uuid4().hex
                 if db.scalar(select(ReportAttachment).where(ReportAttachment.attachment_uid == attachment_uid)) is not None:
                     attachment_uid = uuid4().hex
                 attachment = ReportAttachment(
                     attachment_uid=attachment_uid,
+                    regular_item_id=_mapped_original_id(
+                        regular_item_id_map,
+                        attachment_payload.get("regular_item_id"),
+                        "凭据常规报销项目",
+                    ),
                     original_filename=attachment_payload.get("original_filename") or "未命名附件",
                     file_path="",
                     file_type=attachment_payload["file_type"],
+                    page_count=_positive_int(attachment_payload.get("page_count"), "凭据页数"),
                     created_at=_parse_datetime(attachment_payload.get("created_at")) or datetime.utcnow(),
                 )
                 report.attachments.append(attachment)
@@ -645,6 +794,8 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 pending_files.append((temp_file, _invoice_file_path(final_relative)))
                 result.attachments_written += 1
             recalculate_report_totals(report)
+            if report.report_type == "regular" and report.status != "draft":
+                ensure_report_ready_to_leave_draft(report)
         db.commit()
     except Exception:
         db.rollback()

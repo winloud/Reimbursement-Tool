@@ -13,8 +13,9 @@ from fastapi import HTTPException
 
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
+from backend.models.report_attachment import ReportAttachment
 from backend.schemas.data_transfer import DataExportRequest, ImportExecuteRequest
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, TripWrite
+from backend.schemas.report import ExpenseItemWrite, RegularItemWrite, ReportCreate, TripWrite
 from backend.services import data_transfer_service
 from backend.services.data_transfer_service import build_export_zip, create_import_preview, execute_import
 from backend.services.report_service import create_report, recalculate_report_totals
@@ -63,6 +64,18 @@ def attach_invoice(db, project_root, report, content=b"invoice-pdf", invoice_typ
 
 def upload_from_bytes(payload: bytes):
     return SimpleNamespace(file=BytesIO(payload))
+
+
+def rewrite_export_manifest(zip_bytes: bytes, mutate_manifest) -> bytes:
+    output = BytesIO()
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as source, zipfile.ZipFile(output, "w") as target:
+        manifest = json.loads(source.read("manifest.json").decode("utf-8"))
+        mutate_manifest(manifest)
+        target.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False))
+        for name in source.namelist():
+            if name != "manifest.json":
+                target.writestr(name, source.read(name))
+    return output.getvalue()
 
 
 def test_report_and_invoice_uid_generated(db):
@@ -454,3 +467,498 @@ def test_import_preview_ignores_soft_deleted_uid_conflicts(db, monkeypatch, tmp_
     assert preview.summary.reports_conflict == 0
     assert preview.summary.invoices_conflict == 0
     assert preview.summary.reports_new == 1
+
+
+def test_schema_v6_export_import_preserves_regular_items_and_evidence_associations(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date=date(2026, 7, 1),
+            employee_name="常规报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 6, 30),
+                    description="培训费",
+                    amount=Decimal("128.50"),
+                    remark="无票凭据",
+                )
+            ],
+        ),
+    )
+    item = report.regular_items[0]
+    evidence_path = project_root / "backend" / "uploads" / str(report.id) / "evidence.pdf"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_bytes(b"regular-evidence")
+    attachment = ReportAttachment(
+        report_id=report.id,
+        regular_item_id=item.id,
+        original_filename="evidence.pdf",
+        file_path=f"uploads/{report.id}/evidence.pdf",
+        file_type="pdf",
+        page_count=3,
+    )
+    db.add(attachment)
+    db.commit()
+    db.refresh(report)
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest())
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        exported = manifest["reports"][0]
+        assert manifest["schema_version"] == 6
+        assert exported["report"]["report_type"] == "regular"
+        assert exported["report"]["regular_mode"] == "no_invoice"
+        assert exported["regular_items"][0]["description"] == "培训费"
+        assert exported["regular_items"][0]["amount"] == "128.50"
+        assert exported["regular_items"][0]["document_count"] == 3
+        assert exported["report_attachments"][0]["regular_item_id"] == item.id
+        assert exported["report_attachments"][0]["page_count"] == 3
+
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(ExpenseReport).order_by(ExpenseReport.id.desc()).first()
+    imported_item = imported.regular_items[0]
+    imported_attachment = imported.active_attachments[0]
+
+    assert imported.report_type == "regular"
+    assert imported.regular_mode == "no_invoice"
+    assert imported.total_amount == Decimal("128.50")
+    assert imported_item.description == "培训费"
+    assert imported_item.document_count == 3
+    assert imported_attachment.regular_item_id == imported_item.id
+    assert imported_attachment.page_count == 3
+    assert (project_root / "backend" / imported_attachment.file_path).read_bytes() == b"regular-evidence"
+
+
+def test_schema_v6_export_import_preserves_regular_invoice_item_association(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date=date(2026, 7, 2),
+            employee_name="有票报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 7, 1),
+                    description="办公用品",
+                )
+            ],
+        ),
+    )
+    item = report.regular_items[0]
+    invoice_path = project_root / "backend" / "uploads" / str(report.id) / "regular-invoice.pdf"
+    invoice_path.parent.mkdir(parents=True, exist_ok=True)
+    invoice_path.write_bytes(b"regular-invoice")
+    db.add(
+        Invoice(
+            report_id=report.id,
+            regular_item_id=item.id,
+            expense_category="regular",
+            file_path=f"uploads/{report.id}/regular-invoice.pdf",
+            file_type="pdf",
+            amount=Decimal("66.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.flush()
+    recalculate_report_totals(report)
+    db.commit()
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular", regular_mode="invoice"))
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+        assert manifest["reports"][0]["invoices"][0]["regular_item_id"] == item.id
+
+    preview = create_import_preview(db, upload_from_bytes(zip_bytes))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(ExpenseReport).order_by(ExpenseReport.id.desc()).first()
+
+    assert imported.regular_mode == "invoice"
+    assert imported.active_invoices[0].regular_item_id == imported.regular_items[0].id
+    assert imported.regular_items[0].amount == Decimal("66.00")
+    assert imported.total_amount == Decimal("66.00")
+
+
+def test_schema_v6_explicitly_supports_v1_through_v5_and_v5_defaults_to_travel(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(db, ReportCreate(report_date=date(2026, 5, 12), purpose="v5 兼容"))
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="travel"))
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+
+    assert data_transfer_service.SUPPORTED_IMPORT_SCHEMA_VERSIONS == {1, 2, 3, 4, 5, 6}
+    manifest["schema_version"] = 5
+    legacy_report = manifest["reports"][0]
+    legacy_report["report"].pop("report_type")
+    legacy_report["report"].pop("regular_mode")
+    legacy_report.pop("regular_items")
+    buffer = BytesIO()
+    with zipfile.ZipFile(buffer, "w") as archive:
+        archive.writestr("manifest.json", json.dumps(manifest))
+
+    preview = create_import_preview(db, upload_from_bytes(buffer.getvalue()))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+    imported = db.query(ExpenseReport).order_by(ExpenseReport.id.desc()).first()
+    assert imported.report_type == "travel"
+    assert imported.regular_mode is None
+
+
+def test_schema_v6_requires_explicit_report_type(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date=date(2026, 8, 1),
+            employee_name="严格校验",
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+    invalid_zip = rewrite_export_manifest(
+        zip_bytes,
+        lambda manifest: manifest["reports"][0]["report"].pop("report_type"),
+    )
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="缺少 report_type"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("department", "财务部"),
+        ("purpose", "隐藏出差事由"),
+        ("daily_subsidy", "1.00"),
+        ("subsidy_days", 1),
+        ("subsidy_total", "1.00"),
+        ("manual_subsidy_total", "0.00"),
+        ("advance_date_month", 8),
+        ("advance_date_day", 1),
+        ("advance_amount", "1.00"),
+        ("shortfall", "1.00"),
+        ("surplus", "1.00"),
+    ],
+)
+def test_schema_v6_regular_report_rejects_travel_scalar_fields(
+    field,
+    value,
+    db,
+    monkeypatch,
+    tmp_path,
+):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date=date(2026, 8, 2),
+            employee_name="常规报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 8, 1),
+                    description="办公费",
+                    amount=Decimal("10.00"),
+                )
+            ],
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def add_forbidden_field(manifest):
+        manifest["reports"][0]["report"][field] = value
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, add_forbidden_field)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="不能包含部门、出差事由、补贴、预支或补领归还数据"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("expense_category", "accommodation", "费用类别必须为 regular"),
+        ("regular_item_id", 999999, "关联的明细不存在"),
+    ],
+)
+def test_schema_v6_regular_invoice_rejects_invalid_item_semantics(
+    field,
+    value,
+    message,
+    db,
+    monkeypatch,
+    tmp_path,
+):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date=date(2026, 8, 3),
+            employee_name="有票报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 8, 2),
+                    description="办公用品",
+                )
+            ],
+        ),
+    )
+    invoice_path = project_root / "backend" / "uploads" / str(report.id) / "regular.pdf"
+    invoice_path.parent.mkdir(parents=True, exist_ok=True)
+    invoice_path.write_bytes(b"regular-invoice")
+    report.invoices.append(
+        Invoice(
+            regular_item_id=report.regular_items[0].id,
+            expense_category="regular",
+            file_path=f"uploads/{report.id}/regular.pdf",
+            file_type="pdf",
+            amount=Decimal("25.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.flush()
+    recalculate_report_totals(report)
+    db.commit()
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def corrupt_invoice(manifest):
+        manifest["reports"][0]["invoices"][0][field] = value
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, corrupt_invoice)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match=message):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+    attachment_staging = data_transfer_service.STAGING_ROOT / preview.preview_id / "attachments"
+    assert not attachment_staging.exists() or not any(attachment_staging.iterdir())
+
+
+def test_schema_v6_rejects_incomplete_non_draft_regular_report_and_rolls_back(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date=date(2026, 8, 4),
+            employee_name="不完整报销人",
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def mark_checked(manifest):
+        manifest["reports"][0]["report"]["status"] = "checked"
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, mark_checked)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="至少添加一个报销项目"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+    attachment_staging = data_transfer_service.STAGING_ROOT / preview.preview_id / "attachments"
+    assert not attachment_staging.exists() or not any(attachment_staging.iterdir())
+
+
+def test_schema_v6_valid_non_draft_regular_invoice_validates_after_invoice_creation(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date=date(2026, 8, 5),
+            employee_name="完整报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 8, 4),
+                    description="培训费",
+                )
+            ],
+        ),
+    )
+    invoice_path = project_root / "backend" / "uploads" / str(report.id) / "confirmed.pdf"
+    invoice_path.parent.mkdir(parents=True, exist_ok=True)
+    invoice_path.write_bytes(b"confirmed-regular-invoice")
+    report.invoices.append(
+        Invoice(
+            regular_item_id=report.regular_items[0].id,
+            expense_category="regular",
+            file_path=f"uploads/{report.id}/confirmed.pdf",
+            file_type="pdf",
+            amount=Decimal("30.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.flush()
+    recalculate_report_totals(report)
+    db.commit()
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def mark_checked(manifest):
+        manifest["reports"][0]["report"]["status"] = "checked"
+
+    checked_zip = rewrite_export_manifest(zip_bytes, mark_checked)
+    preview = create_import_preview(db, upload_from_bytes(checked_zip))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    imported = db.query(ExpenseReport).order_by(ExpenseReport.id.desc()).first()
+    assert imported.status == "checked"
+    assert imported.report_type == "regular"
+    assert imported.total_amount == Decimal("30.00")
+    assert imported.regular_items[0].document_count == 1
+
+
+def test_schema_v6_non_draft_regular_validation_cleans_staged_invoice_on_rollback(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date=date(2026, 8, 6),
+            employee_name="待确认报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 8, 5),
+                    description="办公用品",
+                )
+            ],
+        ),
+    )
+    invoice_path = project_root / "backend" / "uploads" / str(report.id) / "unconfirmed.pdf"
+    invoice_path.parent.mkdir(parents=True, exist_ok=True)
+    invoice_path.write_bytes(b"unconfirmed-regular-invoice")
+    report.invoices.append(
+        Invoice(
+            regular_item_id=report.regular_items[0].id,
+            expense_category="regular",
+            file_path=f"uploads/{report.id}/unconfirmed.pdf",
+            file_type="pdf",
+            amount=Decimal("40.00"),
+            amount_confirmed=False,
+        )
+    )
+    db.commit()
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def mark_checked(manifest):
+        manifest["reports"][0]["report"]["status"] = "checked"
+
+    checked_zip = rewrite_export_manifest(zip_bytes, mark_checked)
+    preview = create_import_preview(db, upload_from_bytes(checked_zip))
+
+    with pytest.raises(HTTPException, match="存在未确认发票"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+    attachment_staging = data_transfer_service.STAGING_ROOT / preview.preview_id / "attachments"
+    assert attachment_staging.exists()
+    assert not any(attachment_staging.iterdir())
+
+
+def test_schema_v6_no_invoice_evidence_rejects_unknown_regular_item(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=date(2026, 8, 6),
+                    description="资料费",
+                    amount=Decimal("12.00"),
+                )
+            ],
+        ),
+    )
+    evidence_path = project_root / "backend" / "uploads" / str(report.id) / "evidence.pdf"
+    evidence_path.parent.mkdir(parents=True, exist_ok=True)
+    evidence_path.write_bytes(b"regular-evidence")
+    report.attachments.append(
+        ReportAttachment(
+            regular_item_id=report.regular_items[0].id,
+            original_filename="evidence.pdf",
+            file_path=f"uploads/{report.id}/evidence.pdf",
+            file_type="pdf",
+            page_count=1,
+        )
+    )
+    db.commit()
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def corrupt_evidence_item(manifest):
+        manifest["reports"][0]["report_attachments"][0]["regular_item_id"] = 999999
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, corrupt_evidence_item)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="关联的明细不存在"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+
+
+def test_schema_v6_travel_invoice_rejects_regular_expense_category(db, monkeypatch, tmp_path):
+    project_root = configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(db, ReportCreate(report_date=date(2026, 8, 7), purpose="差旅报销"))
+    attach_invoice(db, project_root, report)
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="travel"))
+
+    def corrupt_travel_category(manifest):
+        manifest["reports"][0]["invoices"][0]["expense_category"] = "regular"
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, corrupt_travel_category)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="差旅报销发票不能使用 regular"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    assert db.query(ExpenseReport).count() == 1
+
+
+def test_schema_v1_through_v5_reject_explicit_regular_report_type(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date=date(2026, 8, 8),
+            employee_name="旧版非法常规单",
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="regular"))
+
+    def mark_legacy(manifest):
+        manifest["schema_version"] = 5
+
+    invalid_zip = rewrite_export_manifest(zip_bytes, mark_legacy)
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+
+    with pytest.raises(HTTPException, match="v1-v5 导入包仅支持差旅报销单"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))

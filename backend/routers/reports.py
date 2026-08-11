@@ -20,9 +20,11 @@ from backend.schemas.report import (
     ReportDetailRead,
     ReportFilterOptionsRead,
     ReportInvoiceState,
+    RegularMode,
     ReportRead,
     ReportStatus,
     ReportStatusUpdate,
+    ReportType,
     ReportUpdate,
 )
 from backend.services.pdf_generator import (
@@ -43,6 +45,7 @@ from backend.services.report_service import (
     ReportFilters,
     create_report,
     ensure_fuel_subsidy_printable,
+    ensure_report_previewable,
     get_report_or_404,
     list_report_category_options,
     list_deleted_reports,
@@ -61,6 +64,8 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 def get_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    report_type: ReportType = "travel",
+    regular_mode: RegularMode | None = None,
     status: ReportStatus | None = None,
     statuses: Annotated[str | None, Query(max_length=100)] = None,
     report_start: date | None = None,
@@ -77,7 +82,10 @@ def get_reports(
     subsidy_days_max: Annotated[int | None, Query(ge=0)] = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[PaginationData[ReportRead]]:
+    validate_report_kind_filters(report_type, regular_mode)
     filters = ReportFilters(
+        report_type=report_type,
+        regular_mode=regular_mode,
         report_status=status,
         report_statuses=parse_report_statuses(statuses),
         report_start=report_start,
@@ -101,6 +109,8 @@ def get_reports(
 def get_trash_reports(
     page: Annotated[int, Query(ge=1)] = 1,
     page_size: Annotated[int, Query(ge=1, le=100)] = 20,
+    report_type: ReportType = "travel",
+    regular_mode: RegularMode | None = None,
     report_start: date | None = None,
     report_end: date | None = None,
     trip_start: date | None = None,
@@ -115,7 +125,10 @@ def get_trash_reports(
     subsidy_days_max: Annotated[int | None, Query(ge=0)] = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[PaginationData[ReportRead]]:
+    validate_report_kind_filters(report_type, regular_mode)
     filters = ReportFilters(
+        report_type=report_type,
+        regular_mode=regular_mode,
         report_start=report_start,
         report_end=report_end,
         trip_start=trip_start,
@@ -147,13 +160,20 @@ def parse_report_statuses(value: str | None) -> set[ReportStatus] | None:
     return items or None
 
 
+def validate_report_kind_filters(report_type: ReportType, regular_mode: RegularMode | None) -> None:
+    if report_type == "travel" and regular_mode is not None:
+        from fastapi import HTTPException, status as http_status
+
+        raise HTTPException(status_code=http_status.HTTP_400_BAD_REQUEST, detail="出差报销列表不能使用常规报销模式筛选")
+
+
 @router.get("/filter-options", response_model=ApiResponse[ReportFilterOptionsRead])
 def get_report_filter_options(db: Session = Depends(get_db)) -> ApiResponse[ReportFilterOptionsRead]:
     return ApiResponse(data=ReportFilterOptionsRead(categories=list_report_category_options(db)))
 
 
-@router.post("", response_model=ApiResponse[ReportRead])
-def post_report(payload: ReportCreate, db: Session = Depends(get_db)) -> ApiResponse[ReportRead]:
+@router.post("", response_model=ApiResponse[ReportDetailRead])
+def post_report(payload: ReportCreate, db: Session = Depends(get_db)) -> ApiResponse[ReportDetailRead]:
     return ApiResponse(data=create_report(db, payload), message="报销单已创建")
 
 
@@ -216,6 +236,7 @@ def get_report_pdf_preview(
     db: Session = Depends(get_db),
 ) -> ApiResponse[PdfPreviewRead]:
     report = get_report_or_404(db, report_id)
+    ensure_report_previewable(report)
     settings = get_or_create_settings(db)
     pages = render_report_preview_pages(report, settings.pdf_fill_font_key)
     return ApiResponse(data=PdfPreviewRead(pages=pages), message="PDF 预览已生成")
@@ -242,12 +263,12 @@ def get_report_pdf(
     )
 
 
-@router.put("/{report_id}", response_model=ApiResponse[ReportRead])
+@router.put("/{report_id}", response_model=ApiResponse[ReportDetailRead])
 def put_report(
     report_id: Annotated[int, Path(ge=1)],
     payload: ReportUpdate,
     db: Session = Depends(get_db),
-) -> ApiResponse[ReportRead]:
+) -> ApiResponse[ReportDetailRead]:
     return ApiResponse(data=update_report(db, report_id, payload), message="报销单已更新")
 
 

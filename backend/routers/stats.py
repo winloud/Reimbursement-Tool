@@ -16,9 +16,23 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 def get_summary(
     start_month: Annotated[str | None, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")] = None,
     end_month: Annotated[str | None, Query(pattern=r"^\d{4}-(0[1-9]|1[0-2])$")] = None,
+    report_type: Annotated[str, Query(pattern=r"^(travel|regular)$")] = "travel",
+    regular_mode: Annotated[str | None, Query(pattern=r"^(no_invoice|invoice)$")] = None,
+    report_start: date | None = None,
+    report_end: date | None = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[StatsSummaryRead]:
-    return ApiResponse(data=get_stats_summary(db, start_month=start_month, end_month=end_month))
+    return ApiResponse(
+        data=get_stats_summary(
+            db,
+            start_month=start_month,
+            end_month=end_month,
+            report_type=report_type,
+            regular_mode=regular_mode,
+            report_start=report_start,
+            report_end=report_end,
+        )
+    )
 
 
 @router.get("/category", response_model=ApiResponse[StatsCategoryRead])

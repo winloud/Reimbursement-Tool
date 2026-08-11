@@ -157,8 +157,8 @@ export default function ReportList() {
     try {
       const res =
         status === "trash"
-          ? await getTrashReports({ page: page + 1, pageSize, filters })
-          : await getReports({ page: page + 1, pageSize, status, filters });
+          ? await getTrashReports({ page: page + 1, pageSize, reportType: "travel", filters })
+          : await getReports({ page: page + 1, pageSize, status, reportType: "travel", filters });
       if (res.success) {
         setItems(res.data.items);
         setTotal(res.data.total);
@@ -196,7 +196,7 @@ export default function ReportList() {
     let ignore = false;
     const fetchOptions = async () => {
       try {
-        const res = await getReportFilterOptions();
+        const res = await getReportFilterOptions({ reportType: "travel" });
         if (!ignore && res.success) {
           setCategoryOptions([{ value: "", label: "全部类别" }, ...(res.data.categories || [])]);
         }
@@ -296,7 +296,7 @@ export default function ReportList() {
     setExporting(true);
     setError("");
     try {
-      const { blob, filename } = await downloadDataExport({ status, filters });
+      const { blob, filename } = await downloadDataExport({ status, reportType: "travel", filters });
       saveBlob(blob, filename || "expense-data.zip");
     } catch (err) {
       setError(errorMessage(err, "导出失败"));
@@ -567,6 +567,15 @@ export default function ReportList() {
     resetImportDialog();
     setImportOpen(true);
   };
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    if (params.get("import_data") !== "1") return;
+    handleOpenImport();
+    params.delete("import_data");
+    const search = params.toString();
+    navigate({ pathname: location.pathname, search: search ? `?${search}` : "" }, { replace: true });
+  }, [location.pathname, location.search, navigate]);
 
   const handlePreviewImport = async () => {
     if (!importFile) return;

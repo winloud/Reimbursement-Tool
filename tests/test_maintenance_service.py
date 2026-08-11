@@ -108,6 +108,108 @@ def write_app_database_with_integrity_issues(path: Path) -> None:
         connection.close()
 
 
+def write_regular_database_with_integrity_issues(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE expense_reports (
+                id INTEGER PRIMARY KEY,
+                report_uid TEXT,
+                report_type TEXT,
+                regular_mode TEXT,
+                status TEXT,
+                deleted_at DATETIME
+            );
+            CREATE TABLE regular_items (
+                id INTEGER PRIMARY KEY,
+                report_id INTEGER,
+                sort_order INTEGER,
+                amount NUMERIC
+            );
+            CREATE TABLE invoices (
+                id INTEGER PRIMARY KEY,
+                invoice_uid TEXT,
+                report_id INTEGER,
+                trip_id INTEGER,
+                regular_item_id INTEGER,
+                expense_category TEXT,
+                file_path TEXT,
+                deleted_at DATETIME
+            );
+            CREATE TABLE report_attachments (
+                id INTEGER PRIMARY KEY,
+                attachment_uid TEXT,
+                report_id INTEGER,
+                regular_item_id INTEGER,
+                page_count INTEGER,
+                file_path TEXT,
+                deleted_at DATETIME
+            );
+            INSERT INTO expense_reports VALUES
+                (1, 'regular-invoice', 'regular', 'invoice', 'checked', NULL),
+                (2, 'regular-no-invoice', 'regular', 'no_invoice', 'checked', NULL),
+                (3, 'travel', 'travel', NULL, 'checked', NULL),
+                (4, 'bad-mode', 'regular', NULL, 'draft', NULL);
+            INSERT INTO regular_items VALUES
+                (10, 1, 1, NULL),
+                (20, 3, 1, 10.00),
+                (30, 999, 1, 20.00);
+            INSERT INTO invoices VALUES
+                (100, 'invoice-mismatch', 1, NULL, 20, 'regular', '', NULL),
+                (101, 'invoice-no-invoice-mode', 2, NULL, 20, 'regular', '', NULL);
+            INSERT INTO report_attachments VALUES
+                (200, 'attachment-invoice-mode', 1, 10, 1, '', NULL),
+                (201, 'attachment-no-item', 2, NULL, 0, '', NULL);
+            PRAGMA user_version = 6;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def write_regular_database_with_travel_fields(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE expense_reports (
+                id INTEGER PRIMARY KEY,
+                report_uid TEXT,
+                report_type TEXT,
+                regular_mode TEXT,
+                status TEXT,
+                deleted_at DATETIME,
+                department TEXT,
+                purpose TEXT,
+                daily_subsidy NUMERIC,
+                subsidy_days INTEGER,
+                subsidy_total NUMERIC,
+                manual_subsidy_total NUMERIC,
+                advance_date_month INTEGER,
+                advance_date_day INTEGER,
+                advance_amount NUMERIC,
+                shortfall NUMERIC,
+                surplus NUMERIC
+            );
+            INSERT INTO expense_reports VALUES
+                (1, 'regular-hidden-travel-fields', 'regular', 'no_invoice', 'draft', NULL,
+                 '财务部', '隐藏事由', 10, 1, 10, 0, 8, 1, 5, 2, 3),
+                (2, 'regular-clean', 'regular', 'no_invoice', 'draft', NULL,
+                 NULL, NULL, 0, 0, 0, NULL, NULL, NULL, 0, 0, 0),
+                (3, 'travel-fields-allowed', 'travel', NULL, 'draft', NULL,
+                 '财务部', '出差', 10, 1, 10, NULL, NULL, NULL, 0, 10, 0);
+            PRAGMA user_version = 6;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def upload_file_from_bytes(payload: bytes, filename: str = "backup.zip") -> UploadFile:
     return UploadFile(file=BytesIO(payload), filename=filename)
 
@@ -386,6 +488,41 @@ def test_database_integrity_check_reports_business_and_attachment_issues(
     assert result.tables["expense_reports"] == 1
     assert "invalid_report_status" in codes
     assert "missing_attachment_file" in codes
+
+
+def test_database_integrity_check_covers_regular_item_and_mode_associations(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_regular_database_with_integrity_issues(paths["database"])
+
+    result = maintenance_service.check_database_integrity()
+
+    codes = {issue.code for issue in result.issues}
+    assert result.status == "error"
+    assert {
+        "invalid_report_kind",
+        "orphan_regular_item",
+        "regular_item_on_travel_report",
+        "invoice_regular_item_report_mismatch",
+        "invoice_report_kind_mismatch",
+        "attachment_report_kind_mismatch",
+        "invalid_attachment_page_count",
+    }.issubset(codes)
+
+
+def test_database_integrity_check_reports_travel_fields_on_regular_reports(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_regular_database_with_travel_fields(paths["database"])
+
+    result = maintenance_service.check_database_integrity()
+
+    issue = next(item for item in result.issues if item.code == "regular_report_has_travel_fields")
+    assert result.status == "error"
+    assert issue.count == 1
+    assert issue.details == ["report_id=1"]
 
 
 def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(

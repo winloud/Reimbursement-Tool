@@ -11,9 +11,10 @@ from pypdf import PdfReader
 from reportlab.pdfgen import canvas
 
 from backend.models.invoice import Invoice
+from backend.models.report_attachment import ReportAttachment
 from backend.models.settings import Settings
 from backend.routers.reports import get_report_pdf, get_report_pdf_preview
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportUpdate, TripWrite
+from backend.schemas.report import ExpenseItemWrite, RegularItemWrite, ReportCreate, ReportUpdate, TripWrite
 from backend.services.amount_converter import amount_to_chinese_upper
 from backend.services.pdf_generator import (
     ITEM_FILL_FONT_NAME,
@@ -26,7 +27,15 @@ from backend.services.pdf_generator import (
     build_report_pdf,
     ensure_pdf_exportable,
 )
-from backend.services.report_service import create_report, update_report
+from backend.services.regular_pdf_generator import (
+    REGULAR_HANDWRITTEN_FIELDS,
+    REGULAR_TEMPLATE_BLOCKER,
+    _build_regular_overlay,
+    _fit_single_line,
+    _money_grid_digits,
+    regular_item_document_count,
+)
+from backend.services.report_service import create_report, recalculate_report_totals, update_report
 
 
 def write_blank_pdf(path: Path, pages: int = 1, pagesize: tuple[int, int] = (595, 298)) -> None:
@@ -44,6 +53,22 @@ def configure_pdf_paths(monkeypatch, tmp_path: Path) -> Path:
     monkeypatch.setattr("backend.services.pdf_generator.PROJECT_ROOT", tmp_path)
     monkeypatch.setattr("backend.services.pdf_generator.TEMPLATE_CANDIDATES", [template])
     return template
+
+
+def configure_regular_pdf_paths(monkeypatch, tmp_path: Path) -> Path:
+    template = tmp_path / "backend" / "templates" / "regular_expense_template.pdf"
+    write_blank_pdf(template)
+    monkeypatch.setattr("backend.services.pdf_generator.PROJECT_ROOT", tmp_path)
+    monkeypatch.setattr("backend.services.regular_pdf_generator.REGULAR_TEMPLATE_CANDIDATES", [template])
+    return template
+
+
+def write_named_pdf(path: Path, label: str, pagesize: tuple[int, int] = (333, 444)) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    c = canvas.Canvas(str(path), pagesize=pagesize)
+    c.drawString(40, pagesize[1] - 40, label)
+    c.showPage()
+    c.save()
 
 
 def add_confirmed_invoice(db, report, category: str, amount: str, index: int = 1, trip_id: int | None = None) -> None:
@@ -682,6 +707,295 @@ def test_overlay_leaves_shortfall_and_surplus_blank_without_advance(monkeypatch,
     assert report.shortfall == Decimal("80.00")
     assert values_by_field["shortfall"] == ""
     assert values_by_field["surplus"] == ""
+
+
+def test_regular_pdf_reports_missing_formal_template_blocker(monkeypatch, tmp_path, db):
+    missing = tmp_path / "missing-regular-template.pdf"
+    monkeypatch.setattr("backend.services.regular_pdf_generator.REGULAR_TEMPLATE_CANDIDATES", [missing])
+    report = create_report(
+        db,
+        ReportCreate(report_type="regular", regular_mode="no_invoice", report_date="2026-06-04"),
+    )
+
+    with pytest.raises(HTTPException) as exc:
+        build_report_pdf(report)
+
+    assert exc.value.status_code == 400
+    assert exc.value.detail == REGULAR_TEMPLATE_BLOCKER
+
+
+def test_regular_pdf_preview_and_download_share_missing_template_blocker(monkeypatch, tmp_path, db):
+    missing = tmp_path / "missing-regular-template.pdf"
+    monkeypatch.setattr("backend.services.regular_pdf_generator.REGULAR_TEMPLATE_CANDIDATES", [missing])
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date="2026-06-04",
+            employee_name="张报销",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on="2026-06-03",
+                    description="临时费用",
+                    amount=Decimal("10.00"),
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(HTTPException) as preview_exc:
+        get_report_pdf_preview(report.id, db)
+    with pytest.raises(HTTPException) as download_exc:
+        get_report_pdf(report.id, db)
+
+    assert preview_exc.value.status_code == 400
+    assert download_exc.value.status_code == 400
+    assert preview_exc.value.detail == REGULAR_TEMPLATE_BLOCKER
+    assert download_exc.value.detail == REGULAR_TEMPLATE_BLOCKER
+
+
+@pytest.mark.parametrize(("item_count", "expected_pages"), [(0, 1), (4, 1), (5, 2)])
+def test_regular_pdf_zero_four_five_item_page_boundaries(
+    monkeypatch, tmp_path, db, item_count, expected_pages
+):
+    configure_regular_pdf_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date="2026-06-04",
+            employee_name="分页测试",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=index,
+                    occurred_on="2026-06-03",
+                    description=f"项目{index}",
+                    amount=Decimal("1.00"),
+                )
+                for index in range(1, item_count + 1)
+            ],
+        ),
+    )
+
+    assert len(PdfReader(BytesIO(build_report_pdf(report))).pages) == expected_pages
+
+
+def test_regular_pdf_paginates_four_items_and_only_maps_claimant_signature_field(monkeypatch, tmp_path, db):
+    configure_regular_pdf_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date="2026-06-04",
+            employee_name="王报销",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=index,
+                    occurred_on=f"2026-06-0{index}",
+                    description=f"常规项目{index}",
+                    amount=Decimal(f"{index}.00"),
+                )
+                for index in range(1, 6)
+            ],
+        ),
+    )
+
+    pdf_bytes = build_report_pdf(report)
+    reader = PdfReader(BytesIO(pdf_bytes))
+
+    assert len(reader.pages) == 2
+
+    calls: list[tuple[str, object]] = []
+
+    def record_draw(_canvas, field, value):
+        calls.append((field.name, value))
+
+    monkeypatch.setattr("backend.services.regular_pdf_generator._draw_field", record_draw)
+    _build_regular_overlay(
+        report,
+        list(report.regular_items[:4]),
+        is_last_page=False,
+        page_size=(595, 298),
+        fill_font_name="CustomFill",
+    )
+    first_page_names = {name for name, _value in calls}
+    assert "claimant_name" in first_page_names
+    assert not any(name.startswith("total_amount") for name in first_page_names)
+    assert set(REGULAR_HANDWRITTEN_FIELDS).isdisjoint(first_page_names)
+
+    calls.clear()
+    _build_regular_overlay(
+        report,
+        list(report.regular_items[4:]),
+        is_last_page=True,
+        page_size=(595, 298),
+        fill_font_name="CustomFill",
+    )
+    last_page_names = {name for name, _value in calls}
+    assert "total_amount_cn" in last_page_names
+    assert any(name.startswith("total_amount_") for name in last_page_names)
+    assert set(REGULAR_HANDWRITTEN_FIELDS).isdisjoint(last_page_names)
+
+
+def test_regular_pdf_fits_long_text_and_enforces_amount_grid_capacity(monkeypatch, tmp_path, db):
+    configure_regular_pdf_paths(monkeypatch, tmp_path)
+    long_description = "超长项目名称" * 20
+    long_remark = "详细备注" * 40
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date="2026-06-04",
+            employee_name="金额边界",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on="2026-06-03",
+                    description=long_description,
+                    amount=Decimal("9999999.99"),
+                    remark=long_remark,
+                )
+            ],
+        ),
+    )
+    calls: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        "backend.services.regular_pdf_generator._draw_field",
+        lambda _canvas, field, value: calls.append((field.name, value)),
+    )
+
+    _build_regular_overlay(
+        report,
+        list(report.regular_items),
+        is_last_page=True,
+        page_size=(595, 298),
+        fill_font_name="Helvetica",
+    )
+
+    values = dict(calls)
+    assert values[f"item_{report.regular_items[0].id}_description"].endswith("...")
+    assert values[f"item_{report.regular_items[0].id}_remark"].endswith("...")
+    assert _fit_single_line(long_description, 90.0, "Helvetica") != long_description
+    assert _money_grid_digits(Decimal("9999999.99")) == list("999999999")
+    with pytest.raises(HTTPException, match="超出 PDF 金额格容量"):
+        _money_grid_digits(Decimal("10000000.00"))
+
+
+def test_regular_no_invoice_pdf_counts_pages_and_orders_evidence_by_item(monkeypatch, tmp_path, db):
+    configure_regular_pdf_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="no_invoice",
+            report_date="2026-06-04",
+            employee_name="李报销",
+            regular_items=[
+                RegularItemWrite(sort_order=1, occurred_on="2026-06-01", description="项目一", amount=Decimal("10.00")),
+                RegularItemWrite(sort_order=2, occurred_on="2026-06-02", description="项目二", amount=Decimal("20.00")),
+            ],
+        ),
+    )
+    item_one, item_two = report.regular_items
+    item_two_path = tmp_path / "backend" / "uploads" / str(report.id) / "item-two.pdf"
+    item_one_path = tmp_path / "backend" / "uploads" / str(report.id) / "item-one.pdf"
+    write_named_pdf(item_two_path, "evidence item two")
+    write_named_pdf(item_one_path, "evidence item one")
+    db.add_all(
+        [
+            ReportAttachment(
+                report_id=report.id,
+                regular_item_id=item_two.id,
+                original_filename="item-two.pdf",
+                file_path=f"uploads/{report.id}/item-two.pdf",
+                file_type="pdf",
+                page_count=1,
+            ),
+            ReportAttachment(
+                report_id=report.id,
+                regular_item_id=item_one.id,
+                original_filename="item-one.pdf",
+                file_path=f"uploads/{report.id}/item-one.pdf",
+                file_type="pdf",
+                page_count=3,
+            ),
+        ]
+    )
+    db.commit()
+    db.refresh(report)
+
+    assert regular_item_document_count(report, item_one) == 3
+    assert report.document_count == 4
+
+    merged = PdfReader(BytesIO(build_merged_report_pdf(report)))
+    assert len(merged.pages) == 3
+    assert "evidence item one" in (merged.pages[1].extract_text() or "")
+    assert "evidence item two" in (merged.pages[2].extract_text() or "")
+    assert build_pdf_filename(report) == "2026-06-04-李报销-常规报销-无票-￥30.00.pdf"
+
+
+def test_regular_invoice_pdf_orders_files_by_item_and_keeps_vat_double_print(monkeypatch, tmp_path, db):
+    configure_regular_pdf_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date="2026-06-04",
+            employee_name="有票顺序",
+            regular_items=[
+                RegularItemWrite(sort_order=1, occurred_on="2026-06-01", description="项目一"),
+                RegularItemWrite(sort_order=2, occurred_on="2026-06-02", description="项目二"),
+            ],
+        ),
+    )
+    item_one, item_two = report.regular_items
+    item_two_path = tmp_path / "backend" / "uploads" / str(report.id) / "invoice-two.pdf"
+    item_one_path = tmp_path / "backend" / "uploads" / str(report.id) / "invoice-one.pdf"
+    write_named_pdf(item_two_path, "invoice item two")
+    write_named_pdf(item_one_path, "invoice item one vat special")
+    db.add_all(
+        [
+            Invoice(
+                report_id=report.id,
+                regular_item_id=item_two.id,
+                expense_category="regular",
+                file_path=f"uploads/{report.id}/invoice-two.pdf",
+                file_type="pdf",
+                invoice_type="normal",
+                amount=Decimal("20.00"),
+                amount_confirmed=True,
+            ),
+            Invoice(
+                report_id=report.id,
+                regular_item_id=item_one.id,
+                expense_category="regular",
+                file_path=f"uploads/{report.id}/invoice-one.pdf",
+                file_type="pdf",
+                invoice_type="vat_special",
+                amount=Decimal("10.00"),
+                amount_confirmed=True,
+            ),
+        ]
+    )
+    db.flush()
+    recalculate_report_totals(report)
+    db.commit()
+    db.refresh(report)
+
+    merged = PdfReader(BytesIO(build_merged_report_pdf(report, double_print_vat_special_invoices=True)))
+    texts = [page.extract_text() or "" for page in merged.pages]
+
+    assert len(merged.pages) == 4
+    assert "invoice item one vat special" in texts[1]
+    assert "invoice item one vat special" in texts[2]
+    assert "invoice item two" in texts[3]
+    assert report.document_count == 2
 
 
 def test_overlay_fills_shortfall_when_advance_exists(monkeypatch, db):

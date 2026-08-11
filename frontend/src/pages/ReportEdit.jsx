@@ -145,6 +145,13 @@ export default function ReportEdit() {
           setAutosaveDelaySeconds(normalizeAutosaveDelaySeconds(settingsRes.data.autosave_delay_seconds));
         }
         const report = res.data;
+        if (report.report_type !== "travel") {
+          if (report.report_type === "regular") {
+            navigate(`/regular-reports/${report.id}/edit`, { replace: true });
+            return null;
+          }
+          throw new Error("该记录不是出差报销单");
+        }
         const nextForm = {
           report_date: report.report_date || todayStr(),
           department: report.department || "",
@@ -194,7 +201,7 @@ export default function ReportEdit() {
         if (!quiet) setLoading(false);
       }
     },
-    [],
+    [navigate],
   );
 
   const initializeNewReport = useCallback(async () => {

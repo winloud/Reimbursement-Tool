@@ -41,20 +41,35 @@ def get_stats_summary(
     reference_date: date | None = None,
     start_month: str | None = None,
     end_month: str | None = None,
+    report_type: str = "travel",
+    regular_mode: str | None = None,
+    report_start: date | None = None,
+    report_end: date | None = None,
 ) -> StatsSummaryRead:
     today = reference_date or date.today()
     month_start = today.replace(day=1)
     year_start = today.replace(month=1, day=1)
     next_month = add_months(month_start, 1)
     next_year = date(today.year + 1, 1, 1)
-    period_start, period_end = parse_month_range(start_month, end_month, today)
-    reports = list_stats_reports(db)
+    month_period_start, month_period_end = parse_month_range(start_month, end_month, today)
+    period_start, period_end = parse_summary_period(
+        start_month,
+        end_month,
+        report_start,
+        report_end,
+        today,
+    )
+    reports = list_stats_reports(db, report_type=report_type, regular_mode=regular_mode)
 
     return StatsSummaryRead(
         selected_period=summarize_period(reports, period_start, period_end),
         current_month=summarize_period(reports, month_start, next_month),
         current_year=summarize_period(reports, year_start, next_year),
-        monthly_trend=build_monthly_trend(reports, period_start, period_end),
+        monthly_trend=build_monthly_trend(
+            reports,
+            period_start if report_start is not None and report_end is not None else month_period_start,
+            period_end if report_start is not None and report_end is not None else month_period_end,
+        ),
     )
 
 
@@ -124,13 +139,28 @@ def get_stats_calendar(
     )
 
 
-def list_stats_reports(db: Session) -> list[ExpenseReport]:
+def list_stats_reports(
+    db: Session,
+    report_type: str | None = "travel",
+    regular_mode: str | None = None,
+) -> list[ExpenseReport]:
+    if report_type not in {None, "travel", "regular"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效报销单类型")
+    if regular_mode not in {None, "no_invoice", "invoice"}:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效常规报销模式")
+    if regular_mode is not None and report_type != "regular":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销模式筛选仅适用于常规报销单")
+    conditions = [
+        ExpenseReport.deleted_at.is_(None),
+        ExpenseReport.status != DRAFT_STATUS,
+    ]
+    if report_type is not None:
+        conditions.append(ExpenseReport.report_type == report_type)
+    if regular_mode is not None:
+        conditions.append(ExpenseReport.regular_mode == regular_mode)
     return list(
         db.scalars(
-            select(ExpenseReport).where(
-                ExpenseReport.deleted_at.is_(None),
-                ExpenseReport.status != DRAFT_STATUS,
-            )
+            select(ExpenseReport).where(*conditions)
         ).all()
     )
 
@@ -158,7 +188,7 @@ def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) ->
     items: list[MonthlyTrendItem] = []
     month_start = start
     while month_start < end:
-        month_end = add_months(month_start, 1)
+        month_end = min(add_months(month_start, 1), end)
         pending_amount = Decimal("0.00")
         reimbursed_amount = Decimal("0.00")
         pending_count = 0
@@ -247,6 +277,25 @@ def parse_month_range(start_month: str | None, end_month: str | None, reference_
     if start > end_month_date:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="开始月份不能晚于结束月份")
     return start, add_months(end_month_date, 1)
+
+
+def parse_summary_period(
+    start_month: str | None,
+    end_month: str | None,
+    report_start: date | None,
+    report_end: date | None,
+    reference_date: date,
+) -> tuple[date, date]:
+    month_start, month_end = parse_month_range(start_month, end_month, reference_date)
+    if report_start is None and report_end is None:
+        return month_start, month_end
+    start = report_start or date.min
+    if report_end == date.max:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="结束日期超出支持范围")
+    end = report_end + timedelta(days=1) if report_end is not None else date.max
+    if start >= end:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="开始日期不能晚于结束日期")
+    return start, end
 
 
 def parse_month_value(value: str | None, default: date) -> date:

@@ -28,28 +28,30 @@ export const updateSettings = async (payload) => {
   return response.data;
 };
 
-export const getReports = async ({ page = 1, pageSize = 20, status, filters } = {}) => {
+export const getReports = async ({ page = 1, pageSize = 20, status, reportType, regularMode, filters } = {}) => {
   const response = await apiClient.get("/api/reports", {
-    params: buildReportQueryParams({ page, pageSize, status, filters }),
+    params: buildReportQueryParams({ page, pageSize, status, reportType, regularMode, filters }),
   });
   return response.data;
 };
 
-export const getTrashReports = async ({ page = 1, pageSize = 20, filters } = {}) => {
+export const getTrashReports = async ({ page = 1, pageSize = 20, reportType, regularMode, filters } = {}) => {
   const response = await apiClient.get("/api/reports/trash", {
-    params: buildReportQueryParams({ page, pageSize, status: "all", filters }),
+    params: buildReportQueryParams({ page, pageSize, status: "all", reportType, regularMode, filters }),
   });
   return response.data;
 };
 
-export const getReportFilterOptions = async () => {
-  const response = await apiClient.get("/api/reports/filter-options");
+export const getReportFilterOptions = async ({ reportType } = {}) => {
+  const response = await apiClient.get("/api/reports/filter-options", {
+    params: reportType ? { report_type: reportType } : undefined,
+  });
   return response.data;
 };
 
-export const downloadDataExport = async ({ status, filters } = {}) => {
+export const downloadDataExport = async ({ status, reportType, regularMode, filters } = {}) => {
   try {
-    const response = await apiClient.post("/api/data/export", buildReportExportPayload({ status, filters }), {
+    const response = await apiClient.post("/api/data/export", buildReportExportPayload({ status, reportType, regularMode, filters }), {
       responseType: "blob",
     });
     return {
@@ -304,12 +306,17 @@ export const downloadReportBatchPdf = async (reportIds) => {
   }
 };
 
-export const uploadInvoice = async ({ reportId, tripId, expenseCategory, file }) => {
+export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {
   const formData = new FormData();
   formData.append("report_id", reportId);
-  formData.append("expense_category", expenseCategory);
+  if (expenseCategory) {
+    formData.append("expense_category", expenseCategory);
+  }
   if (tripId) {
     formData.append("trip_id", tripId);
+  }
+  if (regularItemId) {
+    formData.append("regular_item_id", regularItemId);
   }
   formData.append("file", file);
   const response = await apiClient.post("/api/invoices/upload", formData, {
@@ -345,9 +352,12 @@ export const deleteInvoice = async (id) => {
 
 export const getInvoiceFileUrl = (id) => `${apiClient.defaults.baseURL}/api/invoices/${id}/file`;
 
-export const uploadReportAttachment = async ({ reportId, file }) => {
+export const uploadReportAttachment = async ({ reportId, regularItemId, file }) => {
   const formData = new FormData();
   formData.append("report_id", reportId);
+  if (regularItemId) {
+    formData.append("regular_item_id", regularItemId);
+  }
   formData.append("file", file);
   const response = await apiClient.post("/api/report-attachments/upload", formData, {
     headers: { "Content-Type": "multipart/form-data" },
@@ -388,31 +398,35 @@ export const discardRailTicketPreview = async ({ reportId, token }) => {
   return response.data;
 };
 
-const buildStatsRangeParams = ({ startMonth, endMonth } = {}) => ({
+const buildStatsRangeParams = ({ startMonth, endMonth, reportStart, reportEnd, reportType, regularMode } = {}) => ({
   ...(startMonth ? { start_month: startMonth } : {}),
   ...(endMonth ? { end_month: endMonth } : {}),
+  ...(reportStart ? { report_start: reportStart } : {}),
+  ...(reportEnd ? { report_end: reportEnd } : {}),
+  ...(reportType ? { report_type: reportType } : {}),
+  ...(regularMode ? { regular_mode: regularMode } : {}),
 });
 
-export const getStatsSummary = async ({ startMonth, endMonth } = {}) => {
+export const getStatsSummary = async (options = {}) => {
   const response = await apiClient.get("/api/stats/summary", {
-    params: buildStatsRangeParams({ startMonth, endMonth }),
+    params: buildStatsRangeParams(options),
   });
   return response.data;
 };
 
-export const getStatsCategory = async ({ startMonth, endMonth } = {}) => {
+export const getStatsCategory = async ({ startMonth, endMonth, reportType } = {}) => {
   const response = await apiClient.get("/api/stats/category", {
-    params: buildStatsRangeParams({ startMonth, endMonth }),
+    params: buildStatsRangeParams({ startMonth, endMonth, reportType }),
   });
   return response.data;
 };
 
-export const getStatsCalendar = async ({ year, month, startMonth, endMonth } = {}) => {
+export const getStatsCalendar = async ({ year, month, startMonth, endMonth, reportType } = {}) => {
   const response = await apiClient.get("/api/stats/calendar", {
     params: {
       ...(year ? { year } : {}),
       ...(month ? { month } : {}),
-      ...buildStatsRangeParams({ startMonth, endMonth }),
+      ...buildStatsRangeParams({ startMonth, endMonth, reportType }),
     },
   });
   return response.data;

@@ -230,6 +230,19 @@ def _active_invoices(report: ExpenseReport) -> list[Invoice]:
 
 def _ordered_active_invoices(report: ExpenseReport) -> list[Invoice]:
     invoices = _active_invoices(report)
+    if getattr(report, "report_type", "travel") == "regular":
+        item_order = {
+            item.id: index
+            for index, item in enumerate(sorted(report.regular_items, key=lambda item: (item.sort_order, item.id or 0)))
+        }
+        return sorted(
+            invoices,
+            key=lambda invoice: (
+                item_order.get(invoice.regular_item_id, len(item_order)),
+                invoice.created_at,
+                invoice.id or 0,
+            ),
+        )
     trip_order = {trip.id: index for index, trip in enumerate(sorted(report.trips, key=lambda item: item.sort_order))}
     other_categories = _ordered_other_categories(report)
     category_order = {category: index for index, category in enumerate(other_categories)}
@@ -258,6 +271,11 @@ def _confirmed_invoices(report: ExpenseReport) -> list[Invoice]:
 def ensure_pdf_exportable(report: ExpenseReport) -> None:
     if any(not invoice.amount_confirmed for invoice in _active_invoices(report)):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="存在未确认发票，请先确认发票金额")
+    if getattr(report, "report_type", "travel") == "regular":
+        from backend.services.regular_pdf_generator import ensure_regular_template_available
+
+        ensure_regular_template_available()
+        return
     _get_template_path()
 
 
@@ -459,6 +477,10 @@ def _build_overlay(
 def build_report_pdf(report: ExpenseReport, fill_font_key: str | None = DEFAULT_PDF_FILL_FONT_KEY) -> bytes:
     ensure_pdf_exportable(report)
     fill_font_name = _register_pdf_fill_font(fill_font_key)
+    if getattr(report, "report_type", "travel") == "regular":
+        from backend.services.regular_pdf_generator import build_regular_report_pdf
+
+        return build_regular_report_pdf(report, fill_font_name)
     template_path = _get_template_path()
     template_reader = PdfReader(str(template_path))
     template_page = template_reader.pages[0]
@@ -531,6 +553,19 @@ def _append_invoice_attachments(writer: PdfWriter, report: ExpenseReport, double
 
 def _append_report_attachments(writer: PdfWriter, report: ExpenseReport) -> None:
     attachments: list[ReportAttachment] = report.active_attachments
+    if getattr(report, "report_type", "travel") == "regular":
+        item_order = {
+            item.id: index
+            for index, item in enumerate(sorted(report.regular_items, key=lambda item: (item.sort_order, item.id or 0)))
+        }
+        attachments = sorted(
+            attachments,
+            key=lambda attachment: (
+                item_order.get(attachment.regular_item_id, len(item_order)),
+                attachment.created_at,
+                attachment.id or 0,
+            ),
+        )
     for attachment in attachments:
         path = _invoice_file_path(attachment.file_path)
         if not path.exists():
@@ -577,6 +612,12 @@ def render_report_preview_pages(
 
 def build_pdf_filename(report: ExpenseReport) -> str:
     report_date = report.report_date.isoformat() if report.report_date else "未填日期"
+    if getattr(report, "report_type", "travel") == "regular":
+        employee_name = (report.employee_name or "未填报销人").strip() or "未填报销人"
+        mode_label = "有票" if getattr(report, "regular_mode", None) == "invoice" else "无票"
+        amount = _money(report.total_amount)
+        filename = f"{report_date}-{employee_name}-常规报销-{mode_label}-￥{amount}.pdf"
+        return ILLEGAL_FILENAME_CHARS.sub("_", filename)
     purpose = (report.purpose or "未填事由").strip() or "未填事由"
     amount = _money(report.total_amount)
     filename = f"{report_date}-{purpose}-￥{amount}.pdf"

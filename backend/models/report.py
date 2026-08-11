@@ -13,6 +13,8 @@ class ExpenseReport(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     report_uid: Mapped[str] = mapped_column(String, default=lambda: uuid4().hex, nullable=False, unique=True)
+    report_type: Mapped[str] = mapped_column(String, default="travel", nullable=False)
+    regular_mode: Mapped[str | None] = mapped_column(String, nullable=True)
     status: Mapped[str] = mapped_column(String, default="draft", nullable=False)
     report_date: Mapped[date | None] = mapped_column(Date, nullable=True)
     department: Mapped[str | None] = mapped_column(String, nullable=True)
@@ -34,6 +36,12 @@ class ExpenseReport(Base):
 
     trips = relationship("Trip", back_populates="report", cascade="all, delete-orphan")
     expense_items = relationship("ExpenseItem", back_populates="report", cascade="all, delete-orphan")
+    regular_items = relationship(
+        "RegularItem",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="RegularItem.sort_order",
+    )
     invoices = relationship("Invoice", back_populates="report", cascade="all, delete-orphan")
     attachments = relationship("ReportAttachment", back_populates="report", cascade="all, delete-orphan")
 
@@ -50,10 +58,29 @@ class ExpenseReport(Base):
 
     @property
     def invoice_count(self) -> int:
+        if self.report_type == "regular":
+            return len(self.active_invoices) if self.regular_mode == "invoice" else 0
         paper_count = sum(int(trip.paper_invoice_count or 0) for trip in self.trips) + sum(
             int(item.paper_invoice_count or 0) for item in self.expense_items
         )
         return len(self.active_invoices) + paper_count
+
+    @property
+    def document_count(self) -> int:
+        if self.report_type == "regular":
+            return sum(item.document_count for item in self.regular_items)
+        return self.invoice_count
+
+    @property
+    def regular_item_count(self) -> int:
+        return len(self.regular_items) if self.report_type == "regular" else 0
+
+    @property
+    def regular_item_summary(self) -> str | None:
+        if self.report_type != "regular":
+            return None
+        descriptions = [(item.description or "").strip() for item in self.regular_items]
+        return "、".join(description for description in descriptions if description)
 
     @property
     def trip_start_date(self) -> date | None:

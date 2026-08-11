@@ -8,16 +8,20 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
+  Menu,
+  MenuItem,
   Paper,
   Stack,
   Tooltip,
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import ChevronLeftIcon from "@mui/icons-material/ChevronLeft";
 import ChevronRightIcon from "@mui/icons-material/ChevronRight";
 import DashboardIcon from "@mui/icons-material/Dashboard";
 import ReceiptLongIcon from "@mui/icons-material/ReceiptLong";
+import RequestQuoteIcon from "@mui/icons-material/RequestQuote";
 import StorageIcon from "@mui/icons-material/Storage";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { useState } from "react";
@@ -34,11 +38,15 @@ import MaintenancePage from "./pages/MaintenancePage";
 import ReportEdit from "./pages/ReportEdit";
 import ReportList from "./pages/ReportList";
 import ReportPrint from "./pages/ReportPrint";
+import RegularReportEdit from "./pages/RegularReportEdit";
+import RegularReportList from "./pages/RegularReportList";
 import SettingsPage from "./pages/SettingsPage";
 
 const NAV_ITEMS = [
   { label: "总览看板", to: "/", icon: <DashboardIcon fontSize="small" /> },
-  { label: "报销单管理", to: "/reports", icon: <ReceiptLongIcon fontSize="small" /> },
+  { label: "出差报销单", to: "/reports", icon: <ReceiptLongIcon fontSize="small" /> },
+  { divider: true, key: "report-type-divider" },
+  { label: "常规报销单", to: "/regular-reports", icon: <RequestQuoteIcon fontSize="small" /> },
   { label: "个性化设置", to: "/settings", icon: <SettingsIcon fontSize="small" /> },
   { label: "数据维护", to: "/maintenance", icon: <StorageIcon fontSize="small" /> },
 ];
@@ -54,6 +62,7 @@ const APP_CONTENT_SX = {
 function Sidebar() {
   const location = useLocation();
   const { requestNavigation } = useNavigationGuard();
+  const [createMenuAnchor, setCreateMenuAnchor] = useState(null);
   const [collapsed, setCollapsed] = useState(() => {
     try {
       return readSidebarCollapsed(window.localStorage);
@@ -77,6 +86,12 @@ function Sidebar() {
   const isActive = (to) => {
     if (to === "/") return location.pathname === "/";
     return location.pathname.startsWith(to);
+  };
+
+  const closeCreateMenu = () => setCreateMenuAnchor(null);
+  const navigateToCreate = (to) => {
+    closeCreateMenu();
+    requestNavigation(to);
   };
 
   return (
@@ -112,7 +127,7 @@ function Sidebar() {
               报销管理
             </Typography>
             <Typography variant="body2" color="text.secondary" noWrap sx={{ mt: 0.25 }}>
-              本地出差旅费工作台
+              本地报销工作台
             </Typography>
           </Box>
           <Tooltip title={collapsed ? "展开侧栏" : "收起侧栏"} placement="right">
@@ -134,8 +149,11 @@ function Sidebar() {
           <Button
             variant="contained"
             startIcon={<AddIcon />}
+            endIcon={<ArrowDropDownIcon />}
             aria-label="新增报销单"
-            onClick={() => requestNavigation("/reports/new")}
+            aria-haspopup="menu"
+            aria-expanded={Boolean(createMenuAnchor)}
+            onClick={(event) => setCreateMenuAnchor(event.currentTarget)}
             sx={{
               minWidth: 0,
               justifyContent: { xs: "flex-start", md: collapsed ? "center" : "flex-start" },
@@ -144,6 +162,9 @@ function Sidebar() {
                 ml: { md: collapsed ? 0 : -0.5 },
                 mr: { md: collapsed ? 0 : 1 },
               },
+              "& .MuiButton-endIcon": {
+                display: { md: collapsed ? "none" : "inherit" },
+              },
             }}
           >
             <Box component="span" sx={{ display: { xs: "inline", md: collapsed ? "none" : "inline" } }}>
@@ -151,11 +172,24 @@ function Sidebar() {
             </Box>
           </Button>
         </Tooltip>
+        <Menu
+          anchorEl={createMenuAnchor}
+          open={Boolean(createMenuAnchor)}
+          onClose={closeCreateMenu}
+          MenuListProps={{ "aria-label": "选择报销单类型", dense: true }}
+        >
+          <MenuItem onClick={() => navigateToCreate("/reports/new")}>出差报销单</MenuItem>
+          <Divider />
+          <MenuItem onClick={() => navigateToCreate("/regular-reports/new?mode=no_invoice")}>常规报销单 · 无票</MenuItem>
+          <MenuItem onClick={() => navigateToCreate("/regular-reports/new?mode=invoice")}>常规报销单 · 有票</MenuItem>
+        </Menu>
 
         <Divider />
 
         <List disablePadding>
-          {NAV_ITEMS.map((item) => (
+          {NAV_ITEMS.map((item) => item.divider ? (
+            <Divider key={item.key} sx={{ my: 1 }} />
+          ) : (
             <Tooltip key={item.to} title={collapsed ? item.label : ""} placement="right">
               <ListItemButton
                 selected={isActive(item.to)}
@@ -208,6 +242,9 @@ function AppRoutes() {
             <Route path="/reports/new" element={<ReportEdit />} />
             <Route path="/reports/:id/edit" element={<ReportEdit />} />
             <Route path="/reports/:id/print" element={<ReportPrint />} />
+            <Route path="/regular-reports" element={<RegularReportList />} />
+            <Route path="/regular-reports/new" element={<RegularReportEdit />} />
+            <Route path="/regular-reports/:id/edit" element={<RegularReportEdit />} />
             <Route path="/maintenance" element={<MaintenancePage />} />
             <Route path="/settings" element={<SettingsPage />} />
           </Routes>

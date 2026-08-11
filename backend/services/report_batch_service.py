@@ -127,7 +127,8 @@ def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> Repor
         for report in candidates:
             report.deleted_at = deleted_at
             for invoice in report.invoices:
-                invoice.deleted_at = deleted_at
+                if invoice.deleted_at is None:
+                    invoice.deleted_at = deleted_at
             for attachment in report.attachments:
                 if attachment.deleted_at is None:
                     attachment.deleted_at = deleted_at

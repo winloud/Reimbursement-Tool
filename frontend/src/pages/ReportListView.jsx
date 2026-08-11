@@ -217,7 +217,7 @@ export default function ReportListView(props) {
       >
         <div>
           <Typography variant="h5" fontWeight={700}>
-            报销单管理
+            出差报销单
           </Typography>
           <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
         </div>

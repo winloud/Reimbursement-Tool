@@ -23,7 +23,7 @@ engine = create_engine(
 def create_db_and_tables() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    from backend.models import expense_item, invoice, report, report_attachment, settings, trip  # noqa: F401
+    from backend.models import expense_item, invoice, regular_item, report, report_attachment, settings, trip  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     migrate_sqlite_schema()
@@ -58,6 +58,11 @@ def migrate_sqlite_schema() -> None:
                 connection.execute(text("ALTER TABLE expense_reports ADD COLUMN report_uid VARCHAR"))
             if "manual_subsidy_total" not in report_columns:
                 connection.execute(text("ALTER TABLE expense_reports ADD COLUMN manual_subsidy_total NUMERIC(18, 2)"))
+            if "report_type" not in report_columns:
+                connection.execute(text("ALTER TABLE expense_reports ADD COLUMN report_type VARCHAR NOT NULL DEFAULT 'travel'"))
+            if "regular_mode" not in report_columns:
+                connection.execute(text("ALTER TABLE expense_reports ADD COLUMN regular_mode VARCHAR"))
+            connection.execute(text("UPDATE expense_reports SET report_type = 'travel' WHERE report_type IS NULL OR TRIM(report_type) = ''"))
             backfill_unique_uid(connection, "expense_reports", "report_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_expense_reports_report_uid ON expense_reports(report_uid)"))
         if "invoices" in tables:
@@ -66,8 +71,11 @@ def migrate_sqlite_schema() -> None:
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_uid VARCHAR"))
             if "invoice_type" not in invoice_columns:
                 connection.execute(text("ALTER TABLE invoices ADD COLUMN invoice_type VARCHAR NOT NULL DEFAULT 'unknown'"))
+            if "regular_item_id" not in invoice_columns:
+                connection.execute(text("ALTER TABLE invoices ADD COLUMN regular_item_id INTEGER REFERENCES regular_items(id)"))
             backfill_unique_uid(connection, "invoices", "invoice_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_invoices_invoice_uid ON invoices(invoice_uid)"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_invoices_regular_item_id ON invoices(regular_item_id)"))
         if "expense_items" in tables:
             expense_item_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(expense_items)")).fetchall()}
             if "reimbursable_amount" not in expense_item_columns:
@@ -76,6 +84,13 @@ def migrate_sqlite_schema() -> None:
                 connection.execute(text("ALTER TABLE expense_items ADD COLUMN paper_invoice_amount NUMERIC(18, 2) NOT NULL DEFAULT 0"))
             if "paper_invoice_count" not in expense_item_columns:
                 connection.execute(text("ALTER TABLE expense_items ADD COLUMN paper_invoice_count INTEGER NOT NULL DEFAULT 0"))
+        if "report_attachments" in tables:
+            attachment_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(report_attachments)")).fetchall()}
+            if "regular_item_id" not in attachment_columns:
+                connection.execute(text("ALTER TABLE report_attachments ADD COLUMN regular_item_id INTEGER REFERENCES regular_items(id)"))
+            if "page_count" not in attachment_columns:
+                connection.execute(text("ALTER TABLE report_attachments ADD COLUMN page_count INTEGER NOT NULL DEFAULT 1"))
+            connection.execute(text("CREATE INDEX IF NOT EXISTS ix_report_attachments_regular_item_id ON report_attachments(regular_item_id)"))
         connection.execute(text(f"PRAGMA user_version = {DATA_SCHEMA_VERSION}"))
 
 

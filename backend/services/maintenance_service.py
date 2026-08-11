@@ -90,6 +90,7 @@ VALID_EXPENSE_CATEGORIES = {
     "toll",
     "fuel_subsidy",
 }
+VALID_INVOICE_CATEGORIES = VALID_EXPENSE_CATEGORIES | {"regular"}
 
 
 def _utc_now() -> datetime:
@@ -633,6 +634,10 @@ def _table_counts(connection: sqlite3.Connection, tables: set[str]) -> dict[str,
     return counts
 
 
+def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row["name"]) for row in connection.execute(f"PRAGMA table_info({_quote_identifier(table)})").fetchall()}
+
+
 def _rows_issue(
     issues: list[DatabaseIntegrityIssueRead],
     rows: list[sqlite3.Row],
@@ -744,6 +749,66 @@ def _append_business_integrity_checks(
             detail_builder=lambda row: f"report_id={row['id']}, status={row['status']}",
         )
 
+        report_columns = _table_columns(connection, "expense_reports")
+        if {"report_type", "regular_mode"}.issubset(report_columns):
+            rows = connection.execute(
+                """
+                SELECT id, report_type, regular_mode
+                FROM expense_reports
+                WHERE report_type NOT IN ('travel', 'regular')
+                   OR report_type IS NULL
+                   OR (report_type = 'travel' AND regular_mode IS NOT NULL)
+                   OR (report_type = 'regular' AND (regular_mode IS NULL OR regular_mode NOT IN ('no_invoice', 'invoice')))
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="invalid_report_kind",
+                message="存在无效的报销单类型或常规报销模式",
+                detail_builder=lambda row: (
+                    f"report_id={row['id']}, report_type={row['report_type']}, regular_mode={row['regular_mode']}"
+                ),
+            )
+
+            regular_travel_field_conditions: list[str] = []
+            for column in ("department", "purpose"):
+                if column in report_columns:
+                    regular_travel_field_conditions.append(
+                        f"NULLIF(TRIM(COALESCE({_quote_identifier(column)}, '')), '') IS NOT NULL"
+                    )
+            for column in (
+                "daily_subsidy",
+                "subsidy_days",
+                "subsidy_total",
+                "advance_amount",
+                "shortfall",
+                "surplus",
+            ):
+                if column in report_columns:
+                    regular_travel_field_conditions.append(f"COALESCE({_quote_identifier(column)}, 0) != 0")
+            for column in ("manual_subsidy_total", "advance_date_month", "advance_date_day"):
+                if column in report_columns:
+                    regular_travel_field_conditions.append(f"{_quote_identifier(column)} IS NOT NULL")
+            if regular_travel_field_conditions:
+                rows = connection.execute(
+                    "SELECT id FROM expense_reports "
+                    "WHERE report_type = 'regular' AND ("
+                    + " OR ".join(regular_travel_field_conditions)
+                    + ")"
+                ).fetchall()
+                _rows_issue(
+                    issues,
+                    rows,
+                    severity="error",
+                    category="business",
+                    code="regular_report_has_travel_fields",
+                    message="常规报销单包含部门、出差事由、补贴、预支或补领归还等差旅字段",
+                    detail_builder=lambda row: f"report_id={row['id']}",
+                )
+
     if {"trips", "expense_reports"}.issubset(tables):
         rows = connection.execute(
             """
@@ -762,6 +827,24 @@ def _append_business_integrity_checks(
             message="存在无所属报销单的行程",
             detail_builder=lambda row: f"trip_id={row['id']}, report_id={row['report_id']}",
         )
+        if "report_type" in _table_columns(connection, "expense_reports"):
+            rows = connection.execute(
+                """
+                SELECT trips.id, trips.report_id
+                FROM trips
+                JOIN expense_reports ON expense_reports.id = trips.report_id
+                WHERE expense_reports.report_type = 'regular'
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="trip_on_regular_report",
+                message="常规报销单下存在差旅行程",
+                detail_builder=lambda row: f"trip_id={row['id']}, report_id={row['report_id']}",
+            )
 
     if {"expense_items", "expense_reports"}.issubset(tables):
         rows = connection.execute(
@@ -781,6 +864,61 @@ def _append_business_integrity_checks(
             message="存在无所属报销单的费用项",
             detail_builder=lambda row: f"expense_item_id={row['id']}, report_id={row['report_id']}",
         )
+        if "report_type" in _table_columns(connection, "expense_reports"):
+            rows = connection.execute(
+                """
+                SELECT expense_items.id, expense_items.report_id
+                FROM expense_items
+                JOIN expense_reports ON expense_reports.id = expense_items.report_id
+                WHERE expense_reports.report_type = 'regular'
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="travel_expense_item_on_regular_report",
+                message="常规报销单下存在差旅费用项",
+                detail_builder=lambda row: f"expense_item_id={row['id']}, report_id={row['report_id']}",
+            )
+
+    if {"regular_items", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT regular_items.id, regular_items.report_id
+            FROM regular_items
+            LEFT JOIN expense_reports ON expense_reports.id = regular_items.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_regular_item",
+            message="存在无所属报销单的常规报销项目",
+            detail_builder=lambda row: f"regular_item_id={row['id']}, report_id={row['report_id']}",
+        )
+        if "report_type" in _table_columns(connection, "expense_reports"):
+            rows = connection.execute(
+                """
+                SELECT regular_items.id, regular_items.report_id, expense_reports.report_type
+                FROM regular_items
+                JOIN expense_reports ON expense_reports.id = regular_items.report_id
+                WHERE expense_reports.report_type != 'regular'
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="regular_item_on_travel_report",
+                message="出差报销单下存在常规报销项目",
+                detail_builder=lambda row: f"regular_item_id={row['id']}, report_id={row['report_id']}",
+            )
 
     if {"invoices", "expense_reports"}.issubset(tables):
         rows = connection.execute(
@@ -819,6 +957,82 @@ def _append_business_integrity_checks(
             detail_builder=lambda row: f"invoice_id={row['id']}, report_id={row['report_id']}",
         )
 
+        invoice_columns = _table_columns(connection, "invoices")
+        report_columns = _table_columns(connection, "expense_reports")
+        if "regular_item_id" in invoice_columns and "regular_items" in tables:
+            rows = connection.execute(
+                """
+                SELECT invoices.id, invoices.report_id, invoices.regular_item_id
+                FROM invoices
+                LEFT JOIN regular_items ON regular_items.id = invoices.regular_item_id
+                WHERE invoices.regular_item_id IS NOT NULL AND regular_items.id IS NULL
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="orphan_invoice_regular_item",
+                message="发票关联了不存在的常规报销项目",
+                detail_builder=lambda row: (
+                    f"invoice_id={row['id']}, report_id={row['report_id']}, regular_item_id={row['regular_item_id']}"
+                ),
+            )
+            rows = connection.execute(
+                """
+                SELECT invoices.id, invoices.report_id, invoices.regular_item_id,
+                       regular_items.report_id AS item_report_id
+                FROM invoices
+                JOIN regular_items ON regular_items.id = invoices.regular_item_id
+                WHERE invoices.report_id != regular_items.report_id
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="invoice_regular_item_report_mismatch",
+                message="发票关联的常规报销项目不属于同一报销单",
+                detail_builder=lambda row: (
+                    f"invoice_id={row['id']}, report_id={row['report_id']}, "
+                    f"regular_item_id={row['regular_item_id']}, item_report_id={row['item_report_id']}"
+                ),
+            )
+        if "regular_item_id" in invoice_columns and {"report_type", "regular_mode"}.issubset(report_columns):
+            rows = connection.execute(
+                """
+                SELECT invoices.id, invoices.report_id, invoices.trip_id, invoices.regular_item_id,
+                       expense_reports.report_type, expense_reports.regular_mode
+                FROM invoices
+                JOIN expense_reports ON expense_reports.id = invoices.report_id
+                WHERE invoices.deleted_at IS NULL
+                  AND (
+                    (expense_reports.report_type = 'travel' AND invoices.regular_item_id IS NOT NULL)
+                    OR (expense_reports.report_type = 'regular' AND expense_reports.regular_mode = 'invoice'
+                        AND invoices.regular_item_id IS NULL)
+                    OR (expense_reports.report_type = 'regular' AND expense_reports.regular_mode = 'no_invoice')
+                    OR (expense_reports.report_type = 'regular' AND invoices.trip_id IS NOT NULL)
+                    OR (expense_reports.report_type = 'regular' AND invoices.expense_category != 'regular')
+                    OR (expense_reports.report_type = 'travel' AND invoices.expense_category = 'regular')
+                  )
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="invoice_report_kind_mismatch",
+                message="发票与报销单类型或常规报销模式不匹配",
+                detail_builder=lambda row: (
+                    f"invoice_id={row['id']}, report_id={row['report_id']}, "
+                    f"report_type={row['report_type']}, regular_mode={row['regular_mode']}, "
+                    f"trip_id={row['trip_id']}, regular_item_id={row['regular_item_id']}"
+                ),
+            )
+
     if {"report_attachments", "expense_reports"}.issubset(tables):
         rows = connection.execute(
             """
@@ -837,6 +1051,101 @@ def _append_business_integrity_checks(
             message="存在无所属报销单的非发票附件",
             detail_builder=lambda row: f"attachment_id={row['id']}, report_id={row['report_id']}",
         )
+
+        attachment_columns = _table_columns(connection, "report_attachments")
+        report_columns = _table_columns(connection, "expense_reports")
+        if "regular_item_id" in attachment_columns and "regular_items" in tables:
+            rows = connection.execute(
+                """
+                SELECT report_attachments.id, report_attachments.report_id,
+                       report_attachments.regular_item_id
+                FROM report_attachments
+                LEFT JOIN regular_items ON regular_items.id = report_attachments.regular_item_id
+                WHERE report_attachments.regular_item_id IS NOT NULL AND regular_items.id IS NULL
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="orphan_attachment_regular_item",
+                message="凭据附件关联了不存在的常规报销项目",
+                detail_builder=lambda row: (
+                    f"attachment_id={row['id']}, report_id={row['report_id']}, "
+                    f"regular_item_id={row['regular_item_id']}"
+                ),
+            )
+            rows = connection.execute(
+                """
+                SELECT report_attachments.id, report_attachments.report_id,
+                       report_attachments.regular_item_id, regular_items.report_id AS item_report_id
+                FROM report_attachments
+                JOIN regular_items ON regular_items.id = report_attachments.regular_item_id
+                WHERE report_attachments.report_id != regular_items.report_id
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="attachment_regular_item_report_mismatch",
+                message="凭据附件关联的常规报销项目不属于同一报销单",
+                detail_builder=lambda row: (
+                    f"attachment_id={row['id']}, report_id={row['report_id']}, "
+                    f"regular_item_id={row['regular_item_id']}, item_report_id={row['item_report_id']}"
+                ),
+            )
+        if "regular_item_id" in attachment_columns and {"report_type", "regular_mode"}.issubset(report_columns):
+            rows = connection.execute(
+                """
+                SELECT report_attachments.id, report_attachments.report_id,
+                       report_attachments.regular_item_id,
+                       expense_reports.report_type, expense_reports.regular_mode
+                FROM report_attachments
+                JOIN expense_reports ON expense_reports.id = report_attachments.report_id
+                WHERE report_attachments.deleted_at IS NULL
+                  AND (
+                    (expense_reports.report_type = 'travel' AND report_attachments.regular_item_id IS NOT NULL)
+                    OR (expense_reports.report_type = 'regular' AND expense_reports.regular_mode = 'no_invoice'
+                        AND report_attachments.regular_item_id IS NULL)
+                    OR (expense_reports.report_type = 'regular' AND expense_reports.regular_mode = 'invoice')
+                  )
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="attachment_report_kind_mismatch",
+                message="凭据附件与报销单类型或常规报销模式不匹配",
+                detail_builder=lambda row: (
+                    f"attachment_id={row['id']}, report_id={row['report_id']}, "
+                    f"report_type={row['report_type']}, regular_mode={row['regular_mode']}, "
+                    f"regular_item_id={row['regular_item_id']}"
+                ),
+            )
+        if "page_count" in attachment_columns:
+            rows = connection.execute(
+                """
+                SELECT id, report_id, page_count
+                FROM report_attachments
+                WHERE deleted_at IS NULL AND (page_count IS NULL OR page_count < 1)
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="invalid_attachment_page_count",
+                message="凭据附件页数必须为正整数",
+                detail_builder=lambda row: (
+                    f"attachment_id={row['id']}, report_id={row['report_id']}, page_count={row['page_count']}"
+                ),
+            )
 
         rows = connection.execute(
             """
@@ -879,7 +1188,7 @@ def _append_business_integrity_checks(
         )
 
     if "invoices" in tables:
-        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_EXPENSE_CATEGORIES))
+        category_list = ", ".join(f"'{category}'" for category in sorted(VALID_INVOICE_CATEGORIES))
         rows = connection.execute(
             f"""
             SELECT id, expense_category

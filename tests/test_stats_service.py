@@ -3,8 +3,11 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
+from fastapi import HTTPException
+
 from backend.models.invoice import Invoice
-from backend.schemas.report import ReportCreate, TripWrite
+from backend.schemas.report import RegularItemWrite, ReportCreate, TripWrite
 from backend.services.report_service import create_report, recalculate_report_totals
 from backend.services.stats_service import get_stats_calendar, get_stats_category, get_stats_summary
 
@@ -299,3 +302,164 @@ def test_stats_calendar_returns_continuous_month_cards_for_cross_year_range(db):
     june = next(item for item in calendar.months if item.month == "2024-06")
     assert june.dates == [date(2024, 6, 1), date(2024, 6, 2)]
     assert june.days == 2
+
+
+def make_regular_report(
+    db,
+    *,
+    report_date: date,
+    status: str,
+    mode: str,
+    amount: str,
+):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode=mode,
+            report_date=report_date,
+            employee_name="常规报销人",
+            regular_items=[
+                RegularItemWrite(
+                    sort_order=1,
+                    occurred_on=report_date,
+                    description=f"{mode}-{report_date}",
+                    amount=Decimal(amount) if mode == "no_invoice" else None,
+                )
+            ],
+        ),
+    )
+    if mode == "invoice":
+        item = report.regular_items[0]
+        db.add(
+            Invoice(
+                report_id=report.id,
+                regular_item_id=item.id,
+                expense_category="regular",
+                file_path=f"uploads/{report.id}/regular.pdf",
+                file_type="pdf",
+                amount=Decimal(amount),
+                amount_confirmed=True,
+            )
+        )
+        db.flush()
+        recalculate_report_totals(report)
+    report.status = status
+    db.commit()
+    db.refresh(report)
+    return report
+
+
+def test_stats_summary_defaults_to_travel_and_regular_uses_exact_date_and_mode_filters(db):
+    make_report(db, report_date=date(2026, 6, 10), status="checked", amount="50.00")
+    make_regular_report(
+        db,
+        report_date=date(2026, 6, 10),
+        status="checked",
+        mode="no_invoice",
+        amount="120.00",
+    )
+    make_regular_report(
+        db,
+        report_date=date(2026, 6, 11),
+        status="printed",
+        mode="invoice",
+        amount="80.00",
+    )
+    make_regular_report(
+        db,
+        report_date=date(2026, 6, 12),
+        status="reimbursed",
+        mode="no_invoice",
+        amount="300.00",
+    )
+    make_regular_report(
+        db,
+        report_date=date(2026, 6, 11),
+        status="draft",
+        mode="invoice",
+        amount="999.00",
+    )
+
+    travel = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        report_start=date(2026, 6, 10),
+        report_end=date(2026, 6, 12),
+    )
+    regular = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        report_type="regular",
+        report_start=date(2026, 6, 10),
+        report_end=date(2026, 6, 11),
+    )
+    invoice_only = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        report_type="regular",
+        regular_mode="invoice",
+        report_start=date(2026, 6, 10),
+        report_end=date(2026, 6, 12),
+    )
+
+    assert travel.selected_period.total_amount == Decimal("50.00")
+    assert travel.selected_period.total_count == 1
+    assert regular.selected_period.total_amount == Decimal("200.00")
+    assert regular.selected_period.pending_amount == Decimal("200.00")
+    assert regular.selected_period.total_count == 2
+    assert regular.selected_period.trip_days == 0
+    assert regular.monthly_trend[0].total_amount == Decimal("200.00")
+    assert invoice_only.selected_period.total_amount == Decimal("80.00")
+    assert invoice_only.selected_period.total_count == 1
+
+
+def test_stats_summary_rejects_regular_mode_for_travel(db):
+    with pytest.raises(HTTPException) as exc:
+        get_stats_summary(db, report_type="travel", regular_mode="invoice")
+
+    assert exc.value.status_code == 400
+    assert "仅适用于常规报销单" in exc.value.detail
+
+
+def test_regular_stats_one_sided_date_filters_match_open_list_semantics(db):
+    make_regular_report(
+        db,
+        report_date=date(2025, 12, 31),
+        status="reimbursed",
+        mode="no_invoice",
+        amount="40.00",
+    )
+    make_regular_report(
+        db,
+        report_date=date(2027, 1, 2),
+        status="checked",
+        mode="no_invoice",
+        amount="60.00",
+    )
+
+    through_2025 = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        report_type="regular",
+        report_end=date(2025, 12, 31),
+    )
+    from_2027 = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        report_type="regular",
+        report_start=date(2027, 1, 1),
+    )
+
+    assert through_2025.selected_period.total_amount == Decimal("40.00")
+    assert through_2025.selected_period.total_count == 1
+    assert from_2027.selected_period.total_amount == Decimal("60.00")
+    assert from_2027.selected_period.total_count == 1
+    assert [item.month for item in from_2027.monthly_trend] == [
+        "2026-01",
+        "2026-02",
+        "2026-03",
+        "2026-04",
+        "2026-05",
+        "2026-06",
+    ]

@@ -9,6 +9,9 @@ import {
   importRailTickets,
   openInvoiceLocally,
   previewRailTickets,
+  getStatsSummary,
+  uploadInvoice,
+  uploadReportAttachment,
 } from "./client.js";
 
 describe("api client release defaults", () => {
@@ -66,6 +69,42 @@ describe("api client release defaults", () => {
       assert.equal(requests[0].url, "/api/invoices/open-capability");
       assert.equal(requests[1].method, "post");
       assert.equal(requests[1].url, "/api/invoices/27/open-local");
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("binds regular invoices and evidence to a stable regular item", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return { data: { success: true, data: {} }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    try {
+      const file = new Blob(["regular"], { type: "application/pdf" });
+      await uploadInvoice({ reportId: 5, regularItemId: 17, file });
+      await uploadReportAttachment({ reportId: 5, regularItemId: 17, file });
+      await getStatsSummary({
+        reportType: "regular",
+        regularMode: "no_invoice",
+        reportStart: "2026-08-01",
+        reportEnd: "2026-08-31",
+      });
+
+      assert.equal(requests[0].url, "/api/invoices/upload");
+      assert.equal(requests[0].data.get("report_id"), "5");
+      assert.equal(requests[0].data.get("regular_item_id"), "17");
+      assert.equal(requests[0].data.has("expense_category"), false);
+      assert.equal(requests[1].url, "/api/report-attachments/upload");
+      assert.equal(requests[1].data.get("regular_item_id"), "17");
+      assert.deepEqual(requests[2].params, {
+        report_start: "2026-08-01",
+        report_end: "2026-08-31",
+        report_type: "regular",
+        regular_mode: "no_invoice",
+      });
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

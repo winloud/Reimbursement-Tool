@@ -30,6 +30,7 @@ class InvoiceUploadResult(BaseModel):
     id: int
     report_id: int
     trip_id: int | None = None
+    regular_item_id: int | None = None
     expense_category: str
     file_path: str
     file_type: InvoiceFileType
@@ -62,6 +63,7 @@ class InvoiceRead(BaseModel):
     id: int
     report_id: int
     trip_id: int | None = None
+    regular_item_id: int | None = None
     expense_category: str
     file_path: str
     file_type: InvoiceFileType

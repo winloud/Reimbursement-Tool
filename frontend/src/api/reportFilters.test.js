@@ -85,11 +85,33 @@ describe("buildReportQueryParams", () => {
     assert.deepEqual(
       buildReportExportPayload({
         status: "reimbursed",
+        reportType: "travel",
         filters: { keyword: "差旅" },
       }),
       {
+        report_type: "travel",
         status: "reimbursed",
         keyword: "差旅",
+      },
+    );
+  });
+
+  it("isolates regular reports by type and immutable mode", () => {
+    assert.deepEqual(
+      buildReportQueryParams({
+        page: 3,
+        pageSize: 10,
+        reportType: "regular",
+        regularMode: "invoice",
+        filters: { reportStart: "2026-08-01", reportEnd: "2026-08-31" },
+      }),
+      {
+        page: 3,
+        page_size: 10,
+        report_type: "regular",
+        regular_mode: "invoice",
+        report_start: "2026-08-01",
+        report_end: "2026-08-31",
       },
     );
   });

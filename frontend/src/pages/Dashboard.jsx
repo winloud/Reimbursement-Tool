@@ -107,7 +107,7 @@ export default function Dashboard() {
   const [error, setError] = useState("");
 
   const validRange = rangeIsValid(startMonth, endMonth);
-  const rangeParams = useMemo(() => ({ startMonth, endMonth }), [endMonth, startMonth]);
+  const rangeParams = useMemo(() => ({ startMonth, endMonth, reportType: "travel" }), [endMonth, startMonth]);
 
   useEffect(() => {
     if (!validRange) {

@@ -4,12 +4,14 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-from backend.schemas.report import ReportInvoiceState, ReportStatus
+from backend.schemas.report import RegularMode, ReportInvoiceState, ReportStatus, ReportType
 
 ImportConflictStrategy = Literal["import_as_new", "overwrite", "skip"]
 
 
 class DataExportRequest(BaseModel):
+    report_type: ReportType | None = None
+    regular_mode: RegularMode | None = None
     status: ReportStatus | None = None
     statuses: str | None = None
     report_start: date | None = None

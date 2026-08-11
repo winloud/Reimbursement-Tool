@@ -12,12 +12,16 @@ from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.report_attachment import ReportAttachment
+from backend.models.regular_item import RegularItem
 from backend.models.trip import Trip
 from backend.schemas.report import (
     ExpenseItemWrite,
+    RegularItemWrite,
     ReportCreate,
     ReportInvoiceState,
+    RegularMode,
     ReportStatus,
+    ReportType,
     ReportUpdate,
     TripWrite,
 )
@@ -44,6 +48,7 @@ REPORT_STATUS_LABELS = {
 }
 
 FUEL_SUBSIDY_CATEGORY = "fuel_subsidy"
+REGULAR_EXPENSE_CATEGORY = "regular"
 EXPENSE_CATEGORIES = [
     "transport_fare",
     "luggage",
@@ -110,6 +115,8 @@ class SubsidyTrip:
 
 @dataclass(frozen=True)
 class ReportFilters:
+    report_type: ReportType | None = "travel"
+    regular_mode: RegularMode | None = None
     report_status: ReportStatus | None = None
     report_statuses: set[ReportStatus] | None = None
     report_start: date | None = None
@@ -198,6 +205,9 @@ def fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> Decimal:
 
 
 def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
+    if report.report_type == "regular":
+        ensure_regular_report_complete(report, action="下载")
+        return
     shortfall = fuel_subsidy_invoice_shortfall(report)
     if shortfall > Decimal("0.00"):
         raise HTTPException(
@@ -207,6 +217,9 @@ def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
 
 
 def ensure_report_ready_to_leave_draft(report: ExpenseReport) -> None:
+    if report.report_type == "regular":
+        ensure_regular_report_complete(report, action="修改状态")
+        return
     if not (report.purpose or "").strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差事由不能为空，请填写后再修改状态")
 
@@ -216,6 +229,47 @@ def ensure_report_ready_to_leave_draft(report: ExpenseReport) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再修改状态",
         )
+
+
+def ensure_regular_invoice_files_confirmed(report: ExpenseReport) -> None:
+    if report.report_type != "regular" or report.regular_mode != "invoice":
+        return
+    if any(not invoice.amount_confirmed for invoice in active_invoices(report)):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="有票常规报销单存在未确认发票，请确认金额后再预览或下载",
+        )
+
+
+def ensure_regular_report_complete(report: ExpenseReport, *, action: str) -> None:
+    if report.report_type != "regular":
+        return
+    if report.report_date is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"请填写报销日期后再{action}")
+    if not (report.employee_name or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"请填写报销人后再{action}")
+    if not report.regular_items:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"请至少添加一个报销项目后再{action}")
+
+    for index, item in enumerate(sorted(report.regular_items, key=lambda value: value.sort_order), start=1):
+        if item.occurred_on is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"第 {index} 个报销项目缺少发生日期")
+        if not (item.description or "").strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"第 {index} 个报销项目名称不能为空")
+        if report.regular_mode == "no_invoice":
+            if item.amount <= Decimal("0.00"):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"第 {index} 个无票报销项目金额必须大于 0")
+            continue
+
+        invoices = item.active_invoices
+        if not invoices:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"第 {index} 个有票报销项目至少需要上传一张发票")
+        if any(not invoice.amount_confirmed for invoice in invoices):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"第 {index} 个有票报销项目存在未确认发票")
+
+
+def ensure_report_previewable(report: ExpenseReport) -> None:
+    ensure_regular_invoice_files_confirmed(report)
 
 
 def build_trip_date(year: int, month: int, day: int) -> date:
@@ -341,6 +395,22 @@ def validate_trip_chronology(trip: Trip, depart: date, arrive: date, is_cross_ye
 
 
 def recalculate_report_totals(report: ExpenseReport) -> None:
+    if report.report_type == "regular":
+        report.daily_subsidy = Decimal("0.00")
+        report.subsidy_days = 0
+        report.subsidy_total = Decimal("0.00")
+        report.manual_subsidy_total = None
+        report.advance_date_month = None
+        report.advance_date_day = None
+        report.advance_amount = Decimal("0.00")
+        for item in report.regular_items:
+            if item.manual_amount is not None:
+                item.manual_amount = quantize_amount(item.manual_amount)
+        report.total_amount = quantize_amount(sum((item.amount for item in report.regular_items), Decimal("0.00")))
+        report.shortfall = Decimal("0.00")
+        report.surplus = Decimal("0.00")
+        return
+
     report.daily_subsidy = quantize_amount(report.daily_subsidy or Decimal("0.00"))
     report.advance_amount = quantize_amount(report.advance_amount or Decimal("0.00"))
 
@@ -427,6 +497,45 @@ def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None
                 setattr(trip, key, value)
         else:
             report.trips.append(Trip(**data))
+
+
+def get_regular_item_target(report: ExpenseReport, regular_item_id: int) -> RegularItem:
+    item = next((item for item in report.regular_items if item.id == regular_item_id), None)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销项目不存在或不属于当前报销单")
+    return item
+
+
+def replace_regular_items(report: ExpenseReport, item_payloads: list[RegularItemWrite]) -> None:
+    payload_ids = [item.id for item in item_payloads if item.id is not None]
+    if len(payload_ids) != len(set(payload_ids)):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销项目 ID 不能重复")
+
+    by_id = {item.id: item for item in report.regular_items if item.id is not None}
+    unknown_ids = set(payload_ids) - set(by_id)
+    if unknown_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销项目不存在或不属于当前报销单")
+
+    keep_ids = set(payload_ids)
+    for item in list(report.regular_items):
+        if item.id in keep_ids:
+            continue
+        if item.active_invoices or item.active_attachments:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该报销项目已有发票或凭据，请先清空关联文件再删除项目")
+        report.regular_items.remove(item)
+
+    for index, payload in enumerate(item_payloads, start=1):
+        if report.regular_mode == "invoice" and payload.amount is not None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="有票常规报销项目金额由已确认发票自动汇总，不能手工填写")
+        item = by_id.get(payload.id) if payload.id is not None else None
+        if item is None:
+            item = RegularItem()
+            report.regular_items.append(item)
+        item.sort_order = index
+        item.occurred_on = payload.occurred_on
+        item.description = payload.description
+        item.remark = payload.remark
+        item.manual_amount = quantize_amount(payload.amount) if payload.amount is not None else None
 
 
 def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemWrite]) -> None:
@@ -552,6 +661,9 @@ def report_matches_keyword(report: ExpenseReport, keyword: str | None) -> bool:
         report.employee_name or "",
         report.department or "",
     ]
+    if report.report_type == "regular":
+        values.extend(item.description or "" for item in report.regular_items)
+        values.extend(item.remark or "" for item in report.regular_items)
     return any(normalized in value.lower() for value in values)
 
 
@@ -604,6 +716,8 @@ def report_matches_category(report: ExpenseReport, category: str | None, include
     normalized = (category or "").strip()
     if not normalized:
         return True
+    if report.report_type == "regular":
+        return False
     category_key = validate_expense_category(normalized)
     return has_paper_invoice_for_category(report, category_key) or any(
         invoice.expense_category == category_key for invoice in active_invoices(report, include_deleted=include_deleted_invoices)
@@ -611,6 +725,10 @@ def report_matches_category(report: ExpenseReport, category: str | None, include
 
 
 def report_matches_filters(report: ExpenseReport, filters: ReportFilters, include_deleted_invoices: bool = False) -> bool:
+    if filters.report_type is not None and report.report_type != filters.report_type:
+        return False
+    if filters.regular_mode is not None and report.regular_mode != filters.regular_mode:
+        return False
     if filters.report_start is not None and (report.report_date is None or report.report_date < filters.report_start):
         return False
     if filters.report_end is not None and (report.report_date is None or report.report_date > filters.report_end):
@@ -696,6 +814,11 @@ def list_reports(
     else:
         statement = statement.where(ExpenseReport.deleted_at.is_(None))
 
+    if filters.report_type is not None:
+        statement = statement.where(ExpenseReport.report_type == filters.report_type)
+    if filters.regular_mode is not None:
+        statement = statement.where(ExpenseReport.regular_mode == filters.regular_mode)
+
     if report_status is not None:
         statement = statement.where(ExpenseReport.status == report_status)
     elif filters.report_statuses:
@@ -731,27 +854,71 @@ def list_deleted_reports(
     return list_reports(db, page=page, page_size=page_size, filters=filters, deleted_only=True)
 
 
+def regular_payload_has_travel_values(payload: ReportCreate | ReportUpdate) -> bool:
+    return bool(
+        (payload.department or "").strip()
+        or (payload.purpose or "").strip()
+        or Decimal(payload.daily_subsidy or 0) != Decimal("0.00")
+        or payload.subsidy_days != 0
+        or Decimal(payload.subsidy_total or 0) != Decimal("0.00")
+        or payload.manual_subsidy_total is not None
+        or payload.advance_date_month is not None
+        or payload.advance_date_day is not None
+        or Decimal(payload.advance_amount or 0) != Decimal("0.00")
+        or Decimal(payload.shortfall or 0) != Decimal("0.00")
+        or Decimal(payload.surplus or 0) != Decimal("0.00")
+    )
+
+
 def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:
     settings = get_or_create_settings(db)
-    data = payload.model_dump(exclude={"trips", "expense_items"})
-    if data.get("department") is None:
-        data["department"] = settings.department
+    data = payload.model_dump(exclude={"trips", "expense_items", "regular_items"})
     if data.get("employee_name") is None:
         data["employee_name"] = settings.employee_name
-    if data.get("daily_subsidy") == Decimal("0.00") and settings.daily_subsidy is not None:
-        data["daily_subsidy"] = settings.daily_subsidy
+    if payload.report_type == "regular":
+        if payload.regular_mode is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单必须选择有票或无票模式")
+        if payload.trips or payload.expense_items or regular_payload_has_travel_values(payload):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单不能包含差旅行程、补贴或预支数据")
+        data.update(
+            department=None,
+            purpose=None,
+            daily_subsidy=Decimal("0.00"),
+            subsidy_days=0,
+            subsidy_total=Decimal("0.00"),
+            manual_subsidy_total=None,
+            advance_date_month=None,
+            advance_date_day=None,
+            advance_amount=Decimal("0.00"),
+            shortfall=Decimal("0.00"),
+            surplus=Decimal("0.00"),
+        )
+    else:
+        if payload.regular_mode is not None or payload.regular_items:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销单不能包含常规报销模式或项目")
+        if data.get("department") is None:
+            data["department"] = settings.department
+        if data.get("daily_subsidy") == Decimal("0.00") and settings.daily_subsidy is not None:
+            data["daily_subsidy"] = settings.daily_subsidy
 
-    report = ExpenseReport(**data)
-    db.add(report)
-    db.flush()
-    ensure_expense_items(report)
-    if payload.trips:
-        replace_trips(report, payload.trips)
-    if payload.expense_items:
-        update_expense_items(report, payload.expense_items)
-    db.flush()
-    recalculate_report_totals(report)
-    db.commit()
+    try:
+        report = ExpenseReport(**data)
+        db.add(report)
+        db.flush()
+        if report.report_type == "regular":
+            replace_regular_items(report, payload.regular_items)
+        else:
+            ensure_expense_items(report)
+            if payload.trips:
+                replace_trips(report, payload.trips)
+            if payload.expense_items:
+                update_expense_items(report, payload.expense_items)
+        db.flush()
+        recalculate_report_totals(report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     db.refresh(report)
     return report
 
@@ -761,13 +928,30 @@ def update_report(db: Session, report_id: int, payload: ReportUpdate) -> Expense
     ensure_report_writable(report)
 
     try:
-        data = payload.model_dump(exclude={"trips", "expense_items"})
-        for key, value in data.items():
-            setattr(report, key, value)
-        if payload.trips is not None:
-            replace_trips(report, payload.trips)
-        if payload.expense_items is not None:
-            update_expense_items(report, payload.expense_items)
+        fields_set = payload.model_fields_set
+        if "report_type" in fields_set and payload.report_type != report.report_type:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="报销单类型创建后不能修改")
+        if "regular_mode" in fields_set and payload.regular_mode != report.regular_mode:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销模式创建后不能修改")
+
+        if report.report_type == "regular":
+            if payload.trips or payload.expense_items or regular_payload_has_travel_values(payload):
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单不能包含差旅行程、补贴或预支数据")
+            for key in ("report_date", "employee_name"):
+                if key in fields_set:
+                    setattr(report, key, getattr(payload, key))
+            if payload.regular_items is not None:
+                replace_regular_items(report, payload.regular_items)
+        else:
+            if payload.regular_items is not None:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销单不能包含常规报销项目")
+            data = payload.model_dump(exclude={"trips", "expense_items", "regular_items", "report_type", "regular_mode"})
+            for key, value in data.items():
+                setattr(report, key, value)
+            if payload.trips is not None:
+                replace_trips(report, payload.trips)
+            if payload.expense_items is not None:
+                update_expense_items(report, payload.expense_items)
         db.flush()
         recalculate_report_totals(report)
         db.commit()
@@ -783,7 +967,8 @@ def soft_delete_report(db: Session, report_id: int) -> None:
     ensure_report_deletable(report)
     report.deleted_at = datetime.utcnow()
     for invoice in report.invoices:
-        invoice.deleted_at = report.deleted_at
+        if invoice.deleted_at is None:
+            invoice.deleted_at = report.deleted_at
     for attachment in report.attachments:
         if attachment.deleted_at is None:
             attachment.deleted_at = report.deleted_at
@@ -796,7 +981,8 @@ def restore_deleted_report(db: Session, report_id: int) -> ExpenseReport:
     report_deleted_at = report.deleted_at
     report.deleted_at = None
     for invoice in report.invoices:
-        invoice.deleted_at = None
+        if invoice.deleted_at == report_deleted_at:
+            invoice.deleted_at = None
     for attachment in report.attachments:
         if attachment.deleted_at == report_deleted_at:
             attachment.deleted_at = None

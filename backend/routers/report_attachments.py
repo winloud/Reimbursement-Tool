@@ -21,9 +21,13 @@ router = APIRouter(prefix="/api/report-attachments", tags=["report-attachments"]
 def post_report_attachment_upload(
     report_id: Annotated[int, Form(ge=1)],
     file: Annotated[UploadFile, File()],
+    regular_item_id: Annotated[int | None, Form(ge=1)] = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[ReportAttachmentRead]:
-    return ApiResponse(data=upload_report_attachment(db, report_id, file), message="非发票附件已上传")
+    return ApiResponse(
+        data=upload_report_attachment(db, report_id, file, regular_item_id=regular_item_id),
+        message="非发票附件已上传",
+    )
 
 
 @router.get("/{attachment_id}/file")

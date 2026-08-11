@@ -31,12 +31,20 @@ router = APIRouter(prefix="/api/invoices", tags=["invoices"])
 @router.post("/upload", response_model=ApiResponse[list[InvoiceUploadResult]])
 def post_invoice_upload(
     report_id: Annotated[int, Form(ge=1)],
-    expense_category: Annotated[str, Form()],
     file: Annotated[UploadFile, File()],
+    expense_category: Annotated[str | None, Form()] = None,
     trip_id: Annotated[int | None, Form()] = None,
+    regular_item_id: Annotated[int | None, Form(ge=1)] = None,
     db: Session = Depends(get_db),
 ) -> ApiResponse[list[InvoiceUploadResult]]:
-    uploaded = upload_invoices(db, report_id, expense_category, file, trip_id)
+    uploaded = upload_invoices(
+        db,
+        report_id,
+        expense_category,
+        file,
+        trip_id=trip_id,
+        regular_item_id=regular_item_id,
+    )
     results = [
         InvoiceUploadResult.model_validate(invoice).model_copy(update={"parsed": parsed})
         for invoice, parsed in uploaded

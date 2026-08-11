@@ -282,7 +282,7 @@ def test_data_zip_v5_round_trip_preserves_report_attachment_and_v4_remains_accep
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         exported_attachment = manifest["reports"][0]["report_attachments"][0]
         archived_payload = archive.read(exported_attachment["attachment_path"])
-    assert manifest["schema_version"] == 5
+    assert manifest["schema_version"] == DATA_SCHEMA_VERSION
     assert exported_attachment["original_filename"] == "原始资料.pdf"
 
     legacy_manifest = json.loads(json.dumps(manifest))
@@ -294,7 +294,7 @@ def test_data_zip_v5_round_trip_preserves_report_attachment_and_v4_remains_accep
     legacy_preview = create_import_preview(db, _upload("legacy-v4.zip", legacy.getvalue()))
     assert legacy_preview.summary.attachments_total == 0
 
-    preview = create_import_preview(db, _upload("data-v5.zip", zip_bytes))
+    preview = create_import_preview(db, _upload("data-v6.zip", zip_bytes))
     assert preview.summary.invoices_total == 0
     assert preview.summary.attachments_total == 1
     result = execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
@@ -351,7 +351,7 @@ def test_integrity_check_covers_report_attachment_uid_lifecycle_and_file(monkeyp
 
 
 def test_schema_version_and_app_routes_include_report_attachments(tmp_path):
-    assert DATA_SCHEMA_VERSION == 5
+    assert DATA_SCHEMA_VERSION == 6
     assert "report_attachments" in ReportAttachment.metadata.tables
     routes = {route.path for route in create_app(frontend_dist_dir=tmp_path, enable_startup=False).routes}
     assert "/api/report-attachments/upload" in routes

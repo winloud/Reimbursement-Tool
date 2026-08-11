@@ -33,12 +33,22 @@ const addNumberParam = (params, key, value) => {
   }
 };
 
-export const buildReportQueryParams = ({ page = 1, pageSize = 20, status = "all", filters = {} } = {}) => {
+export const buildReportQueryParams = ({
+  page = 1,
+  pageSize = 20,
+  status = "all",
+  reportType,
+  regularMode,
+  filters = {},
+} = {}) => {
   const merged = { ...DEFAULT_REPORT_FILTERS, ...filters };
   const params = {
     page,
     page_size: pageSize,
   };
+
+  addStringParam(params, "report_type", reportType);
+  addStringParam(params, "regular_mode", regularMode);
 
   if (status && status !== "all") {
     params.status = status;
@@ -68,11 +78,13 @@ export const buildReportQueryParams = ({ page = 1, pageSize = 20, status = "all"
   return params;
 };
 
-export const buildReportExportPayload = ({ status = "all", filters = {} } = {}) => {
+export const buildReportExportPayload = ({ status = "all", reportType, regularMode, filters = {} } = {}) => {
   const { page: _page, page_size: _pageSize, ...payload } = buildReportQueryParams({
     page: 1,
     pageSize: 20,
     status,
+    reportType,
+    regularMode,
     filters,
   });
   return payload;

@@ -9,6 +9,8 @@ from backend.schemas.report_attachment import ReportAttachmentRead
 REPORT_STATUS_VALUES = ("draft", "checked", "printed", "reimbursed")
 ReportStatus = Literal["draft", "checked", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
+ReportType = Literal["travel", "regular"]
+RegularMode = Literal["no_invoice", "invoice"]
 ExpenseCategory = Literal[
     "transport_fare",
     "luggage",
@@ -64,7 +66,18 @@ class ExpenseItemWrite(BaseModel):
         return self
 
 
+class RegularItemWrite(BaseModel):
+    id: int | None = None
+    sort_order: int = Field(ge=1)
+    occurred_on: date | None = None
+    description: str | None = None
+    amount: Decimal | None = Field(default=None, ge=0)
+    remark: str | None = None
+
+
 class ReportBase(BaseModel):
+    report_type: ReportType = "travel"
+    regular_mode: RegularMode | None = None
     report_date: date | None = None
     department: str | None = None
     employee_name: str | None = None
@@ -84,11 +97,46 @@ class ReportBase(BaseModel):
 class ReportCreate(ReportBase):
     trips: list[TripWrite] = Field(default_factory=list)
     expense_items: list[ExpenseItemWrite] = Field(default_factory=list)
+    regular_items: list[RegularItemWrite] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def validate_report_kind_payload(self):
+        if self.report_type == "travel":
+            if self.regular_mode is not None or self.regular_items:
+                raise ValueError("出差报销单不能包含常规报销模式或项目")
+            return self
+
+        if self.regular_mode is None:
+            raise ValueError("常规报销单必须选择有票或无票模式")
+        if self.trips or self.expense_items:
+            raise ValueError("常规报销单不能包含行程或差旅费用项目")
+        if self.department or self.purpose:
+            raise ValueError("常规报销单不能包含部门或出差事由")
+        if any(
+            (
+                self.daily_subsidy,
+                self.subsidy_days,
+                self.subsidy_total,
+                self.manual_subsidy_total,
+                self.advance_date_month,
+                self.advance_date_day,
+                self.advance_amount,
+                self.shortfall,
+                self.surplus,
+            )
+        ):
+            raise ValueError("常规报销单不能包含差旅补贴或预支数据")
+        if self.regular_mode == "invoice" and any(item.amount is not None for item in self.regular_items):
+            raise ValueError("有票常规报销项目金额由已确认发票自动汇总，不能手工填写")
+        return self
 
 
 class ReportUpdate(ReportBase):
+    report_type: ReportType | None = None
+    regular_mode: RegularMode | None = None
     trips: list[TripWrite] | None = None
     expense_items: list[ExpenseItemWrite] | None = None
+    regular_items: list[RegularItemWrite] | None = None
 
 
 class ReportStatusUpdate(BaseModel):
@@ -200,9 +248,22 @@ class ExpenseItemRead(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
 
+class RegularItemRead(BaseModel):
+    id: int
+    sort_order: int
+    occurred_on: date | None = None
+    description: str | None = None
+    amount: Decimal = Decimal("0.00")
+    document_count: int = 0
+    remark: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class InvoiceRead(BaseModel):
     id: int
     trip_id: int | None = None
+    regular_item_id: int | None = None
     expense_category: str
     file_path: str
     file_type: str
@@ -221,6 +282,9 @@ class ReportRead(ReportBase):
     trip_start_date: date | None = None
     trip_end_date: date | None = None
     invoice_count: int = 0
+    document_count: int = 0
+    regular_item_count: int = 0
+    regular_item_summary: str | None = None
     status: ReportStatus
     created_at: datetime
     updated_at: datetime
@@ -232,5 +296,6 @@ class ReportRead(ReportBase):
 class ReportDetailRead(ReportRead):
     trips: list[TripRead] = Field(default_factory=list)
     expense_items: list[ExpenseItemRead] = Field(default_factory=list)
+    regular_items: list[RegularItemRead] = Field(default_factory=list)
     invoices: list[InvoiceRead] = Field(default_factory=list, validation_alias="active_invoices")
     attachments: list[ReportAttachmentRead] = Field(default_factory=list, validation_alias="active_attachments")

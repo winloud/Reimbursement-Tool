@@ -20,7 +20,9 @@ from backend.services.settings_service import get_or_create_settings
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     CUSTOM_CATEGORY_PREFIX,
+    REGULAR_EXPENSE_CATEGORY,
     ensure_report_writable,
+    get_regular_item_target,
     get_report_or_404,
     is_custom_category,
     recalculate_report_totals,
@@ -87,7 +89,26 @@ def parse_invoice_files_with_engine(absolute_path: Path, file_type: str, invoice
     return parsed_items
 
 
-def validate_invoice_target(report, expense_category: str, trip_id: int | None) -> str:
+def validate_invoice_target(
+    report,
+    expense_category: str | None,
+    trip_id: int | None,
+    regular_item_id: int | None = None,
+) -> str:
+    if report.report_type == "regular":
+        if report.regular_mode != "invoice":
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无票常规报销单不能上传发票")
+        if regular_item_id is None:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销发票必须关联报销项目")
+        if trip_id is not None or (expense_category or "").strip():
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销发票不能关联差旅行程或费用类别")
+        get_regular_item_target(report, regular_item_id)
+        return REGULAR_EXPENSE_CATEGORY
+
+    if regular_item_id is not None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销发票不能关联常规报销项目")
+    if not (expense_category or "").strip():
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差报销发票必须指定费用类别")
     expense_category = validate_expense_category(expense_category)
     if expense_category == "transport_fare":
         if trip_id is None:
@@ -238,13 +259,15 @@ def parsed_page_index(parsed: InvoiceParsedData) -> int | None:
 def upload_invoices(
     db: Session,
     report_id: int,
-    expense_category: str,
+    expense_category: str | None,
     upload_file: UploadFile,
     trip_id: int | None = None,
+    regular_item_id: int | None = None,
 ) -> list[tuple[Invoice, InvoiceParsedData]]:
     report = get_report_or_404(db, report_id)
     ensure_report_writable(report)
-    expense_category = validate_invoice_target(report, expense_category, trip_id)
+    expense_category = validate_invoice_target(report, expense_category, trip_id, regular_item_id)
+    regular_item = get_regular_item_target(report, regular_item_id) if regular_item_id is not None else None
 
     file_type = detect_file_type(upload_file.filename or "")
     duplicate_index = InvoiceDuplicateIndex(db, resolve_path=_invoice_file_path)
@@ -311,6 +334,7 @@ def upload_invoices(
             invoice = Invoice(
                 report_id=report_id,
                 trip_id=trip_id,
+                regular_item=regular_item,
                 expense_category=expense_category,
                 file_path=item_relative_path,
                 file_type=file_type,
@@ -344,11 +368,12 @@ def upload_invoices(
 def upload_invoice(
     db: Session,
     report_id: int,
-    expense_category: str,
+    expense_category: str | None,
     upload_file: UploadFile,
     trip_id: int | None = None,
+    regular_item_id: int | None = None,
 ) -> tuple[Invoice, InvoiceParsedData]:
-    return upload_invoices(db, report_id, expense_category, upload_file, trip_id)[0]
+    return upload_invoices(db, report_id, expense_category, upload_file, trip_id, regular_item_id)[0]
 
 
 def get_invoice_or_404(db: Session, invoice_id: int) -> Invoice:

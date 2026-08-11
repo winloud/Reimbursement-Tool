@@ -15,6 +15,7 @@ class Invoice(Base):
     invoice_uid: Mapped[str] = mapped_column(String, default=lambda: uuid4().hex, nullable=False, unique=True)
     report_id: Mapped[int] = mapped_column(ForeignKey("expense_reports.id"), nullable=False, index=True)
     trip_id: Mapped[int | None] = mapped_column(ForeignKey("trips.id"), nullable=True, index=True)
+    regular_item_id: Mapped[int | None] = mapped_column(ForeignKey("regular_items.id"), nullable=True, index=True)
     expense_category: Mapped[str] = mapped_column(String, nullable=False)
     file_path: Mapped[str] = mapped_column(String, nullable=False)
     file_type: Mapped[str] = mapped_column(String, nullable=False)
@@ -28,3 +29,4 @@ class Invoice(Base):
 
     report = relationship("ExpenseReport", back_populates="invoices")
     trip = relationship("Trip", back_populates="invoices")
+    regular_item = relationship("RegularItem", back_populates="invoices")

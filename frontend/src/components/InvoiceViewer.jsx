@@ -301,7 +301,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
         setError(res.message || "发票信息确认失败");
         return;
       }
-      onUpdated?.();
+      await onUpdated?.();
     } catch (err) {
       setError(err.response?.data?.message || err.message || "发票信息确认失败");
     } finally {
