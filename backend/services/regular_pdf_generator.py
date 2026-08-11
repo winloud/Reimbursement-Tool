@@ -29,42 +29,44 @@ REGULAR_TEMPLATE_CANDIDATES = [
 REGULAR_TEMPLATE_BLOCKER = "常规报销单正式 PDF 模板尚未提供，请提供完整空白扫描件并完成坐标校准"
 REGULAR_ITEMS_PER_PAGE = 4
 
-# Logical field mapping calibrated against the formal blank scan after rebuilding
-# it on the same 595 x 298 pt canvas as the travel reimbursement template.
+# Logical field mapping calibrated against the formal blank scan at its original
+# physical size. The comparison source is cropped to the visible top 105.13 mm
+# without scaling; these millimetre coordinates use the same lower-left origin
+# as the runtime overlay.
 REGULAR_TEMPLATE_FIELDS = {
-    "report_date_year": (85.516, 89.971, 10.106, 4.665),
-    "report_date_month": (103.397, 89.971, 7.774, 4.665),
-    "report_date_day": (119.722, 89.971, 7.774, 4.665),
-    "attachment_count": (203.372, 58.784, 6.064, 9.020),
-    "total_amount_cn": (43.350, 27.526, 89.588, 8.709),
-    "claimant_name": (140.578, 7.931, 32.362, 6.998),
+    "report_date_year": (94.348916, 87.150390, 9.166062, 4.231724),
+    "report_date_month": (110.565796, 87.150390, 7.050817, 4.231724),
+    "report_date_day": (125.372512, 87.150390, 7.050817, 4.231724),
+    "attachment_count": (201.239304, 58.863146, 5.499637, 8.181334),
+    "total_amount_cn": (56.106413, 30.510592, 81.252488, 7.899219),
+    "claimant_name": (144.287316, 12.737349, 29.350718, 6.347587),
 }
 REGULAR_ROW_FIELDS = {
-    "occurred_month": (5.597, 9.329),
-    "occurred_day": (14.926, 10.417),
-    "description": (25.344, 90.958),
-    "document_count": (116.613, 16.792),
-    "remark": (176.785, 25.810),
+    "occurred_month": (21.866517, 8.460981),
+    "occurred_day": (30.327497, 9.448095),
+    "description": (39.775592, 82.494560),
+    "document_count": (122.552185, 15.229765),
+    "remark": (177.125509, 23.408713),
 }
 REGULAR_ROW_RECTS_MM = (
-    (65.316, 9.175),
-    (56.141, 9.486),
-    (46.654, 9.331),
-    (37.323, 9.486),
+    (64.787560, 8.322391),
+    (56.465169, 8.604506),
+    (47.860662, 8.463449),
+    (39.397213, 8.604506),
 )
 REGULAR_AMOUNT_GRID_RECTS_MM = (
-    (133.716, 4.665),
-    (138.380, 4.665),
-    (143.045, 4.975),
-    (148.020, 4.509),
-    (152.529, 4.820),
-    (157.349, 4.820),
-    (162.169, 4.509),
-    (166.678, 4.665),
-    (171.343, 4.820),
+    (138.063983, 4.230490),
+    (142.294473, 4.230490),
+    (146.524963, 4.512523),
+    (151.037486, 4.089474),
+    (155.126960, 4.371507),
+    (159.498467, 4.371507),
+    (163.869973, 4.089474),
+    (167.959447, 4.230490),
+    (172.189937, 4.371507),
 )
-REGULAR_TOTAL_ROW_TOP_MM = 27.837
-REGULAR_TOTAL_ROW_HEIGHT_MM = 9.331
+REGULAR_TOTAL_ROW_TOP_MM = 30.792707
+REGULAR_TOTAL_ROW_HEIGHT_MM = 8.463449
 REGULAR_TEXT_FIELD_EXTRA_INSET_MM = 1.5
 
 # These fields intentionally have no writable mapping. The paper form keeps

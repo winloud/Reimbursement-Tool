@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import copy
 from dataclasses import dataclass
 from io import BytesIO
 from pathlib import Path
 
-from pypdf import PdfReader, PdfWriter
+from pypdf import PageObject, PdfReader, PdfWriter, Transformation
 from pypdf.generic import (
     ArrayObject,
     BooleanObject,
@@ -14,16 +15,40 @@ from pypdf.generic import (
     FloatObject,
     NameObject,
     NumberObject,
+    RectangleObject,
 )
 from reportlab.lib.colors import Color, HexColor, white
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
-from reportlab.lib.utils import ImageReader
 
 
 PAGE_WIDTH, PAGE_HEIGHT = 595.0, 298.0
+PT_PER_MM = 72.0 / 25.4
+SCAN_CROP_HEIGHT_MM = 105.13
+
+# The first calibration pass used a 1350 x 676 local crop cut from a
+# 1489 x 2105 preview of the full A4 scan, then incorrectly stretched that
+# crop to the output page. Keep the manually tuned local coordinates, but map
+# them back through the original crop offset and the source PDF's physical
+# page size. This is a translation/crop calibration only; the source scan is
+# never scaled or rasterized when the comparison PDF is assembled.
 SCAN_WIDTH, SCAN_HEIGHT = 1350.0, 676.0
+SOURCE_RASTER_WIDTH, SOURCE_RASTER_HEIGHT = 1489.0, 2105.0
+SOURCE_CROP_LEFT, SOURCE_CROP_TOP = 118.0, 30.0
+SOURCE_PAGE_WIDTH_PT, SOURCE_PAGE_HEIGHT_PT = 595.2, 841.68
+SOURCE_X_PT_PER_UNIT = SOURCE_PAGE_WIDTH_PT / SOURCE_RASTER_WIDTH
+SOURCE_Y_PT_PER_UNIT = SOURCE_PAGE_HEIGHT_PT / SOURCE_RASTER_HEIGHT
+LEGACY_X_PT_PER_UNIT = PAGE_WIDTH / SCAN_WIDTH
+LEGACY_Y_PT_PER_UNIT = PAGE_HEIGHT / SCAN_HEIGHT
+VECTOR_STYLE_SCALE = (
+    SOURCE_X_PT_PER_UNIT / LEGACY_X_PT_PER_UNIT
+    + SOURCE_Y_PT_PER_UNIT / LEGACY_Y_PT_PER_UNIT
+) / 2
+# The scan's printed grid is about 0.15 mm to the right of the exact preview
+# crop mapping (well within the scanned stroke width). Keep that final manual
+# calibration explicit and independent from the source-page crop operation.
+VECTOR_X_OFFSET_MM = 0.15
 FORM_GREEN = HexColor("#3f9265")
 COMPARISON_MAGENTA = HexColor("#ed245f")
 FIELD_BORDER = HexColor("#1d5eff")
@@ -42,10 +67,10 @@ TITLE_FONT_CANDIDATES = (
 )
 AMOUNT_BOUNDARIES = (860, 890, 920, 952, 981, 1012, 1043, 1072, 1102, 1133)
 ROW_BOUNDARIES = (256, 315, 376, 436, 497)
-TEXT_FIELD_EXTRA_INSET = 10
+TEXT_FIELD_EXTRA_INSET_MM = 1.5
+TEXT_FIELD_EXTRA_INSET = TEXT_FIELD_EXTRA_INSET_MM * PT_PER_MM / SOURCE_X_PT_PER_UNIT
 AMOUNT_LABELS = ("百", "十", "万", "千", "百", "十", "元", "角", "分")
 AMOUNT_TOOLTIPS = ("百万位", "十万位", "万位", "千位", "百位", "十位", "元位", "角位", "分位")
-SCAN_CROP = (118 / 1489, 30 / 2105, 1468 / 1489, 706 / 2105)
 
 
 @dataclass(frozen=True)
@@ -62,11 +87,17 @@ class FieldSpec:
 
 
 def x_pt(value: float) -> float:
-    return value / SCAN_WIDTH * PAGE_WIDTH
+    return (SOURCE_CROP_LEFT + value) * SOURCE_X_PT_PER_UNIT + VECTOR_X_OFFSET_MM * PT_PER_MM
+
+
+def x_length_pt(value: float) -> float:
+    return value * SOURCE_X_PT_PER_UNIT
 
 
 def y_pt(value: float) -> float:
-    return PAGE_HEIGHT - value / SCAN_HEIGHT * PAGE_HEIGHT
+    return SCAN_CROP_HEIGHT_MM * PT_PER_MM - (
+        SOURCE_CROP_TOP + value
+    ) * SOURCE_Y_PT_PER_UNIT
 
 
 def scan_rect(left: float, top: float, right: float, bottom: float) -> tuple[float, float, float, float]:
@@ -105,6 +136,9 @@ def box_text(
     char_space: float = 0.0,
     stroke_width: float = 0.22,
 ) -> None:
+    font_size *= VECTOR_STYLE_SCALE
+    char_space *= VECTOR_STYLE_SCALE
+    stroke_width *= VECTOR_STYLE_SCALE
     x, y, width, height = scan_rect(left, top, right, bottom)
     text_width = sum(pdfmetrics.stringWidth(ch, STATIC_FONT, font_size) for ch in text)
     text_width += max(len(text) - 1, 0) * char_space
@@ -127,11 +161,15 @@ def vertical_text(
     step: float,
     font_size: float,
     stroke_width: float = 0.2,
+    horizontal_scale: float = 100.0,
 ) -> None:
+    font_size *= VECTOR_STYLE_SCALE
+    stroke_width *= VECTOR_STYLE_SCALE
     for index, char in enumerate(text):
-        char_width = pdfmetrics.stringWidth(char, STATIC_FONT, font_size)
+        char_width = pdfmetrics.stringWidth(char, STATIC_FONT, font_size) * horizontal_scale / 100
         text_object = c.beginText(x_pt(x) - char_width / 2, y_pt(first_y + index * step))
         text_object.setFont(STATIC_FONT, font_size)
+        text_object.setHorizScale(horizontal_scale)
         text_object.setTextRenderMode(2)
         c.saveState()
         c.setLineWidth(stroke_width)
@@ -151,6 +189,9 @@ def placed_text(
     char_space: float = 0.0,
     stroke_width: float = 0.22,
 ) -> None:
+    font_size *= VECTOR_STYLE_SCALE
+    char_space *= VECTOR_STYLE_SCALE
+    stroke_width *= VECTOR_STYLE_SCALE
     text_object = c.beginText(x_pt(x), y_pt(baseline_from_top))
     text_object.setFont(font_name, font_size)
     text_object.setCharSpace(char_space)
@@ -163,15 +204,15 @@ def placed_text(
 
 
 def line(c: canvas.Canvas, x1: float, y1: float, x2: float, y2: float, width: float = 0.65) -> None:
-    c.setLineWidth(width)
+    c.setLineWidth(width * VECTOR_STYLE_SCALE)
     c.line(x_pt(x1), y_pt(y1), x_pt(x2), y_pt(y2))
 
 
 def draw_logo(c: canvas.Canvas) -> None:
-    center_x, center_y, radius = x_pt(72), y_pt(54), x_pt(31)
-    c.setLineWidth(1.35)
+    center_x, center_y, radius = x_pt(68.5), y_pt(52), x_length_pt(38.5)
+    c.setLineWidth(1.35 * VECTOR_STYLE_SCALE)
     c.circle(center_x, center_y, radius, stroke=1, fill=0)
-    c.setLineWidth(0.85)
+    c.setLineWidth(0.85 * VECTOR_STYLE_SCALE)
     c.arc(center_x - radius * 0.72, center_y - radius * 0.32, center_x + radius * 0.72, center_y + radius * 0.55, 195, 205)
     c.bezier(
         center_x - radius * 0.62,
@@ -185,7 +226,7 @@ def draw_logo(c: canvas.Canvas) -> None:
     )
     box_text(c, "青", 43, 36, 70, 63, font_size=6.5)
     box_text(c, "联", 75, 36, 102, 63, font_size=6.5)
-    box_text(c, "127", 42, 84, 103, 111, font_size=8.2, char_space=1.8, stroke_width=0.18)
+    box_text(c, "127", 38, 94.2, 99, 121.2, font_size=9.2, char_space=1.8, stroke_width=0.18)
 
 
 def draw_background(
@@ -224,7 +265,7 @@ def draw_background(
     box_text(c, "月", 712, 88, 759, 134, font_size=12.5, stroke_width=0.26)
     box_text(c, "日", 814, 88, 862, 134, font_size=12.5, stroke_width=0.26)
     x, y, width, height = scan_rect(1110, 76, 1303, 116)
-    c.setLineWidth(0.75)
+    c.setLineWidth(0.75 * VECTOR_STYLE_SCALE)
     c.rect(x, y, width, height, stroke=1, fill=0)
     placed_text(
         c,
@@ -269,8 +310,8 @@ def draw_background(
     box_text(c, "出纳", 430, 620, 585, 676, font_size=11, char_space=1)
     box_text(c, "报销人", 782, 620, 932, 676, font_size=11, char_space=1.2)
     if include_branding_overlay:
-        vertical_text(c, "青联纸品", 17, 450, 25, 8.5)
-        vertical_text(c, "127", 17, 569, 18, 8.2, stroke_width=0.18)
+        vertical_text(c, "青联纸品", 17, 487, 25, 8.5, horizontal_scale=118)
+        vertical_text(c, "127", 17, 596, 11.5, 8.2, stroke_width=0.18, horizontal_scale=160)
     vertical_text(c, "附件", 1328.269, 229.130, 30, 10.5)
     vertical_text(c, "张", 1328.269, 416.611, 30, 10.5)
     c.restoreState()
@@ -366,7 +407,7 @@ def write_pdf(path: Path, interactive: bool) -> None:
     c = canvas.Canvas(str(path), pagesize=(PAGE_WIDTH, PAGE_HEIGHT), pageCompression=1)
     c.setTitle("普通报销单" + ("-可填写" if interactive else "-矢量模板"))
     c.setAuthor("报销单工具")
-    c.setSubject("普通报销单，595 x 298 pt")
+    c.setSubject("普通报销单，按原扫描件顶部 105.13 mm 原尺寸校准")
     draw_background(c)
     if interactive:
         add_fields(c, fields(), calibration_style=False)
@@ -374,36 +415,43 @@ def write_pdf(path: Path, interactive: bool) -> None:
     c.save()
 
 
-def draw_scan_background(c: canvas.Canvas, scan_source: Path) -> None:
-    try:
-        import fitz
-    except ImportError as exc:
-        raise RuntimeError("生成扫描对照版需要 PyMuPDF（fitz）") from exc
+def crop_scan_top_page(scan_source: Path) -> tuple[PageObject, tuple[float, float]]:
+    reader = PdfReader(str(scan_source))
+    if not reader.pages:
+        raise ValueError(f"扫描 PDF 没有页面: {scan_source}")
 
-    with fitz.open(scan_source) as document:
-        if not document.page_count:
-            raise ValueError(f"扫描 PDF 没有页面: {scan_source}")
-        page = document[0]
-        page_rect = page.rect
-        left, top, right, bottom = SCAN_CROP
-        clip = fitz.Rect(
-            page_rect.x0 + page_rect.width * left,
-            page_rect.y0 + page_rect.height * top,
-            page_rect.x0 + page_rect.width * right,
-            page_rect.y0 + page_rect.height * bottom,
+    page = copy.deepcopy(reader.pages[0])
+    page.transfer_rotation_to_content()
+    page_left = float(page.mediabox.left)
+    page_top = float(page.mediabox.top)
+    page_width = float(page.mediabox.width)
+    page_height = float(page.mediabox.height)
+    crop_height = SCAN_CROP_HEIGHT_MM * PT_PER_MM
+    if crop_height > page_height:
+        raise ValueError(
+            f"扫描 PDF 页面高度不足 {SCAN_CROP_HEIGHT_MM:.2f} mm: "
+            f"{page_height / PT_PER_MM:.2f} mm"
         )
-        pixmap = page.get_pixmap(matrix=fitz.Matrix(4, 4), clip=clip, alpha=False)
-        image = ImageReader(BytesIO(pixmap.tobytes("png")))
-        c.drawImage(image, 0, 0, width=PAGE_WIDTH, height=PAGE_HEIGHT, preserveAspectRatio=False, mask="auto")
+
+    crop_bottom = page_top - crop_height
+    page.add_transformation(
+        Transformation().translate(tx=-page_left, ty=-crop_bottom)
+    )
+    box_values = [0, 0, page_width, crop_height]
+    page.mediabox = RectangleObject(box_values)
+    page.cropbox = RectangleObject(box_values)
+    page.trimbox = RectangleObject(box_values)
+    page.bleedbox = RectangleObject(box_values)
+    page.artbox = RectangleObject(box_values)
+    return page, (page_width, crop_height)
 
 
-def write_comparison_pdf(scan_source: Path, path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    c = canvas.Canvas(str(path), pagesize=(PAGE_WIDTH, PAGE_HEIGHT), pageCompression=1)
+def build_comparison_overlay(page_size: tuple[float, float]) -> bytes:
+    buffer = BytesIO()
+    c = canvas.Canvas(buffer, pagesize=page_size, pageCompression=1)
     c.setTitle("普通报销单-扫描矢量填表域对照")
     c.setAuthor("报销单工具")
-    c.setSubject("扫描底图 + 半透明洋红矢量底稿 + 蓝色 AcroForm 填表域")
-    draw_scan_background(c, scan_source)
+    c.setSubject("原尺寸扫描裁切 + 半透明洋红矢量底稿 + 蓝色 AcroForm 填表域")
     draw_background(
         c,
         clear_page=False,
@@ -414,6 +462,17 @@ def write_comparison_pdf(scan_source: Path, path: Path) -> None:
     add_fields(c, fields(), calibration_style=True)
     c.showPage()
     c.save()
+    return buffer.getvalue()
+
+
+def write_comparison_pdf(scan_source: Path, path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    scan_page, page_size = crop_scan_top_page(scan_source)
+    overlay_reader = PdfReader(BytesIO(build_comparison_overlay(page_size)))
+    writer = PdfWriter(clone_from=overlay_reader)
+    writer.pages[0].merge_page(scan_page, over=False)
+    with path.open("wb") as stream:
+        writer.write(stream)
     normalize_acroform(path, fields())
 
 

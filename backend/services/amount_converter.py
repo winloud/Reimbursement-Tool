@@ -40,6 +40,7 @@ def integer_to_chinese_upper(amount: int) -> str:
     result = ""
     section_index = 0
     zero_pending = False
+    lower_section: int | None = None
 
     while amount > 0:
         section = amount % 10000
@@ -48,10 +49,13 @@ def integer_to_chinese_upper(amount: int) -> str:
                 zero_pending = True
         else:
             section_text = _section_to_cn(section) + CN_SECTION_UNITS[section_index]
-            if zero_pending or (section < 1000 and result):
+            if zero_pending or (
+                result and lower_section is not None and lower_section < 1000
+            ):
                 result = CN_DIGITS[0] + result
                 zero_pending = False
             result = section_text + result
+        lower_section = section
         section_index += 1
         amount //= 10000
 

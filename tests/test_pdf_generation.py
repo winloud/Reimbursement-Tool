@@ -91,6 +91,12 @@ def test_amount_to_chinese_upper_handles_common_currency_cases():
     assert amount_to_chinese_upper(Decimal("0")) == "零元整"
     assert amount_to_chinese_upper(Decimal("1.01")) == "壹元零壹分"
     assert amount_to_chinese_upper(Decimal("1001.10")) == "壹仟零壹元壹角"
+    assert amount_to_chinese_upper(Decimal("1234573.89")) == "壹佰贰拾叁万肆仟伍佰柒拾叁元捌角玖分"
+    assert amount_to_chinese_upper(Decimal("1000234")) == "壹佰万零贰佰叁拾肆元整"
+    assert amount_to_chinese_upper(Decimal("1002003")) == "壹佰万贰仟零叁元整"
+    assert amount_to_chinese_upper(Decimal("1001000")) == "壹佰万壹仟元整"
+    assert amount_to_chinese_upper(Decimal("100010001")) == "壹亿零壹万零壹元整"
+    assert amount_to_chinese_upper(Decimal("100001001")) == "壹亿零壹仟零壹元整"
     assert amount_to_chinese_upper(Decimal("100000001.02")) == "壹亿零壹元零贰分"
 
 
