@@ -32,12 +32,12 @@ REGULAR_ITEMS_PER_PAGE = 4
 # Logical field mapping calibrated against the formal blank scan after rebuilding
 # it on the same 595 x 298 pt canvas as the travel reimbursement template.
 REGULAR_TEMPLATE_FIELDS = {
-    "report_date_year": (85.516, 89.265, 10.106, 4.665),
-    "report_date_month": (103.397, 89.265, 7.774, 4.665),
-    "report_date_day": (119.722, 89.265, 7.774, 4.665),
+    "report_date_year": (85.516, 89.971, 10.106, 4.665),
+    "report_date_month": (103.397, 89.971, 7.774, 4.665),
+    "report_date_day": (119.722, 89.971, 7.774, 4.665),
     "attachment_count": (203.372, 58.784, 6.064, 9.020),
-    "total_amount_cn": (36.539, 27.837, 96.555, 9.331),
-    "claimant_name": (137.603, 7.931, 33.429, 6.687),
+    "total_amount_cn": (43.350, 27.526, 89.588, 8.709),
+    "claimant_name": (140.578, 7.931, 32.362, 6.998),
 }
 REGULAR_ROW_FIELDS = {
     "occurred_month": (5.597, 9.329),
@@ -65,6 +65,7 @@ REGULAR_AMOUNT_GRID_RECTS_MM = (
 )
 REGULAR_TOTAL_ROW_TOP_MM = 27.837
 REGULAR_TOTAL_ROW_HEIGHT_MM = 9.331
+REGULAR_TEXT_FIELD_EXTRA_INSET_MM = 1.5
 
 # These fields intentionally have no writable mapping. The paper form keeps
 # them blank for handwritten approval/signature steps.
@@ -122,7 +123,11 @@ def _money_grid_digits(value: Decimal | int | str | None) -> list[str]:
     compact = f"{amount:.2f}".replace(".", "")
     if len(compact) > len(REGULAR_AMOUNT_GRID_RECTS_MM):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销金额超出 PDF 金额格容量")
-    return [""] * (len(REGULAR_AMOUNT_GRID_RECTS_MM) - len(compact)) + list(compact)
+    values = [""] * (len(REGULAR_AMOUNT_GRID_RECTS_MM) - len(compact)) + list(compact)
+    currency_index = len(REGULAR_AMOUNT_GRID_RECTS_MM) - len(compact) - 1
+    if currency_index >= 0:
+        values[currency_index] = "￥"
+    return values
 
 
 def _fit_single_line(value: object, width_mm: float, font_name: str) -> str:
@@ -206,6 +211,8 @@ def _draw_regular_row(
     for name, (x_mm, width_mm) in REGULAR_ROW_FIELDS.items():
         value = values[name]
         if name in {"description", "remark"}:
+            x_mm += REGULAR_TEXT_FIELD_EXTRA_INSET_MM
+            width_mm -= REGULAR_TEXT_FIELD_EXTRA_INSET_MM * 2
             value = _fit_single_line(value, width_mm, fill_font_name)
         _draw_field(
             c,

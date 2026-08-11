@@ -29,7 +29,9 @@ from backend.services.pdf_generator import (
 )
 from backend.services.regular_pdf_generator import (
     REGULAR_HANDWRITTEN_FIELDS,
+    REGULAR_ROW_FIELDS,
     REGULAR_TEMPLATE_BLOCKER,
+    REGULAR_TEXT_FIELD_EXTRA_INSET_MM,
     _build_regular_overlay,
     _fit_single_line,
     _money_grid_digits,
@@ -826,6 +828,9 @@ def test_regular_pdf_paginates_four_items_and_only_maps_claimant_signature_field
     assert "claimant_name" in first_page_names
     assert not any(name.startswith("total_amount") for name in first_page_names)
     assert set(REGULAR_HANDWRITTEN_FIELDS).isdisjoint(first_page_names)
+    assert any(
+        value == "￥" for name, value in calls if name.startswith("item_") and "_amount_" in name
+    )
 
     calls.clear()
     _build_regular_overlay(
@@ -839,6 +844,7 @@ def test_regular_pdf_paginates_four_items_and_only_maps_claimant_signature_field
     assert "total_amount_cn" in last_page_names
     assert any(name.startswith("total_amount_") for name in last_page_names)
     assert set(REGULAR_HANDWRITTEN_FIELDS).isdisjoint(last_page_names)
+    assert any(value == "￥" for name, value in calls if name.startswith("total_amount_"))
 
 
 def test_regular_pdf_fits_long_text_and_enforces_amount_grid_capacity(monkeypatch, tmp_path, db):
@@ -863,10 +869,10 @@ def test_regular_pdf_fits_long_text_and_enforces_amount_grid_capacity(monkeypatc
             ],
         ),
     )
-    calls: list[tuple[str, object]] = []
+    calls: list[tuple[object, object]] = []
     monkeypatch.setattr(
         "backend.services.regular_pdf_generator._draw_field",
-        lambda _canvas, field, value: calls.append((field.name, value)),
+        lambda _canvas, field, value: calls.append((field, value)),
     )
 
     _build_regular_overlay(
@@ -877,10 +883,29 @@ def test_regular_pdf_fits_long_text_and_enforces_amount_grid_capacity(monkeypatc
         fill_font_name="Helvetica",
     )
 
-    values = dict(calls)
+    fields = {field.name: field for field, _value in calls}
+    values = {field.name: value for field, value in calls}
     assert values[f"item_{report.regular_items[0].id}_description"].endswith("...")
     assert values[f"item_{report.regular_items[0].id}_remark"].endswith("...")
+    description_field = fields[f"item_{report.regular_items[0].id}_description"]
+    remark_field = fields[f"item_{report.regular_items[0].id}_remark"]
+    assert description_field.align == "left"
+    assert remark_field.align == "left"
+    assert description_field.x_mm == pytest.approx(
+        REGULAR_ROW_FIELDS["description"][0] + REGULAR_TEXT_FIELD_EXTRA_INSET_MM
+    )
+    assert description_field.width_mm == pytest.approx(
+        REGULAR_ROW_FIELDS["description"][1] - REGULAR_TEXT_FIELD_EXTRA_INSET_MM * 2
+    )
+    assert remark_field.x_mm == pytest.approx(
+        REGULAR_ROW_FIELDS["remark"][0] + REGULAR_TEXT_FIELD_EXTRA_INSET_MM
+    )
+    assert remark_field.width_mm == pytest.approx(
+        REGULAR_ROW_FIELDS["remark"][1] - REGULAR_TEXT_FIELD_EXTRA_INSET_MM * 2
+    )
     assert _fit_single_line(long_description, 90.0, "Helvetica") != long_description
+    assert _money_grid_digits(Decimal("100.00")) == ["", "", "", "￥", "1", "0", "0", "0", "0"]
+    assert _money_grid_digits(Decimal("999999.99")) == ["￥", "9", "9", "9", "9", "9", "9", "9", "9"]
     assert _money_grid_digits(Decimal("9999999.99")) == list("999999999")
     with pytest.raises(HTTPException, match="超出 PDF 金额格容量"):
         _money_grid_digits(Decimal("10000000.00"))

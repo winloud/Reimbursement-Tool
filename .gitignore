@@ -55,7 +55,9 @@ window-state.json
 backend/uploads/
 
 # Generated PDF outputs
+output/
 outputs/
+tmp/
 报销单_reportlab_fields_overlay*.pdf
 报销单_ReportLab_填表域*.pdf
 _test_*.pdf
