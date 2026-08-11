@@ -175,6 +175,7 @@ def run_server(server: uvicorn.Server) -> None:
 def run_pywebview_window(base_url: str) -> None:
     import webview
 
+    webview.settings["ALLOW_DOWNLOADS"] = True
     window_state = load_window_state()
     window_kwargs = {
         "width": int(window_state["width"] or WINDOW_DEFAULT_WIDTH),
@@ -206,6 +207,30 @@ def run_pywebview_window(base_url: str) -> None:
 
 def chromium_profile_dir() -> Path:
     return APP_ROOT / "browser-profile"
+
+
+def ensure_chromium_download_prompt(profile_dir: Path) -> bool:
+    preferences_path = profile_dir / "Default" / "Preferences"
+    try:
+        if preferences_path.exists():
+            preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+            if not isinstance(preferences, dict):
+                raise ValueError("Chromium Preferences root must be an object")
+        else:
+            preferences = {}
+        download_preferences = preferences.setdefault("download", {})
+        if not isinstance(download_preferences, dict):
+            raise ValueError("Chromium download preferences must be an object")
+        download_preferences["prompt_for_download"] = True
+
+        preferences_path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = preferences_path.with_name(f"{preferences_path.name}.tmp")
+        temp_path.write_text(json.dumps(preferences, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+        temp_path.replace(preferences_path)
+        return True
+    except (OSError, json.JSONDecodeError, ValueError):
+        logging.warning("failed to enable chromium download prompt path=%s", preferences_path, exc_info=True)
+        return False
 
 
 def capture_chromium_window_state() -> bool:
@@ -289,6 +314,7 @@ def run_chromium_app_window(base_url: str) -> None:
     cleanup_legacy_chromium_profiles()
     profile_dir = chromium_profile_dir()
     profile_dir.mkdir(parents=True, exist_ok=True)
+    ensure_chromium_download_prompt(profile_dir)
     window_state = load_window_state()
     args = [
         str(browser_path),
@@ -298,7 +324,6 @@ def run_chromium_app_window(base_url: str) -> None:
         "--disable-translate",
         "--disable-background-networking",
         "--disable-sync",
-        "--disable-extensions",
         f"--window-size={int(window_state['width'] or WINDOW_DEFAULT_WIDTH)},{int(window_state['height'] or WINDOW_DEFAULT_HEIGHT)}",
         f"--user-data-dir={profile_dir}",
     ]

@@ -8,6 +8,8 @@ import {
   getInvoiceOpenCapability,
   importRailTickets,
   openInvoiceLocally,
+  prepareReportBatchPdfDownload,
+  prepareReportPdfDownload,
   previewRailTickets,
   getStatsSummary,
   uploadInvoice,
@@ -105,6 +107,42 @@ describe("api client release defaults", () => {
         report_type: "regular",
         regular_mode: "no_invoice",
       });
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("prepares native single and batch report downloads", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return {
+        data: {
+          success: true,
+          data: {
+            download_url: `/api/reports/downloads/token-${requests.length}`,
+            filename: requests.length === 1 ? "report.pdf" : "reports.zip",
+            expires_in_seconds: 300,
+          },
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const single = await prepareReportPdfDownload(17);
+      const batch = await prepareReportBatchPdfDownload([17, 18]);
+
+      assert.equal(single.data.download_url, "/api/reports/downloads/token-1");
+      assert.equal(batch.data.download_url, "/api/reports/downloads/token-2");
+      assert.equal(requests[0].method, "post");
+      assert.equal(requests[0].url, "/api/reports/17/pdf/prepare");
+      assert.equal(requests[1].url, "/api/reports/batch/pdf/prepare");
+      assert.deepEqual(JSON.parse(requests[1].data), { report_ids: [17, 18] });
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

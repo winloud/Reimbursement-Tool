@@ -203,6 +203,12 @@ class PdfPreviewRead(BaseModel):
     pages: list[PdfPreviewPage] = Field(default_factory=list)
 
 
+class ReportDownloadPreparationRead(BaseModel):
+    download_url: str
+    filename: str
+    expires_in_seconds: int = Field(gt=0)
+
+
 class ReportCategoryOption(BaseModel):
     value: str
     label: str

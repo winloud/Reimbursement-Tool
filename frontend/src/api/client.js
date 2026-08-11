@@ -3,6 +3,23 @@ import { buildReportExportPayload, buildReportQueryParams } from "./reportFilter
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "";
 
+const resolveApiDownloadUrl = (downloadUrl) => {
+  if (!downloadUrl || !API_BASE_URL || /^https?:\/\//i.test(downloadUrl)) {
+    return downloadUrl;
+  }
+  return `${API_BASE_URL.replace(/\/$/, "")}/${downloadUrl.replace(/^\//, "")}`;
+};
+
+const resolvePreparedDownload = (responseData) => ({
+  ...responseData,
+  data: responseData?.data
+    ? {
+        ...responseData.data,
+        download_url: resolveApiDownloadUrl(responseData.data.download_url),
+      }
+    : responseData?.data,
+});
+
 export const apiClient = axios.create({
   baseURL: API_BASE_URL,
   timeout: 10000,
@@ -290,6 +307,11 @@ export const downloadReportPdf = async (id) => {
   }
 };
 
+export const prepareReportPdfDownload = async (id) => {
+  const response = await apiClient.post(`/api/reports/${id}/pdf/prepare`);
+  return resolvePreparedDownload(response.data);
+};
+
 export const downloadReportBatchPdf = async (reportIds) => {
   try {
     const response = await apiClient.post(
@@ -304,6 +326,11 @@ export const downloadReportBatchPdf = async (reportIds) => {
   } catch (err) {
     return normalizeBlobError(err);
   }
+};
+
+export const prepareReportBatchPdfDownload = async (reportIds) => {
+  const response = await apiClient.post("/api/reports/batch/pdf/prepare", { report_ids: reportIds });
+  return resolvePreparedDownload(response.data);
 };
 
 export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {

@@ -8,15 +8,16 @@ import {
   createReport,
   deleteReportAttachment,
   deleteInvoice,
-  downloadReportPdf,
   getReport,
   getReportPdfPreview,
   getSettings,
+  prepareReportPdfDownload,
   updateReport,
   updateReportStatus,
   uploadReportAttachment,
   uploadInvoice,
 } from "../api/client";
+import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   buildCustomExpenseCategory,
   buildReportPayload,
@@ -731,17 +732,13 @@ export default function ReportEdit() {
     setPdfBusy("download");
     setError("");
     try {
-      const { blob, filename } = await downloadReportPdf(saved.reportId);
-      const url = window.URL.createObjectURL(blob);
-      const link = document.createElement("a");
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      link.remove();
-      window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
+      const res = await prepareReportPdfDownload(saved.reportId);
+      if (!res.success || !res.data?.download_url) {
+        throw new Error(res.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(res.data.download_url);
       await loadForEdit({ quiet: true, reportId: saved.reportId });
-      setToast("PDF 已生成并开始下载");
+      setToast("PDF 已生成，请在下载窗口选择保存位置");
     } catch (err) {
       setError(getApiErrorMessage(err, "下载 PDF 失败"));
     } finally {

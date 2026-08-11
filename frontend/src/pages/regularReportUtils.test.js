@@ -143,6 +143,11 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.match(travelListSource, /reportType: "travel"/);
   assert.match(regularListSource, /reportType: "regular"/);
   assert.match(regularListSource, /downloadDataExport\(\{/);
+  assert.match(regularListSource, /prepareReportPdfDownload\(report\.id\)/);
+  assert.match(regularListSource, /prepareReportBatchPdfDownload\(selectedIds\)/);
+  assert.match(editSource, /prepareReportPdfDownload\(saved\.reportId\)/);
+  assert.doesNotMatch(regularListSource, /createObjectURL/);
+  assert.doesNotMatch(editSource, /createObjectURL/);
   assert.match(regularListSource, /regularMode,/);
   assert.match(regularListSource, /filters: queryFilters/);
   assert.match(regularListSource, /\/reports\?import_data=1/);

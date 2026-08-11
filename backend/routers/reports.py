@@ -2,7 +2,7 @@ from typing import Annotated
 from datetime import date
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, Path, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy.orm import Session
 
 from backend.database.session import get_db
@@ -10,6 +10,7 @@ from backend.schemas.common import ApiResponse, PaginationData
 from backend.schemas.report import (
     REPORT_STATUS_VALUES,
     PdfPreviewRead,
+    ReportDownloadPreparationRead,
     ReportBatchDeleteResult,
     ReportBatchPurgeResult,
     ReportBatchRequest,
@@ -32,6 +33,11 @@ from backend.services.pdf_generator import (
     build_pdf_filename,
     content_disposition_for_filename,
     render_report_preview_pages,
+)
+from backend.services.prepared_download_service import (
+    PREPARED_DOWNLOAD_TTL_SECONDS,
+    get_prepared_download,
+    prepare_download,
 )
 from backend.services.settings_service import get_or_create_settings
 from backend.services.report_batch_service import (
@@ -58,6 +64,27 @@ from backend.services.report_service import (
 )
 
 router = APIRouter(prefix="/api/reports", tags=["reports"])
+
+
+def _build_report_pdf(db: Session, report_id: int) -> tuple[bytes, str]:
+    report = get_report_or_404(db, report_id)
+    settings = get_or_create_settings(db)
+    ensure_fuel_subsidy_printable(report)
+    pdf_bytes = build_merged_report_pdf(
+        report,
+        settings.pdf_fill_font_key,
+        settings.double_print_vat_special_invoices,
+    )
+    return pdf_bytes, build_pdf_filename(report)
+
+
+def _prepare_download_response(content: bytes, filename: str, media_type: str) -> ReportDownloadPreparationRead:
+    token = prepare_download(content, filename, media_type)
+    return ReportDownloadPreparationRead(
+        download_url=f"/api/reports/downloads/{token}",
+        filename=filename,
+        expires_in_seconds=PREPARED_DOWNLOAD_TTL_SECONDS,
+    )
 
 
 @router.get("", response_model=ApiResponse[PaginationData[ReportRead]])
@@ -187,6 +214,18 @@ def post_batch_report_pdf(payload: ReportBatchRequest, db: Session = Depends(get
     )
 
 
+@router.post("/batch/pdf/prepare", response_model=ApiResponse[ReportDownloadPreparationRead])
+def post_prepare_batch_report_pdf(
+    payload: ReportBatchRequest,
+    db: Session = Depends(get_db),
+) -> ApiResponse[ReportDownloadPreparationRead]:
+    zip_bytes, filename = build_batch_report_pdf_zip(db, payload.report_ids)
+    return ApiResponse(
+        data=_prepare_download_response(zip_bytes, filename, "application/zip"),
+        message="批量 PDF 已生成，请选择保存位置",
+    )
+
+
 @router.post("/batch/delete", response_model=ApiResponse[ReportBatchDeleteResult])
 def post_batch_delete_reports(
     payload: ReportBatchRequest,
@@ -222,6 +261,20 @@ def patch_batch_report_status(
     )
 
 
+@router.get("/downloads/{token}")
+def get_prepared_report_download(
+    token: Annotated[str, Path(min_length=20, max_length=200)],
+) -> Response:
+    prepared = get_prepared_download(token)
+    if prepared is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="下载链接已失效，请重新生成")
+    return Response(
+        content=prepared.content,
+        media_type=prepared.media_type,
+        headers={"Content-Disposition": content_disposition_for_filename(prepared.filename)},
+    )
+
+
 @router.get("/{report_id}", response_model=ApiResponse[ReportDetailRead])
 def get_report(
     report_id: Annotated[int, Path(ge=1)],
@@ -247,19 +300,23 @@ def get_report_pdf(
     report_id: Annotated[int, Path(ge=1)],
     db: Session = Depends(get_db),
 ) -> Response:
-    report = get_report_or_404(db, report_id)
-    settings = get_or_create_settings(db)
-    ensure_fuel_subsidy_printable(report)
-    pdf_bytes = build_merged_report_pdf(
-        report,
-        settings.pdf_fill_font_key,
-        settings.double_print_vat_special_invoices,
-    )
-    filename = build_pdf_filename(report)
+    pdf_bytes, filename = _build_report_pdf(db, report_id)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
         headers={"Content-Disposition": content_disposition_for_filename(filename)},
+    )
+
+
+@router.post("/{report_id}/pdf/prepare", response_model=ApiResponse[ReportDownloadPreparationRead])
+def post_prepare_report_pdf(
+    report_id: Annotated[int, Path(ge=1)],
+    db: Session = Depends(get_db),
+) -> ApiResponse[ReportDownloadPreparationRead]:
+    pdf_bytes, filename = _build_report_pdf(db, report_id)
+    return ApiResponse(
+        data=_prepare_download_response(pdf_bytes, filename, "application/pdf"),
+        message="PDF 已生成，请选择保存位置",
     )
 
 

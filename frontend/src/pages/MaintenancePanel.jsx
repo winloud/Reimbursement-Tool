@@ -25,6 +25,7 @@ import {
   restartMaintenanceApp,
   switchMaintenanceVersion,
 } from "../api/client";
+import { saveBlobDownload } from "../utils/browserDownload";
 import {
   formatFileSize,
   latestBackup,
@@ -44,17 +45,6 @@ const getApiErrorMessage = (err, fallback) =>
 const shouldFallbackToBrowserFilePicker = (err) => {
   const status = err.response?.status;
   return !status || status >= 500 || [404, 405].includes(status);
-};
-
-const saveBlob = ({ blob, filename }) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
 };
 
 export default function MaintenancePanel() {
@@ -156,7 +146,7 @@ export default function MaintenancePanel() {
     setBusy("download");
     setBackupError("");
     try {
-      saveBlob(await downloadMaintenanceBackup(backup.backup_id));
+      saveBlobDownload(await downloadMaintenanceBackup(backup.backup_id));
     } catch (err) {
       setBackupError(getApiErrorMessage(err, "下载备份失败"));
     } finally {
@@ -211,7 +201,7 @@ export default function MaintenancePanel() {
     setBusy("diagnostics");
     setDiagnosticsError("");
     try {
-      saveBlob(await downloadMaintenanceDiagnostics());
+      saveBlobDownload(await downloadMaintenanceDiagnostics());
     } catch (err) {
       setDiagnosticsError(getApiErrorMessage(err, "导出诊断信息失败"));
     } finally {

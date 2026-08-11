@@ -108,6 +108,9 @@ def test_chromium_app_window_reuses_stable_profile_and_removes_legacy_profiles(m
     assert all("--window-size=1366,768" in args for args in captured_args)
     assert all("--window-position=40,50" in args for args in captured_args)
     assert (tmp_path / "browser-profile").is_dir()
+    preferences = json.loads((tmp_path / "browser-profile" / "Default" / "Preferences").read_text(encoding="utf-8"))
+    assert preferences["download"]["prompt_for_download"] is True
+    assert all("--disable-extensions" not in args for args in captured_args)
     assert not legacy_profile.exists()
     assert unrelated_dir.exists()
 
@@ -264,6 +267,8 @@ def test_pywebview_window_restores_and_remembers_window_state(monkeypatch, tmp_p
     fake_window = FakeWindow()
 
     class FakeWebview:
+        settings = {"ALLOW_DOWNLOADS": False}
+
         @staticmethod
         def create_window(title, url, **kwargs):
             captured["title"] = title
@@ -293,9 +298,34 @@ def test_pywebview_window_restores_and_remembers_window_state(monkeypatch, tmp_p
         "min_size": (1024, 700),
     }
     assert captured["start"] == {"gui": "edgechromium", "debug": False}
+    assert FakeWebview.settings["ALLOW_DOWNLOADS"] is True
     assert json.loads(state_path.read_text(encoding="utf-8")) == {
         "width": 1440,
         "height": 900,
         "x": 88,
         "y": 99,
     }
+
+
+def test_chromium_download_prompt_preserves_existing_preferences(tmp_path):
+    preferences_path = tmp_path / "Default" / "Preferences"
+    preferences_path.parent.mkdir(parents=True)
+    preferences_path.write_text(
+        json.dumps({"download": {"directory_upgrade": True}, "existing": {"value": 7}}),
+        encoding="utf-8",
+    )
+
+    assert desktop_app.ensure_chromium_download_prompt(tmp_path) is True
+
+    preferences = json.loads(preferences_path.read_text(encoding="utf-8"))
+    assert preferences["download"] == {"directory_upgrade": True, "prompt_for_download": True}
+    assert preferences["existing"] == {"value": 7}
+
+
+def test_chromium_download_prompt_does_not_overwrite_invalid_preferences(tmp_path):
+    preferences_path = tmp_path / "Default" / "Preferences"
+    preferences_path.parent.mkdir(parents=True)
+    preferences_path.write_text("not-json", encoding="utf-8")
+
+    assert desktop_app.ensure_chromium_download_prompt(tmp_path) is False
+    assert preferences_path.read_text(encoding="utf-8") == "not-json"

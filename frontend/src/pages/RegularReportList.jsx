@@ -50,16 +50,17 @@ import {
   batchUpdateReportStatus,
   deleteReport,
   downloadDataExport,
-  downloadReportBatchPdf,
-  downloadReportPdf,
   getReportPdfPreview,
   getReports,
   getStatsSummary,
   getTrashReports,
+  prepareReportBatchPdfDownload,
+  prepareReportPdfDownload,
   purgeReport,
   restoreReport,
   updateReportStatus,
 } from "../api/client";
+import { saveBlobDownload, triggerBrowserDownload } from "../utils/browserDownload";
 import ReportStatusStepControl from "./ReportStatusStepControl";
 import { getBatchReportStatusActions, STATUS_META } from "./reportStatus";
 import {
@@ -71,17 +72,6 @@ import {
   REGULAR_STATUS_TABS,
   regularItemSummary,
 } from "./regularReportUtils";
-
-const saveBlob = (blob, filename) => {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
-};
 
 const errorMessage = (error, fallback) => {
   const detail = error.response?.data?.detail;
@@ -387,8 +377,11 @@ export default function RegularReportList() {
   const handleDownload = async (report) => {
     setBusy(true);
     try {
-      const result = await downloadReportPdf(report.id);
-      saveBlob(result.blob, result.filename || "常规报销单.pdf");
+      const result = await prepareReportPdfDownload(report.id);
+      if (!result.success || !result.data?.download_url) {
+        throw new Error(result.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(result.data.download_url);
     } catch (downloadError) {
       setError(errorMessage(downloadError, "下载失败"));
     } finally {
@@ -399,8 +392,11 @@ export default function RegularReportList() {
   const handleBatchDownload = async () => {
     setBusy(true);
     try {
-      const result = await downloadReportBatchPdf(selectedIds);
-      saveBlob(result.blob, result.filename || "常规报销单.zip");
+      const result = await prepareReportBatchPdfDownload(selectedIds);
+      if (!result.success || !result.data?.download_url) {
+        throw new Error(result.message || "生成批量下载链接失败");
+      }
+      triggerBrowserDownload(result.data.download_url);
     } catch (downloadError) {
       setError(errorMessage(downloadError, "批量下载失败"));
     } finally {
@@ -419,7 +415,10 @@ export default function RegularReportList() {
         regularMode,
         filters: queryFilters,
       });
-      saveBlob(result.blob, result.filename || "regular-expense-data.zip");
+      saveBlobDownload({
+        blob: result.blob,
+        filename: result.filename || "regular-expense-data.zip",
+      });
     } catch (exportError) {
       setError(errorMessage(exportError, "导出失败"));
     } finally {

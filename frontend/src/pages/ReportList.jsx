@@ -7,19 +7,20 @@ import {
   batchUpdateReportStatus,
   deleteReport,
   downloadDataExport,
-  downloadReportBatchPdf,
-  downloadReportPdf,
   executeDataImport,
   getReportFilterOptions,
   getReportPdfPreview,
   getReports,
   getTrashReports,
   previewDataImport,
+  prepareReportBatchPdfDownload,
+  prepareReportPdfDownload,
   purgeReport,
   restoreReport,
   updateReportStatus,
 } from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
+import { saveBlobDownload, triggerBrowserDownload } from "../utils/browserDownload";
 import {
   formatBatchPdfFailureMessage,
   isReportStatusVisible,
@@ -58,17 +59,6 @@ const HAS_ATTACHMENT_OPTIONS = [
   { value: "yes", label: "有附件" },
   { value: "no", label: "无附件" },
 ];
-
-const saveBlob = (blob, filename) => {
-  const url = URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  URL.revokeObjectURL(url);
-};
 
 const errorMessage = (err, fallback) => {
   const data = err.response?.data;
@@ -297,7 +287,7 @@ export default function ReportList() {
     setError("");
     try {
       const { blob, filename } = await downloadDataExport({ status, reportType: "travel", filters });
-      saveBlob(blob, filename || "expense-data.zip");
+      saveBlobDownload({ blob, filename: filename || "expense-data.zip" });
     } catch (err) {
       setError(errorMessage(err, "导出失败"));
     } finally {
@@ -324,8 +314,11 @@ export default function ReportList() {
     setError("");
     setBatchResult(null);
     try {
-      const { blob, filename } = await downloadReportPdf(report.id);
-      saveBlob(blob, filename || "expense-report.pdf");
+      const res = await prepareReportPdfDownload(report.id);
+      if (!res.success || !res.data?.download_url) {
+        throw new Error(res.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(res.data.download_url);
     } catch (err) {
       setError(errorMessage(err, "下载失败"));
     } finally {
@@ -339,9 +332,15 @@ export default function ReportList() {
     setError("");
     setBatchResult(null);
     try {
-      const { blob, filename } = await downloadReportBatchPdf(selectedIds);
-      saveBlob(blob, filename || "expense-reports.zip");
-      setBatchResult({ severity: "success", message: `已下载 ${selectedIds.length} 张报销单 PDF。` });
+      const res = await prepareReportBatchPdfDownload(selectedIds);
+      if (!res.success || !res.data?.download_url) {
+        throw new Error(res.message || "生成批量下载链接失败");
+      }
+      triggerBrowserDownload(res.data.download_url);
+      setBatchResult({
+        severity: "success",
+        message: `已生成 ${selectedIds.length} 张报销单 PDF，请在下载窗口选择保存位置。`,
+      });
     } catch (err) {
       setError(errorMessage(err, "批量下载失败"));
     } finally {

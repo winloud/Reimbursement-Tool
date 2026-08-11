@@ -8,16 +8,17 @@ import {
   createReport,
   deleteInvoice,
   deleteReportAttachment,
-  downloadReportPdf,
   getReport,
   getReportPdfPreview,
   getSettings,
+  prepareReportPdfDownload,
   updateReport,
   updateReportStatus,
   uploadInvoice,
   uploadReportAttachment,
 } from "../api/client";
 import { useNavigationGuard } from "../navigationGuard";
+import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   createInvoiceUploadIssue,
   getInvoiceUploadFeedback,
@@ -56,17 +57,6 @@ const apiErrorMessage = (error, fallback) => {
   if (typeof detail === "string") return detail;
   if (Array.isArray(detail)) return detail.map((item) => item?.msg || String(item)).join("；");
   return error.response?.data?.message || error.message || fallback;
-};
-
-const downloadBlob = (blob, filename) => {
-  const url = window.URL.createObjectURL(blob);
-  const link = document.createElement("a");
-  link.href = url;
-  link.download = filename;
-  document.body.appendChild(link);
-  link.click();
-  link.remove();
-  window.setTimeout(() => window.URL.revokeObjectURL(url), 0);
 };
 
 export default function RegularReportEdit() {
@@ -562,9 +552,12 @@ export default function RegularReportEdit() {
     setPdfBusy("download");
     setError("");
     try {
-      const result = await downloadReportPdf(saved.reportId);
-      downloadBlob(result.blob, result.filename || "常规报销单.pdf");
-      setToast("PDF 已生成并开始下载");
+      const result = await prepareReportPdfDownload(saved.reportId);
+      if (!result.success || !result.data?.download_url) {
+        throw new Error(result.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(result.data.download_url);
+      setToast("PDF 已生成，请在下载窗口选择保存位置");
     } catch (downloadError) {
       setError(apiErrorMessage(downloadError, "下载 PDF 失败"));
     } finally {
