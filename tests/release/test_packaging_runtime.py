@@ -87,6 +87,8 @@ def test_release_script_can_build_optional_opencv_runtime_package():
     assert "Version is required for formal release builds. Use -PreviewBuild" in script
     assert "Compress-ArchiveWithRetry" in script
     assert "Compress-Archive failed on attempt" in script
+    assert "Normalize-ZipEntryPaths -Path $DestinationPath" in script
+    assert '$entry.FullName.Replace("\\", "/")' in script
     assert '$ZipFileName = "{0}-v{1}-{2}.zip" -f $AppName, $PackageVersion, $ReleaseDate' in script
     assert '$StageName = ".staging-{0}-{1}" -f $PackageVersion, $ReleaseDate' in script
     assert "[string]$ReleaseDate" in script

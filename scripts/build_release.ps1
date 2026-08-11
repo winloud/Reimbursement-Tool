@@ -134,6 +134,7 @@ function Compress-ArchiveWithRetry {
                 Remove-PathInside -Path $DestinationPath -AllowedRoot $AllowedRoot
             }
             Compress-Archive -Path $SourcePath -DestinationPath $DestinationPath
+            Normalize-ZipEntryPaths -Path $DestinationPath -AllowedRoot $AllowedRoot
             return
         }
         catch {
@@ -143,6 +144,65 @@ function Compress-ArchiveWithRetry {
             Write-Host "Compress-Archive failed on attempt $attempt; retrying..."
             Start-Sleep -Seconds 2
         }
+    }
+}
+
+function Normalize-ZipEntryPaths {
+    param(
+        [Parameter(Mandatory = $true)][string]$Path,
+        [Parameter(Mandatory = $true)][string]$AllowedRoot
+    )
+
+    Add-Type -AssemblyName System.IO.Compression
+    Add-Type -AssemblyName System.IO.Compression.FileSystem
+    $normalizedPath = Join-Path `
+        (Split-Path -Parent $Path) `
+        (".{0}.normalized-{1}.zip" -f (Split-Path -Leaf $Path), [guid]::NewGuid().ToString("N"))
+    $backupPath = Join-Path `
+        (Split-Path -Parent $Path) `
+        (".{0}.backup-{1}.zip" -f (Split-Path -Leaf $Path), [guid]::NewGuid().ToString("N"))
+    $sourceArchive = $null
+    $targetArchive = $null
+    try {
+        $sourceArchive = [System.IO.Compression.ZipFile]::OpenRead($Path)
+        $targetArchive = [System.IO.Compression.ZipFile]::Open(
+            $normalizedPath,
+            [System.IO.Compression.ZipArchiveMode]::Create
+        )
+        foreach ($entry in $sourceArchive.Entries) {
+            $entryName = $entry.FullName.Replace("\", "/")
+            $targetEntry = $targetArchive.CreateEntry(
+                $entryName,
+                [System.IO.Compression.CompressionLevel]::Optimal
+            )
+            $targetEntry.LastWriteTime = $entry.LastWriteTime
+            if (-not $entryName.EndsWith("/")) {
+                $sourceStream = $entry.Open()
+                $targetStream = $targetEntry.Open()
+                try {
+                    $sourceStream.CopyTo($targetStream)
+                }
+                finally {
+                    $targetStream.Dispose()
+                    $sourceStream.Dispose()
+                }
+            }
+        }
+        $targetArchive.Dispose()
+        $targetArchive = $null
+        $sourceArchive.Dispose()
+        $sourceArchive = $null
+        [System.IO.File]::Replace($normalizedPath, $Path, $backupPath)
+    }
+    finally {
+        if ($targetArchive) {
+            $targetArchive.Dispose()
+        }
+        if ($sourceArchive) {
+            $sourceArchive.Dispose()
+        }
+        Remove-PathInside -Path $normalizedPath -AllowedRoot $AllowedRoot
+        Remove-PathInside -Path $backupPath -AllowedRoot $AllowedRoot
     }
 }
 
