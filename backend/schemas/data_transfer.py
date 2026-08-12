@@ -10,6 +10,7 @@ ImportConflictStrategy = Literal["import_as_new", "overwrite", "skip"]
 
 
 class DataExportRequest(BaseModel):
+    report_ids: list[int] | None = Field(default=None, min_length=1, max_length=100)
     report_type: ReportType | None = None
     regular_mode: RegularMode | None = None
     status: ReportStatus | None = None

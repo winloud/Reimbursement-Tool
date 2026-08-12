@@ -78,7 +78,7 @@ export const buildReportQueryParams = ({
   return params;
 };
 
-export const buildReportExportPayload = ({ status = "all", reportType, regularMode, filters = {} } = {}) => {
+export const buildReportExportPayload = ({ status = "all", reportType, regularMode, filters = {}, reportIds } = {}) => {
   const { page: _page, page_size: _pageSize, ...payload } = buildReportQueryParams({
     page: 1,
     pageSize: 20,
@@ -87,5 +87,8 @@ export const buildReportExportPayload = ({ status = "all", reportType, regularMo
     regularMode,
     filters,
   });
+  if (reportIds?.length) {
+    payload.report_ids = reportIds;
+  }
   return payload;
 };

@@ -112,6 +112,19 @@ def test_export_zip_contains_manifest_uids_and_attachment(db, monkeypatch, tmp_p
         assert exported_invoice["attachment_path"] in archive.namelist()
 
 
+def test_export_zip_can_limit_output_to_selected_report_ids(db):
+    first = create_report(db, ReportCreate(report_date=date(2026, 5, 1), purpose="不应导出"))
+    selected = create_report(db, ReportCreate(report_date=date(2026, 5, 2), purpose="已选报销单"))
+
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_ids=[selected.id]))
+
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    assert manifest["reports_total"] == 1
+    assert [item["report"]["original_id"] for item in manifest["reports"]] == [selected.id]
+    assert first.id not in [item["report"]["original_id"] for item in manifest["reports"]]
+
+
 def test_import_recalculation_includes_confirmed_transport_invoice(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(

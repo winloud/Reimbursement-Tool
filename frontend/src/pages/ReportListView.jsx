@@ -131,6 +131,7 @@ export default function ReportListView(props) {
     setBatchActionMenuAnchor,
     handleOpenImport,
     handleExport,
+    handleExportSelected,
     exporting,
     error,
     batchResult,
@@ -752,6 +753,15 @@ export default function ReportListView(props) {
               disabled={batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
             >
               批量下载
+            </MenuItem>
+            <MenuItem
+              onClick={() => {
+                setBatchActionMenuAnchor(null);
+                handleExportSelected();
+              }}
+              disabled={exporting || batchLoading || deleting || batchStatusUpdating || statusUpdatingId !== null}
+            >
+              导出已选数据
             </MenuItem>
             <MenuItem
               onClick={() => {

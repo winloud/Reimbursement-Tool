@@ -66,26 +66,12 @@ export const getReportFilterOptions = async ({ reportType } = {}) => {
   return response.data;
 };
 
-export const downloadDataExport = async ({ status, reportType, regularMode, filters } = {}) => {
-  try {
-    const response = await apiClient.post("/api/data/export", buildReportExportPayload({ status, reportType, regularMode, filters }), {
-      responseType: "blob",
-    });
-    return {
-      blob: response.data,
-      filename: filenameFromContentDisposition(response.headers["content-disposition"]).replace(/\.pdf$/i, ".zip"),
-    };
-  } catch (err) {
-    if (err.response?.data instanceof Blob) {
-      const text = await err.response.data.text();
-      try {
-        err.response.data = JSON.parse(text);
-      } catch {
-        err.response.data = { message: text };
-      }
-    }
-    throw err;
-  }
+export const prepareDataExport = async ({ status, reportType, regularMode, filters, reportIds } = {}) => {
+  const response = await apiClient.post(
+    "/api/data/export/prepare",
+    buildReportExportPayload({ status, reportType, regularMode, filters, reportIds }),
+  );
+  return resolvePreparedDownload(response.data);
 };
 
 export const previewDataImport = async (file) => {

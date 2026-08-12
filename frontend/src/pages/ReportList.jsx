@@ -6,7 +6,7 @@ import {
   batchRestoreReports,
   batchUpdateReportStatus,
   deleteReport,
-  downloadDataExport,
+  prepareDataExport,
   executeDataImport,
   getReportFilterOptions,
   getReportPdfPreview,
@@ -20,7 +20,7 @@ import {
   updateReportStatus,
 } from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
-import { saveBlobDownload, triggerBrowserDownload } from "../utils/browserDownload";
+import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   formatBatchPdfFailureMessage,
   isReportStatusVisible,
@@ -282,18 +282,31 @@ export default function ReportList() {
     }
   };
 
-  const handleExport = async () => {
+  const handleDataExport = async (reportIds) => {
     setExporting(true);
     setError("");
+    setBatchResult(null);
     try {
-      const { blob, filename } = await downloadDataExport({ status, reportType: "travel", filters });
-      saveBlobDownload({ blob, filename: filename || "expense-data.zip" });
+      const result = await prepareDataExport({ status, reportType: "travel", filters, reportIds });
+      if (!result.success || !result.data?.download_url) {
+        throw new Error(result.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(result.data.download_url);
+      if (reportIds?.length) {
+        setBatchResult({
+          severity: "success",
+          message: `已生成 ${reportIds.length} 张报销单的数据包，请在下载窗口选择保存位置。`,
+        });
+      }
     } catch (err) {
       setError(errorMessage(err, "导出失败"));
     } finally {
       setExporting(false);
     }
   };
+
+  const handleExport = () => handleDataExport();
+  const handleExportSelected = () => handleDataExport(selectedIds);
 
   const handlePreviewReport = async (report) => {
     setPreviewState({ open: true, report, pages: [], loading: true, error: "" });
@@ -635,6 +648,7 @@ export default function ReportList() {
       setBatchActionMenuAnchor={setBatchActionMenuAnchor}
       handleOpenImport={handleOpenImport}
       handleExport={handleExport}
+      handleExportSelected={handleExportSelected}
       exporting={exporting}
       error={error}
       batchResult={batchResult}

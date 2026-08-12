@@ -115,6 +115,7 @@ class SubsidyTrip:
 
 @dataclass(frozen=True)
 class ReportFilters:
+    report_ids: set[int] | None = None
     report_type: ReportType | None = "travel"
     regular_mode: RegularMode | None = None
     report_status: ReportStatus | None = None
@@ -816,6 +817,8 @@ def list_reports(
 
     if filters.report_type is not None:
         statement = statement.where(ExpenseReport.report_type == filters.report_type)
+    if filters.report_ids:
+        statement = statement.where(ExpenseReport.id.in_(filters.report_ids))
     if filters.regular_mode is not None:
         statement = statement.where(ExpenseReport.regular_mode == filters.regular_mode)
 

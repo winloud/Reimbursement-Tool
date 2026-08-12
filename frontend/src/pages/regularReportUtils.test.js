@@ -130,6 +130,7 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   const appSource = readFileSync(new URL("../App.jsx", import.meta.url), "utf8");
   const dashboardSource = readFileSync(new URL("./Dashboard.jsx", import.meta.url), "utf8");
   const travelListSource = readFileSync(new URL("./ReportList.jsx", import.meta.url), "utf8");
+  const travelListViewSource = readFileSync(new URL("./ReportListView.jsx", import.meta.url), "utf8");
   const regularListSource = readFileSync(new URL("./RegularReportList.jsx", import.meta.url), "utf8");
   const travelEditSource = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
   const editSource = readFileSync(new URL("./RegularReportEdit.jsx", import.meta.url), "utf8");
@@ -142,8 +143,12 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.match(appSource, /path="\/regular-reports\/:id\/edit"/);
   assert.match(dashboardSource, /reportType: "travel"/);
   assert.match(travelListSource, /reportType: "travel"/);
+  assert.match(travelListSource, /prepareDataExport\(\{ status, reportType: "travel", filters, reportIds \}\)/);
+  assert.match(travelListViewSource, /导出已选数据/);
   assert.match(regularListSource, /reportType: "regular"/);
-  assert.match(regularListSource, /downloadDataExport\(\{/);
+  assert.match(regularListSource, /prepareDataExport\(\{/);
+  assert.match(regularListSource, /handleDataExport\(selectedIds\)/);
+  assert.match(regularListSource, />导出已选<\/Button>/);
   assert.match(regularListSource, /prepareReportPdfDownload\(report\.id\)/);
   assert.match(regularListSource, /prepareReportBatchPdfDownload\(selectedIds\)/);
   assert.match(editSource, /prepareReportPdfDownload\(saved\.reportId\)/);

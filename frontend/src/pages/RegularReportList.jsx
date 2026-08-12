@@ -49,7 +49,7 @@ import {
   batchRestoreReports,
   batchUpdateReportStatus,
   deleteReport,
-  downloadDataExport,
+  prepareDataExport,
   getReportPdfPreview,
   getReports,
   getStatsSummary,
@@ -60,7 +60,7 @@ import {
   restoreReport,
   updateReportStatus,
 } from "../api/client";
-import { saveBlobDownload, triggerBrowserDownload } from "../utils/browserDownload";
+import { triggerBrowserDownload } from "../utils/browserDownload";
 import ReportStatusStepControl from "./ReportStatusStepControl";
 import { getBatchReportStatusActions, STATUS_META } from "./reportStatus";
 import {
@@ -445,27 +445,35 @@ export default function RegularReportList() {
     }
   };
 
-  const handleExport = async () => {
+  const handleDataExport = async (reportIds) => {
     if (isTrash) return;
     setExporting(true);
     setError("");
+    setNotice("");
     try {
-      const result = await downloadDataExport({
+      const result = await prepareDataExport({
         status,
         reportType: "regular",
         regularMode,
         filters: queryFilters,
+        reportIds,
       });
-      saveBlobDownload({
-        blob: result.blob,
-        filename: result.filename || "regular-expense-data.zip",
-      });
+      if (!result.success || !result.data?.download_url) {
+        throw new Error(result.message || "生成下载链接失败");
+      }
+      triggerBrowserDownload(result.data.download_url);
+      if (reportIds?.length) {
+        setNotice(`已生成 ${reportIds.length} 张报销单的数据包，请在下载窗口选择保存位置。`);
+      }
     } catch (exportError) {
       setError(errorMessage(exportError, "导出失败"));
     } finally {
       setExporting(false);
     }
   };
+
+  const handleExport = () => handleDataExport();
+  const handleExportSelected = () => handleDataExport(selectedIds);
 
   const openReport = (report) => navigate(`/regular-reports/${report.id}/edit`);
 
@@ -595,6 +603,7 @@ export default function RegularReportList() {
                 <>
                   <Button size="small" variant="outlined" endIcon={<ExpandMoreIcon />} disabled={busy} onClick={(event) => setBatchMenuAnchor(event.currentTarget)}>修改状态</Button>
                   <Button size="small" variant="outlined" disabled={busy} onClick={handleBatchDownload}>批量下载</Button>
+                  <Button size="small" variant="outlined" startIcon={<FileDownloadIcon />} disabled={busy || exporting} onClick={handleExportSelected}>导出已选</Button>
                   <Button size="small" color="error" disabled={busy} onClick={() => handleBatchDeleteAction("delete")}>放入回收站</Button>
                 </>
               )}

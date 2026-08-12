@@ -8,6 +8,7 @@ import {
   getInvoiceOpenCapability,
   importRailTickets,
   openInvoiceLocally,
+  prepareDataExport,
   prepareReportBatchPdfDownload,
   prepareReportPdfDownload,
   previewRailTickets,
@@ -143,6 +144,49 @@ describe("api client release defaults", () => {
       assert.equal(requests[0].url, "/api/reports/17/pdf/prepare");
       assert.equal(requests[1].url, "/api/reports/batch/pdf/prepare");
       assert.deepEqual(JSON.parse(requests[1].data), { report_ids: [17, 18] });
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("prepares a repeatable native data-export download for selected reports", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return {
+        data: {
+          success: true,
+          data: {
+            download_url: "/api/data/exports/export-token",
+            filename: "expense-data.zip",
+            expires_in_seconds: 300,
+          },
+        },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const result = await prepareDataExport({
+        status: "checked",
+        reportType: "travel",
+        filters: { keyword: "张三" },
+        reportIds: [17, 18],
+      });
+
+      assert.equal(result.data.download_url, "/api/data/exports/export-token");
+      assert.equal(requests[0].method, "post");
+      assert.equal(requests[0].url, "/api/data/export/prepare");
+      assert.deepEqual(JSON.parse(requests[0].data), {
+        report_type: "travel",
+        status: "checked",
+        keyword: "张三",
+        report_ids: [17, 18],
+      });
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

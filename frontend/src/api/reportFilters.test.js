@@ -87,11 +87,13 @@ describe("buildReportQueryParams", () => {
         status: "reimbursed",
         reportType: "travel",
         filters: { keyword: "差旅" },
+        reportIds: [8, 13],
       }),
       {
         report_type: "travel",
         status: "reimbursed",
         keyword: "差旅",
+        report_ids: [8, 13],
       },
     );
   });

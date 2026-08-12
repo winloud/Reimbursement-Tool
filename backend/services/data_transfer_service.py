@@ -169,6 +169,7 @@ def _bytes_hash(payload: bytes) -> str:
 
 def _filters_from_export_request(payload: DataExportRequest) -> ReportFilters:
     return ReportFilters(
+        report_ids=set(payload.report_ids) if payload.report_ids else None,
         report_type=payload.report_type,
         regular_mode=payload.regular_mode,
         report_status=payload.status,
