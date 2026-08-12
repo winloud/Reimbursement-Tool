@@ -8,6 +8,7 @@ import {
   calculateRegularSummary,
   canDeleteRegularItem,
   getRegularItemDerived,
+  getRegularPdfGate,
   makeBlankRegularItem,
   moveRegularItem,
   normalizeRegularItem,
@@ -80,6 +81,31 @@ test("items with related files cannot be removed implicitly", () => {
   assert.equal(canDeleteRegularItem({ item: { id: null }, mode: "invoice" }), true);
 });
 
+test("pdf gate blocks on unconfirmed invoices first, then on completeness", () => {
+  const form = { report_date: "2026-08-11", employee_name: "李四" };
+  const item = { ...makeBlankRegularItem(), id: 12, occurred_on: "2026-08-10", description: "材料费", amount: "50" };
+  const confirmed = { regular_item_id: 12, amount: "10", amount_confirmed: true };
+  const unconfirmed = { regular_item_id: 12, amount: "10", amount_confirmed: false };
+
+  const unconfirmedGate = getRegularPdfGate({ form, mode: "invoice", items: [item], invoices: [confirmed, unconfirmed] });
+  assert.equal(unconfirmedGate.previewBlocked, true);
+  assert.equal(unconfirmedGate.downloadBlocked, true);
+  assert.equal(unconfirmedGate.severity, "warning");
+  assert.equal(unconfirmedGate.unconfirmedCount, 1);
+  assert.match(unconfirmedGate.message, /1 张发票待确认/);
+
+  const incompleteGate = getRegularPdfGate({ form: { ...form, employee_name: "" }, mode: "no_invoice", items: [item] });
+  assert.equal(incompleteGate.previewBlocked, false);
+  assert.equal(incompleteGate.downloadBlocked, true);
+  assert.equal(incompleteGate.severity, "info");
+  assert.match(incompleteGate.message, /报销人/);
+
+  const readyGate = getRegularPdfGate({ form, mode: "no_invoice", items: [item] });
+  assert.equal(readyGate.previewBlocked, false);
+  assert.equal(readyGate.downloadBlocked, false);
+  assert.match(readyGate.message, /可生成 PDF/);
+});
+
 test("related file mutations wait for a successful report save", async () => {
   const abortedCalls = [];
   const aborted = await runAfterRegularReportSaved({
@@ -135,6 +161,10 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   const travelEditSource = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
   const editSource = readFileSync(new URL("./RegularReportEdit.jsx", import.meta.url), "utf8");
   const viewSource = readFileSync(new URL("./RegularReportEditView.jsx", import.meta.url), "utf8");
+  const invoiceCardListSource = readFileSync(
+    new URL("../features/report-edit-shared/InvoiceCardList.jsx", import.meta.url),
+    "utf8",
+  );
   const evidenceSource = readFileSync(new URL("../features/regular-report/RegularEvidenceSection.jsx", import.meta.url), "utf8");
   const invoiceViewerSource = readFileSync(new URL("../components/InvoiceViewer.jsx", import.meta.url), "utf8");
   assert.ok(appSource.indexOf('label: "出差报销单"') < appSource.indexOf('key: "report-type-divider"'));
@@ -171,7 +201,8 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.equal((regularListSource.match(/`选择报销单 \$\{report\.id\}`/g) || []).length, 2);
   assert.match(viewSource, /InvoiceDropzone/);
   assert.match(viewSource, /RegularEvidenceSection/);
-  assert.ok(viewSource.indexOf("invoices.map") < viewSource.indexOf("!readonly && uploadSlot"));
+  assert.match(viewSource, /InvoiceCardList/);
+  assert.ok(invoiceCardListSource.indexOf("invoices.map") < invoiceCardListSource.indexOf("!readonly && uploadSlot"));
   assert.ok(evidenceSource.indexOf("attachments.map") < evidenceSource.indexOf("<FileUploadPlaceholder"));
   assert.match(evidenceSource, /attachments\.length === 0 && disabled/);
   assert.match(evidenceSource, /暂无报销凭据/);

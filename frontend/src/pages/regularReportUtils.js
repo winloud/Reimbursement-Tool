@@ -1,3 +1,5 @@
+import { formatAmount } from "./reportEditUtils.js";
+
 export const REGULAR_REPORT_MODES = [
   { value: "no_invoice", label: "无票报销" },
   { value: "invoice", label: "有票报销" },
@@ -43,11 +45,8 @@ export const toRegularMoney = (value) => {
   return Number.isFinite(parsed) ? parsed.toFixed(2) : "0.00";
 };
 
-export const formatRegularAmount = (value) =>
-  `¥${Number(value ?? 0).toLocaleString("zh-CN", {
-    minimumFractionDigits: 2,
-    maximumFractionDigits: 2,
-  })}`;
+// 与差旅报销单共用同一金额格式，保证两类填报页显示一致。
+export const formatRegularAmount = formatAmount;
 
 export const makeBlankRegularItem = ({ occurredOn = "" } = {}) => ({
   id: null,
@@ -185,6 +184,38 @@ export const canDeleteRegularItem = ({ item, mode, invoices = [], attachments = 
   if (!item?.id) return true;
   const derived = getRegularItemDerived({ item, mode, invoices, attachments });
   return derived.invoices.length === 0 && derived.attachments.length === 0;
+};
+
+// 汇总卡的 PDF 门槛：先看未确认发票，再看必填信息；预览只受未确认发票限制。
+export const getRegularPdfGate = ({ form, mode, items = [], invoices = [] }) => {
+  const unconfirmedCount =
+    mode === "invoice" ? invoices.filter((invoice) => !invoice.amount_confirmed).length : 0;
+  if (unconfirmedCount > 0) {
+    return {
+      severity: "warning",
+      previewBlocked: true,
+      downloadBlocked: true,
+      unconfirmedCount,
+      message: `${unconfirmedCount} 张发票待确认，确认后才能预览或下载 PDF。`,
+    };
+  }
+  const validationError = validateRegularReport({ form, mode, items, invoices });
+  if (validationError) {
+    return {
+      severity: "info",
+      previewBlocked: false,
+      downloadBlocked: true,
+      unconfirmedCount: 0,
+      message: `${validationError}；补全后才能下载 PDF，仍可先预览。`,
+    };
+  }
+  return {
+    severity: "info",
+    previewBlocked: false,
+    downloadBlocked: false,
+    unconfirmedCount: 0,
+    message: "信息完整，可生成 PDF。",
+  };
 };
 
 export const runAfterRegularReportSaved = async ({ ensureSaved, action }) => {

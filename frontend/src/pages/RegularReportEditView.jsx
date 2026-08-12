@@ -8,15 +8,9 @@ import {
   Card,
   CardContent,
   Chip,
-  CircularProgress,
-  Dialog,
-  DialogActions,
-  DialogContent,
-  DialogTitle,
   Divider,
   IconButton,
   InputAdornment,
-  Paper,
   Snackbar,
   Stack,
   TextField,
@@ -24,167 +18,52 @@ import {
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
-import DeleteIcon from "@mui/icons-material/Delete";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
-import DownloadIcon from "@mui/icons-material/Download";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
 import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
-import SaveIcon from "@mui/icons-material/Save";
-import VisibilityIcon from "@mui/icons-material/Visibility";
 
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
 import RegularEvidenceSection from "../features/regular-report/RegularEvidenceSection";
+import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
+import EditPageLoading from "../features/report-edit-shared/EditPageLoading";
+import EditPageNotices from "../features/report-edit-shared/EditPageNotices";
+import InvoiceCardList from "../features/report-edit-shared/InvoiceCardList";
+import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
+import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
+import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
+import SectionHeader from "../features/report-edit-shared/SectionHeader";
+import {
+  FIELD_GAP,
+  SECTION_GAP,
+  accordionCardSx,
+  dashedAddCardSx,
+  editMainLayoutSx,
+  pageContentSx,
+  repeatedCardGridSx,
+  sectionCardContentSx,
+  summarySidebarSx,
+  workCardSx,
+} from "../features/report-edit-shared/editPageStyles";
 import {
   formatRegularAmount,
   getRegularItemDerived,
   getRegularModeLabel,
 } from "./regularReportUtils";
 
-const repeatedCardGridSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-  gap: { xs: 2, md: 2.5 },
-  alignItems: "stretch",
+const stopSummaryInteraction = {
+  onClick: (event) => event.stopPropagation(),
+  onMouseDown: (event) => event.stopPropagation(),
+  onKeyDown: (event) => event.stopPropagation(),
+  onFocus: (event) => event.stopPropagation(),
 };
-
-function InvoiceRows({ invoices, readonly, uploadSlot, onSelect, onDelete }) {
-  return (
-    <Stack spacing={0.5}>
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Typography variant="caption" fontWeight={800} color="text.secondary">
-          已上传发票
-        </Typography>
-        <Box
-          sx={{
-            px: 0.625,
-            py: 0,
-            borderRadius: 999,
-            bgcolor: "#EEF1F4",
-            color: "text.secondary",
-            fontSize: 11,
-            fontWeight: 700,
-            lineHeight: 1.5,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {invoices.length} 张
-        </Box>
-        <Divider sx={{ flex: 1 }} />
-      </Stack>
-      {invoices.length === 0 && readonly ? (
-        <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
-          暂无发票
-        </Typography>
-      ) : (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-            gap: 0.5,
-            alignItems: "stretch",
-          }}
-        >
-          {invoices.map((invoice) => {
-            const invoiceNumber = invoice.invoice_no || "无发票号码";
-            const confirmationLabel = invoice.amount_confirmed ? "已确认" : "待确认";
-            const fileType = String(invoice.file_type || "file").toUpperCase();
-
-            return (
-              <Paper
-                key={invoice.id}
-                variant="outlined"
-                sx={{
-                  minWidth: 0,
-                  minHeight: 54,
-                  height: "100%",
-                  px: 0.75,
-                  py: 0.5,
-                  borderRadius: 1,
-                  bgcolor: "#F8FAFC",
-                  borderColor: "divider",
-                  borderLeft: 3,
-                  borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
-                }}
-              >
-                <Stack spacing={0.125} sx={{ minWidth: 0 }}>
-                  <Stack direction="row" spacing={0.5} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
-                    <Tooltip title={formatRegularAmount(invoice.amount)}>
-                      <Typography
-                        variant="body2"
-                        fontWeight={800}
-                        noWrap
-                        sx={{ fontVariantNumeric: "tabular-nums", lineHeight: 1.2, minWidth: 0, maxWidth: "100%" }}
-                      >
-                        {formatRegularAmount(invoice.amount)}
-                      </Typography>
-                    </Tooltip>
-                    <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
-                      <Box component="span" sx={{ fontWeight: 700 }}>{fileType}</Box>
-                      <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>·</Box>
-                      <Box component="span" color={invoice.amount_confirmed ? "success.dark" : "warning.dark"} sx={{ fontWeight: 700 }}>
-                        {confirmationLabel}
-                      </Box>
-                    </Typography>
-                  </Stack>
-                  <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
-                    <Tooltip title={invoiceNumber}>
-                      <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
-                        {invoiceNumber}
-                      </Typography>
-                    </Tooltip>
-                    <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
-                      <Tooltip title="查看发票">
-                        <IconButton size="small" aria-label="查看发票" onClick={() => onSelect(invoice)}>
-                          <VisibilityIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除发票">
-                        <span>
-                          <IconButton
-                            size="small"
-                            color="error"
-                            aria-label="删除发票"
-                            disabled={readonly}
-                            onClick={() => onDelete(invoice.id)}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Stack>
-                  </Stack>
-                </Stack>
-              </Paper>
-            );
-          })}
-          {!readonly && uploadSlot}
-        </Box>
-      )}
-    </Stack>
-  );
-}
 
 function AddRegularItemPlaceholder({ onClick }) {
   return (
-    <Button
-      fullWidth
-      variant="outlined"
-      startIcon={<AddIcon />}
-      onClick={onClick}
-      sx={{
-        minHeight: { xs: 96, md: 132 },
-        borderStyle: "dashed",
-        borderColor: "divider",
-        bgcolor: "#F8FAFC",
-        color: "text.secondary",
-        "&:hover": { borderStyle: "dashed", borderColor: "primary.main", bgcolor: "primary.50" },
-      }}
-    >
+    <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={onClick} sx={dashedAddCardSx}>
       添加报销项目
     </Button>
   );
@@ -217,45 +96,84 @@ function RegularItemCard({
     <Accordion
       defaultExpanded={index === 0 || !item.id}
       disableGutters
-      sx={{
-        border: 1,
-        borderColor: "divider",
-        borderRadius: "8px !important",
-        overflow: "hidden",
-        boxShadow: "none",
-        height: "100%",
-        "&::before": { display: "none" },
-      }}
+      elevation={0}
+      sx={{ ...accordionCardSx, height: "100%" }}
     >
-      <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={{ minHeight: 54, px: { xs: 1.25, sm: 2 } }}>
+      <AccordionSummary
+        expandIcon={<ExpandMoreIcon />}
+        sx={{
+          minHeight: 64,
+          px: { xs: 1.5, md: 2 },
+          "& .MuiAccordionSummary-content": { my: 1.25, minWidth: 0 },
+        }}
+      >
         <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, width: "100%", pr: 1 }}>
           <Chip size="small" label={index + 1} sx={{ minWidth: 30 }} />
           <Box sx={{ minWidth: 0, flex: 1 }}>
-            <Typography fontWeight={800} noWrap>{title}</Typography>
+            <Tooltip title={title}>
+              <Typography fontWeight={800} noWrap>
+                {title}
+              </Typography>
+            </Tooltip>
             <Typography variant="caption" color="text.secondary">
               {item.occurred_on || "发生日期待填写"} · {derived.documentCount} 张单据
             </Typography>
           </Box>
-          <Typography fontWeight={900} sx={{ whiteSpace: "nowrap" }}>{formatRegularAmount(derived.amount)}</Typography>
-        </Stack>
-      </AccordionSummary>
-      <AccordionDetails sx={{ pt: 0, px: { xs: 1.25, sm: 2 }, pb: { xs: 1.5, sm: 2 } }}>
-        <Divider sx={{ mb: 1.5 }} />
-        <Stack spacing={1.5}>
+          <Typography fontWeight={900} sx={{ whiteSpace: "nowrap" }}>
+            {formatRegularAmount(derived.amount)}
+          </Typography>
           {!readonly && (
-            <Stack direction="row" spacing={0.5} justifyContent="flex-end">
+            <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }} {...stopSummaryInteraction}>
               <Tooltip title="上移">
-                <span><IconButton size="small" disabled={index === 0} onClick={() => onMove(index, index - 1)}><KeyboardArrowUpIcon fontSize="small" /></IconButton></span>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={index === 0}
+                    aria-label={`上移项目：${title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onMove(index, index - 1);
+                    }}
+                  >
+                    <KeyboardArrowUpIcon fontSize="small" />
+                  </IconButton>
+                </span>
               </Tooltip>
               <Tooltip title="下移">
-                <span><IconButton size="small" disabled={index === totalItems - 1} onClick={() => onMove(index, index + 1)}><KeyboardArrowDownIcon fontSize="small" /></IconButton></span>
+                <span>
+                  <IconButton
+                    size="small"
+                    disabled={index === totalItems - 1}
+                    aria-label={`下移项目：${title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onMove(index, index + 1);
+                    }}
+                  >
+                    <KeyboardArrowDownIcon fontSize="small" />
+                  </IconButton>
+                </span>
               </Tooltip>
               <Tooltip title="删除项目">
-                <IconButton size="small" color="error" onClick={() => onDelete(item)}><DeleteOutlineIcon fontSize="small" /></IconButton>
+                <IconButton
+                  size="small"
+                  color="error"
+                  aria-label={`删除项目：${title}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDelete(item);
+                  }}
+                >
+                  <DeleteOutlineIcon fontSize="small" />
+                </IconButton>
               </Tooltip>
             </Stack>
           )}
-
+        </Stack>
+      </AccordionSummary>
+      <AccordionDetails sx={{ pt: 0, px: { xs: 1.5, md: 2 }, pb: { xs: 1.5, md: 2 } }}>
+        <Divider sx={{ mb: 1.5 }} />
+        <Stack spacing={1.5}>
           <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: mode === "no_invoice" ? "170px minmax(0, 1fr) 160px" : "170px minmax(0, 1fr)" }, gap: 1.25 }}>
             <TextField
               size="small"
@@ -306,7 +224,7 @@ function RegularItemCard({
               </Typography>
             </Stack>
             {mode === "invoice" ? (
-              <InvoiceRows
+              <InvoiceCardList
                 invoices={derived.invoices}
                 readonly={readonly}
                 uploadSlot={
@@ -350,6 +268,8 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
     mode,
     statusActions,
     pdfBusy,
+    pdfGate,
+    canSave,
     onBack,
     onSave,
     onStatusAction,
@@ -386,133 +306,167 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
   } = invoiceFlow;
 
   if (loading) {
-    return <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 420 }}><CircularProgress /></Stack>;
+    return <EditPageLoading message="正在加载常规报销单..." />;
   }
 
   return (
-    <Stack spacing={{ xs: 2, md: 2.5 }}>
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        justifyContent="space-between"
-        alignItems={{ xs: "stretch", md: "center" }}
-        spacing={2}
-      >
-        <Box>
-          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
-            <Typography variant="h5" fontWeight={800}>
-              {reportId ? `常规报销单 #${reportId}` : "新建常规报销单"}
-            </Typography>
-            <Chip size="small" icon={<LockOutlinedIcon />} label={getRegularModeLabel(mode)} color={mode === "invoice" ? "primary" : "default"} />
+    <Stack spacing={SECTION_GAP} sx={pageContentSx}>
+      <EditPageHeader
+        title={reportId ? `常规报销单 #${reportId}` : "新建常规报销单"}
+        subtitle="报销项目、单据和金额在一页完成。"
+        chips={
+          <>
+            <Tooltip title="报销模式创建后不可切换">
+              <Chip
+                size="small"
+                icon={<LockOutlinedIcon />}
+                label={getRegularModeLabel(mode)}
+                color={mode === "invoice" ? "primary" : "default"}
+              />
+            </Tooltip>
             <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
             <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
-          </Stack>
-          <Typography color="text.secondary">报销模式创建后不可切换。</Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ "& > .MuiButton-root": { whiteSpace: "nowrap" } }}>
-          <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={onBack}>
-            返回列表
-          </Button>
-          <Button
-            startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveIcon />}
-            variant="contained"
-            onClick={onSave}
-            disabled={readonly || saveState === "saving"}
-          >
-            手动保存
-          </Button>
-          {statusActions.map((action) => (
-            <Button
-              key={action.target}
-              variant="outlined"
-              color={action.color === "inherit" ? "inherit" : action.color}
-              onClick={() => onStatusAction(action.target)}
-              disabled={saveState === "saving"}
-            >
-              {action.label}
-            </Button>
-          ))}
-        </Stack>
-      </Stack>
+          </>
+        }
+        onBack={onBack}
+        saveState={saveState}
+        canSave={canSave}
+        readonly={readonly}
+        onSave={onSave}
+        statusActions={statusActions}
+        onStatusAction={onStatusAction}
+      />
 
-      {error && <Alert severity="error" sx={{ whiteSpace: "pre-wrap" }}>{error}</Alert>}
-      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改常规报销单内容、发票和凭据。</Alert>}
+      <EditPageNotices
+        error={error}
+        readonly={readonly}
+        readonlyMessage="已核对、已提交和已报销状态为只读，不可修改常规报销单内容、发票和凭据。"
+        uploadState={uploadState}
+      />
 
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "180px minmax(220px, 1fr)" }, gap: 1.25, alignItems: "start" }}>
-        <TextField
-          size="small"
-          type="date"
-          label="报销日期"
-          required
-          disabled={readonly}
-          value={form.report_date}
-          onChange={(event) => onChange("report_date", event.target.value)}
-          InputLabelProps={{ shrink: true }}
-        />
-        <TextField
-          size="small"
-          label="报销人"
-          required
-          disabled={readonly}
-          value={form.employee_name}
-          onChange={(event) => onChange("employee_name", event.target.value)}
-          inputProps={{ maxLength: 50 }}
-        />
-      </Box>
+      <Box sx={editMainLayoutSx}>
+        <Box sx={{ minWidth: 0 }}>
+          <Stack spacing={SECTION_GAP}>
+            <Stack spacing={1.5}>
+              <SectionHeader title="基本信息" />
+              <Card sx={workCardSx}>
+                <CardContent sx={sectionCardContentSx}>
+                  <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: "220px minmax(0, 1fr)" }, gap: FIELD_GAP, alignItems: "start" }}>
+                    <TextField
+                      fullWidth
+                      size="small"
+                      type="date"
+                      label="报销日期"
+                      required
+                      disabled={readonly}
+                      value={form.report_date}
+                      onChange={(event) => onChange("report_date", event.target.value)}
+                      InputLabelProps={{ shrink: true }}
+                    />
+                    <TextField
+                      fullWidth
+                      size="small"
+                      label="报销人"
+                      required
+                      disabled={readonly}
+                      value={form.employee_name}
+                      onChange={(event) => onChange("employee_name", event.target.value)}
+                      inputProps={{ maxLength: 50 }}
+                    />
+                  </Box>
+                </CardContent>
+              </Card>
+            </Stack>
 
-      <Box sx={{ display: "grid", gridTemplateColumns: { xs: "minmax(0, 1fr)", lg: "minmax(0, 1fr) 300px" }, gap: 2, alignItems: "start" }}>
-        <Stack spacing={1.25} sx={{ minWidth: 0 }}>
-          <Box>
-            <Typography variant="h6" fontWeight={800}>报销项目</Typography>
-            <Typography variant="body2" color="text.secondary">一行一个自定义项目，可排序并独立管理单据。</Typography>
-          </Box>
-          <Box sx={repeatedCardGridSx}>
-            {items.map((item, index) => (
-              <RegularItemCard
-                key={item.clientKey || item.id}
-                item={item}
-                index={index}
-                totalItems={items.length}
-                mode={mode}
-                invoices={invoices}
-                attachments={attachments}
-                readonly={readonly}
-                uploadState={uploadState}
-                onUpdate={onUpdate}
-                onMove={onMove}
-                onDelete={onDelete}
-                onInvoiceFiles={onInvoiceFiles}
-                onEvidenceFiles={onEvidenceFiles}
-                onSelectInvoice={onSelectInvoice}
-                onDeleteInvoice={onDeleteInvoice}
-                onDeleteEvidence={onDeleteEvidence}
-                onUploadError={onUploadError}
+            <Stack spacing={1.5}>
+              <SectionHeader
+                title="报销项目"
+                chip={items.length > 0 ? <Chip size="small" variant="outlined" label={`${items.length} 项`} /> : null}
+                description="一行一个自定义项目，可排序并独立管理单据。"
+                actions={
+                  <Button startIcon={<AddIcon />} variant="outlined" onClick={onAdd} disabled={readonly}>
+                    添加项目
+                  </Button>
+                }
               />
-            ))}
-            {!readonly && <AddRegularItemPlaceholder onClick={onAdd} />}
-            {items.length === 0 && readonly && (
-              <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>暂无报销项目。</Alert>
-            )}
-          </Box>
-        </Stack>
+              <Box sx={repeatedCardGridSx}>
+                {items.map((item, index) => (
+                  <RegularItemCard
+                    key={item.clientKey || item.id}
+                    item={item}
+                    index={index}
+                    totalItems={items.length}
+                    mode={mode}
+                    invoices={invoices}
+                    attachments={attachments}
+                    readonly={readonly}
+                    uploadState={uploadState}
+                    onUpdate={onUpdate}
+                    onMove={onMove}
+                    onDelete={onDelete}
+                    onInvoiceFiles={onInvoiceFiles}
+                    onEvidenceFiles={onEvidenceFiles}
+                    onSelectInvoice={onSelectInvoice}
+                    onDeleteInvoice={onDeleteInvoice}
+                    onDeleteEvidence={onDeleteEvidence}
+                    onUploadError={onUploadError}
+                  />
+                ))}
+                {!readonly && <AddRegularItemPlaceholder onClick={onAdd} />}
+                {items.length === 0 && readonly && (
+                  <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>暂无报销项目。</Alert>
+                )}
+              </Box>
+            </Stack>
+          </Stack>
+        </Box>
 
-        <Box sx={{ position: { lg: "sticky" }, top: { lg: 24 } }}>
-          <Card>
-            <CardContent sx={{ p: 2, "&:last-child": { pb: 2 } }}>
-              <Stack spacing={1.5}>
+        <Box sx={summarySidebarSx}>
+          <Card sx={workCardSx}>
+            <CardContent sx={sectionCardContentSx}>
+              <Stack spacing={2}>
                 <Box>
-                  <Typography variant="subtitle2" color="text.secondary" fontWeight={800}>报销合计</Typography>
-                  <Typography variant="h4" fontWeight={900} sx={{ mt: 0.25 }}>{formatRegularAmount(summary.totalAmount)}</Typography>
-                  <Typography variant="body2" color="text.secondary">{items.length} 个项目 · {summary.documentCount} 张单据</Typography>
+                  <Typography variant="h6" fontWeight={800}>
+                    费用汇总
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary">
+                    {mode === "invoice" ? "未确认金额不计入报销总额。" : "金额按项目录入自动合计。"}
+                  </Typography>
                 </Box>
+
+                <Alert severity={pdfGate.severity} sx={{ py: 0.75 }}>
+                  {pdfGate.message}
+                </Alert>
+
                 <Divider />
-                <Stack direction="row" spacing={1}>
-                  <Button fullWidth variant="outlined" startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />} onClick={onPreview} disabled={pdfBusy !== ""}>
-                    预览
-                  </Button>
-                  <Button fullWidth variant="contained" startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />} onClick={onDownload} disabled={pdfBusy !== ""}>
-                    下载
-                  </Button>
+
+                <Stack spacing={1.25}>
+                  <Stack direction="row" justifyContent="space-between" alignItems="baseline">
+                    <Typography color="text.secondary">报销总金额</Typography>
+                    <Typography variant="h5" fontWeight={900} color="primary.main">
+                      {formatRegularAmount(summary.totalAmount)}
+                    </Typography>
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography color="text.secondary">报销项目</Typography>
+                    <Typography fontWeight={800}>{items.length} 个</Typography>
+                  </Stack>
+                  <Stack direction="row" justifyContent="space-between">
+                    <Typography color="text.secondary">单据张数</Typography>
+                    <Typography fontWeight={800}>{summary.documentCount} 张</Typography>
+                  </Stack>
                 </Stack>
+
+                <Divider />
+
+                <PdfActionButtons
+                  busy={pdfBusy}
+                  previewBlocked={pdfGate.previewBlocked}
+                  downloadBlocked={pdfGate.downloadBlocked}
+                  downloadBlockedLabel={pdfGate.unconfirmedCount > 0 ? "确认后下载" : "完善后下载"}
+                  onPreview={onPreview}
+                  onDownload={onDownload}
+                />
               </Stack>
             </CardContent>
           </Card>
@@ -529,19 +483,27 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
       />
       <InvoiceUploadResultDialog result={uploadResult} onClose={onUploadResultClose} onContinue={onUploadResultContinue} />
 
-      <Dialog open={overlays.previewOpen} onClose={overlays.onClosePreview} maxWidth="md" fullWidth>
-        <DialogTitle>常规报销单预览</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            {overlays.previewPages.map((page) => (
-              <Box component="img" key={page.page} src={page.image_url} alt={`常规报销单第 ${page.page} 页`} sx={{ width: "100%", border: 1, borderColor: "divider" }} />
-            ))}
-          </Stack>
-        </DialogContent>
-        <DialogActions><Button onClick={overlays.onClosePreview}>关闭</Button></DialogActions>
-      </Dialog>
+      <PdfPreviewDialog
+        open={overlays.previewOpen}
+        onClose={overlays.onClosePreview}
+        pages={overlays.previewPages}
+        title="常规报销单预览"
+      />
 
-      <Snackbar open={Boolean(overlays.toast)} autoHideDuration={3000} onClose={overlays.onCloseToast} message={overlays.toast} />
+      <PdfBlockedDialog
+        open={overlays.pdfBlockedOpen}
+        onClose={overlays.onClosePdfBlocked}
+        title={pdfGate.unconfirmedCount > 0 ? "存在未确认发票" : "报销信息尚未完整"}
+        message={pdfGate.message}
+      />
+
+      <Snackbar
+        open={Boolean(overlays.toast)}
+        autoHideDuration={2500}
+        onClose={overlays.onCloseToast}
+        message={overlays.toast}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
     </Stack>
   );
 }

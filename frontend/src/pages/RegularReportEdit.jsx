@@ -1,7 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Alert, Button, CircularProgress, Stack } from "@mui/material";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
+import { Alert, Button, Stack } from "@mui/material";
 import { useNavigate, useParams, useSearchParams } from "react-router-dom";
 
 import {
@@ -18,6 +16,8 @@ import {
   uploadReportAttachment,
 } from "../api/client";
 import { useNavigationGuard } from "../navigationGuard";
+import { getApiErrorMessage } from "../features/report-edit-shared/apiError";
+import { getSaveStateMeta } from "../features/report-edit-shared/saveStateMeta";
 import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   createInvoiceUploadIssue,
@@ -33,6 +33,7 @@ import {
   buildRegularReportPayload,
   calculateRegularSummary,
   canDeleteRegularItem,
+  getRegularPdfGate,
   isRegularDraftEmpty,
   isRegularMode,
   makeBlankRegularItem,
@@ -42,22 +43,6 @@ import {
   sortAndNormalizeRegularItems,
   validateRegularReport,
 } from "./regularReportUtils";
-
-const SAVE_META = {
-  pristine: { text: "无需保存", color: "default", icon: undefined },
-  idle: { text: "等待修改", color: "default", icon: undefined },
-  dirty: { text: "有未保存修改", color: "warning", icon: undefined },
-  saving: { text: "保存中", color: "info", icon: <CircularProgress size={13} /> },
-  saved: { text: "已保存", color: "success", icon: <CheckCircleIcon fontSize="small" /> },
-  error: { text: "保存失败", color: "error", icon: <ErrorOutlineIcon fontSize="small" /> },
-};
-
-const apiErrorMessage = (error, fallback) => {
-  const detail = error.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return detail.map((item) => item?.msg || String(item)).join("；");
-  return error.response?.data?.message || error.message || fallback;
-};
 
 export default function RegularReportEdit() {
   const { id: routeId } = useParams();
@@ -85,6 +70,7 @@ export default function RegularReportEdit() {
   const [pdfBusy, setPdfBusy] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewPages, setPreviewPages] = useState([]);
+  const [pdfBlockedOpen, setPdfBlockedOpen] = useState(false);
   const [autosaveDelaySeconds, setAutosaveDelaySeconds] = useState(DEFAULT_AUTOSAVE_DELAY_SECONDS);
 
   const loadedRef = useRef(false);
@@ -113,6 +99,11 @@ export default function RegularReportEdit() {
     () => calculateRegularSummary({ mode, items, invoices, attachments }),
     [attachments, invoices, items, mode],
   );
+  const pdfGate = useMemo(
+    () => getRegularPdfGate({ form, mode, items, invoices }),
+    [form, invoices, items, mode],
+  );
+  const hasUnsavedChanges = loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
 
   const applyReport = useCallback((report, { markSaved = true, previousItems = [] } = {}) => {
     const nextMode = report.regular_mode;
@@ -186,7 +177,7 @@ export default function RegularReportEdit() {
       }
       return applyReport(response.data);
     } catch (loadError) {
-      setError(apiErrorMessage(loadError, "加载常规报销单失败"));
+      setError(getApiErrorMessage(loadError, "加载常规报销单失败"));
       return null;
     } finally {
       if (!quiet) setLoading(false);
@@ -293,7 +284,7 @@ export default function RegularReportEdit() {
         }
         return { ok: true, reportId: createdId, report: savedReport };
       } catch (saveError) {
-        const message = apiErrorMessage(saveError, "创建常规报销单失败");
+        const message = getApiErrorMessage(saveError, "创建常规报销单失败");
         setError(message);
         setSaveState("error");
         return { ok: false, reportId: reportIdRef.current };
@@ -318,7 +309,7 @@ export default function RegularReportEdit() {
       return { ok: true, reportId: existingReportId, report: response.data };
     } catch (saveError) {
       if (requestId !== autosaveRequestRef.current) return { ok: false, reportId: existingReportId };
-      const message = apiErrorMessage(saveError, "保存常规报销单失败");
+      const message = getApiErrorMessage(saveError, "保存常规报销单失败");
       setError(message);
       setSaveState("error");
       return { ok: false, reportId: existingReportId };
@@ -412,11 +403,11 @@ export default function RegularReportEdit() {
     const issues = [];
     let successfulFileCount = 0;
     setError("");
-    setUploadState({ kind: "invoice", regularItemId, current: 0, total: fileList.length });
+    setUploadState({ kind: "invoice", regularItemId, current: 0, total: fileList.length, name: fileList[0].name });
     try {
       for (let index = 0; index < fileList.length; index += 1) {
         const file = fileList[index];
-        setUploadState({ kind: "invoice", regularItemId, current: index + 1, total: fileList.length });
+        setUploadState({ kind: "invoice", regularItemId, current: index + 1, total: fileList.length, name: file.name });
         try {
           const response = await uploadInvoice({ reportId: saved.reportId, regularItemId, file });
           if (!response.success) throw new Error(response.message || "发票上传失败");
@@ -425,7 +416,7 @@ export default function RegularReportEdit() {
           uploaded.push(...uploadedItems);
           successfulFileCount += 1;
         } catch (uploadError) {
-          issues.push(createInvoiceUploadIssue(file.name, apiErrorMessage(uploadError, "上传失败"), uploadError.response?.status));
+          issues.push(createInvoiceUploadIssue(file.name, getApiErrorMessage(uploadError, "上传失败"), uploadError.response?.status));
         }
       }
       const feedback = getInvoiceUploadFeedback({ totalFileCount: fileList.length, successfulFileCount, issues });
@@ -465,17 +456,17 @@ export default function RegularReportEdit() {
     let uploadedCount = 0;
     const issues = [];
     setError("");
-    setUploadState({ kind: "evidence", regularItemId, current: 0, total: fileList.length });
+    setUploadState({ kind: "evidence", regularItemId, current: 0, total: fileList.length, name: fileList[0].name });
     try {
       for (let index = 0; index < fileList.length; index += 1) {
         const file = fileList[index];
-        setUploadState({ kind: "evidence", regularItemId, current: index + 1, total: fileList.length });
+        setUploadState({ kind: "evidence", regularItemId, current: index + 1, total: fileList.length, name: file.name });
         try {
           const response = await uploadReportAttachment({ reportId: saved.reportId, regularItemId, file });
           if (!response.success) throw new Error(response.message || "凭据上传失败");
           uploadedCount += 1;
         } catch (uploadError) {
-          issues.push(`${file.name || "未命名文件"}：${apiErrorMessage(uploadError, "上传失败")}`);
+          issues.push(`${file.name || "未命名文件"}：${getApiErrorMessage(uploadError, "上传失败")}`);
         }
       }
       if (uploadedCount > 0) await loadForEdit({ quiet: true, reportId: saved.reportId });
@@ -500,7 +491,7 @@ export default function RegularReportEdit() {
       if (!deleted) return;
       setToast("发票已删除");
     } catch (deleteError) {
-      setError(apiErrorMessage(deleteError, "删除发票失败"));
+      setError(getApiErrorMessage(deleteError, "删除发票失败"));
     }
   };
 
@@ -518,7 +509,7 @@ export default function RegularReportEdit() {
       if (!deleted) return;
       setToast("凭据已删除");
     } catch (deleteError) {
-      setError(apiErrorMessage(deleteError, "删除凭据失败"));
+      setError(getApiErrorMessage(deleteError, "删除凭据失败"));
     }
   };
 
@@ -551,6 +542,7 @@ export default function RegularReportEdit() {
       const validationError = validateRegularReport({ form, mode, items, invoices });
       if (validationError) {
         setError(validationError);
+        setToast(validationError);
         return;
       }
     }
@@ -567,16 +559,14 @@ export default function RegularReportEdit() {
       setSaveState("saved");
       setToast("状态已更新");
     } catch (statusError) {
-      setError(apiErrorMessage(statusError, "状态更新失败"));
+      setError(getApiErrorMessage(statusError, "状态更新失败"));
       setSaveState("error");
     }
   };
 
-  const hasUnconfirmedInvoices = mode === "invoice" && invoices.some((invoice) => !invoice.amount_confirmed);
-
   const handlePreview = async () => {
-    if (hasUnconfirmedInvoices) {
-      setError("仍有未确认发票，确认后才能预览 PDF");
+    if (pdfGate.previewBlocked) {
+      setPdfBlockedOpen(true);
       return;
     }
     const saved = await ensureSaved({ allowEmptyCreate: true });
@@ -589,16 +579,15 @@ export default function RegularReportEdit() {
       setPreviewPages(response.data?.pages || []);
       setPreviewOpen(true);
     } catch (previewError) {
-      setError(apiErrorMessage(previewError, "生成 PDF 预览失败"));
+      setError(getApiErrorMessage(previewError, "生成 PDF 预览失败"));
     } finally {
       setPdfBusy("");
     }
   };
 
   const handleDownload = async () => {
-    const validationError = validateRegularReport({ form, mode, items, invoices });
-    if (validationError) {
-      setError(validationError);
+    if (pdfGate.downloadBlocked) {
+      setPdfBlockedOpen(true);
       return;
     }
     const saved = await ensureSaved();
@@ -613,7 +602,7 @@ export default function RegularReportEdit() {
       triggerBrowserDownload(result.data.download_url);
       setToast("PDF 已生成，请在下载窗口选择保存位置");
     } catch (downloadError) {
-      setError(apiErrorMessage(downloadError, "下载 PDF 失败"));
+      setError(getApiErrorMessage(downloadError, "下载 PDF 失败"));
     } finally {
       setPdfBusy("");
     }
@@ -624,14 +613,16 @@ export default function RegularReportEdit() {
     error,
     readonly,
     statusMeta: STATUS_META[status] || { label: status, chipSx: {} },
-    saveMeta: SAVE_META[saveState] || SAVE_META.idle,
+    saveMeta: getSaveStateMeta(saveState),
     saveState,
     reportId: activeReportId,
     mode,
     statusActions: STATUS_ACTIONS[status] || [],
     pdfBusy,
+    pdfGate,
+    canSave: activeReportId ? hasUnsavedChanges : !emptyDraft,
     onBack: () => requestNavigation("/regular-reports"),
-    onSave: () => saveReport({ quiet: false, allowEmptyCreate: true, force: true }),
+    onSave: () => saveReport({ quiet: false, force: true }),
     onStatusAction: handleStatusAction,
     onPreview: handlePreview,
     onDownload: handleDownload,
@@ -679,6 +670,8 @@ export default function RegularReportEdit() {
     previewOpen,
     previewPages,
     onClosePreview: () => setPreviewOpen(false),
+    pdfBlockedOpen,
+    onClosePdfBlocked: () => setPdfBlockedOpen(false),
     toast,
     onCloseToast: () => setToast(""),
   };
