@@ -614,9 +614,10 @@ def build_pdf_filename(report: ExpenseReport) -> str:
     report_date = report.report_date.isoformat() if report.report_date else "未填日期"
     if getattr(report, "report_type", "travel") == "regular":
         employee_name = (report.employee_name or "未填报销人").strip() or "未填报销人"
+        item_summary = (report.regular_item_summary or "未填项目").strip() or "未填项目"
         mode_label = "有票" if getattr(report, "regular_mode", None) == "invoice" else "无票"
         amount = _money(report.total_amount)
-        filename = f"{report_date}-{employee_name}-常规报销-{mode_label}-￥{amount}.pdf"
+        filename = f"{report_date}-{employee_name}-{item_summary}-{mode_label}-￥{amount}.pdf"
         return ILLEGAL_FILENAME_CHARS.sub("_", filename)
     purpose = (report.purpose or "未填事由").strip() or "未填事由"
     amount = _money(report.total_amount)

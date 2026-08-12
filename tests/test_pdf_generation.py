@@ -967,7 +967,23 @@ def test_regular_no_invoice_pdf_counts_pages_and_orders_evidence_by_item(monkeyp
     assert len(merged.pages) == 3
     assert "evidence item one" in (merged.pages[1].extract_text() or "")
     assert "evidence item two" in (merged.pages[2].extract_text() or "")
-    assert build_pdf_filename(report) == "2026-06-04-李报销-常规报销-无票-￥30.00.pdf"
+    assert build_pdf_filename(report) == "2026-06-04-李报销-项目一、项目二-无票-￥30.00.pdf"
+
+
+def test_regular_pdf_filename_uses_employee_project_summary_mode_and_amount(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            report_date="2026-08-12",
+            employee_name="王华彬",
+            regular_items=[RegularItemWrite(sort_order=1, description="项目摘要")],
+        ),
+    )
+    report.total_amount = Decimal("286.00")
+
+    assert build_pdf_filename(report) == "2026-08-12-王华彬-项目摘要-有票-￥286.00.pdf"
 
 
 def test_regular_invoice_pdf_orders_files_by_item_and_keeps_vat_double_print(monkeypatch, tmp_path, db):
