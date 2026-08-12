@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
 from io import BytesIO
 import zipfile
 
@@ -23,6 +23,7 @@ from backend.services.pdf_generator import build_merged_report_pdf, build_pdf_fi
 from backend.services.report_service import (
     REPORT_STATUS_LABELS,
     REPORT_STATUS_ORDER,
+    apply_report_status,
     ensure_fuel_subsidy_printable,
     ensure_report_ready_to_leave_draft,
     purge_report,
@@ -175,8 +176,9 @@ def batch_update_report_status(
             for report in candidates
         ):
             create_safety_snapshot(db, reason="pre_batch_status_rollback")
+        submitted_on = date.today() if target_status == "printed" else None
         for report in candidates:
-            report.status = target_status
+            apply_report_status(report, target_status, submitted_on=submitted_on)
         if candidates:
             db.commit()
     except Exception:

@@ -47,6 +47,8 @@ def test_batch_pdf_success_returns_zip_without_mutating_reports(monkeypatch, tmp
     draft = create_report(db, ReportCreate(report_date=date(2026, 6, 4), purpose="草稿出差"))
     printed = create_report(db, ReportCreate(report_date=date(2026, 6, 5), purpose="已打印出差"))
     mark_submitted(db, printed)
+    printed.report_date = date(2026, 6, 5)
+    db.commit()
 
     zip_bytes, filename = build_batch_report_pdf_zip(db, [draft.id, printed.id])
 
@@ -310,6 +312,26 @@ def test_batch_status_allows_reimbursed_reports_to_return_to_submitted(monkeypat
     assert result.skipped_count == 0
     assert report.status == "printed"
     assert snapshot_reasons == ["pre_batch_status_rollback"]
+
+
+def test_batch_marking_submitted_refreshes_every_updated_report_date(db):
+    original_date = date(2026, 1, 2)
+    checked = create_report(db, ReportCreate(report_date=original_date, purpose="已核对"))
+    reimbursed = create_report(db, ReportCreate(report_date=original_date, purpose="已报销"))
+    update_report_status(db, checked.id, "checked")
+    mark_submitted(db, reimbursed)
+    update_report_status(db, reimbursed.id, "reimbursed")
+    checked.report_date = original_date
+    reimbursed.report_date = original_date
+    db.commit()
+
+    result = batch_update_report_status(db, [checked.id, reimbursed.id], "printed")
+
+    db.refresh(checked)
+    db.refresh(reimbursed)
+    assert result.updated_count == 2
+    assert checked.report_date == date.today()
+    assert reimbursed.report_date == date.today()
 
 
 def test_batch_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):

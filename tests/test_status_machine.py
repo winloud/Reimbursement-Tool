@@ -1,3 +1,5 @@
+from datetime import date
+
 import pytest
 from fastapi import HTTPException
 
@@ -76,6 +78,28 @@ def test_update_report_status_full_legal_path(monkeypatch, db):
     report = update_report_status(db, report.id, "printed")
     assert report.status == "printed"
     assert snapshot_reasons == ["pre_status_rollback", "pre_status_rollback", "pre_status_rollback"]
+
+
+def test_marking_submitted_refreshes_report_date_every_time(db):
+    original_date = date(2026, 1, 2)
+    report = create_report(db, ReportCreate(report_date=original_date, purpose="提交日期测试"))
+
+    update_report_status(db, report.id, "checked")
+    submitted = update_report_status(db, report.id, "printed")
+    assert submitted.report_date == date.today()
+
+    submitted.report_date = original_date
+    db.commit()
+    checked = update_report_status(db, report.id, "checked")
+    assert checked.report_date == original_date
+    resubmitted = update_report_status(db, report.id, "printed")
+    assert resubmitted.report_date == date.today()
+
+    update_report_status(db, report.id, "reimbursed")
+    report.report_date = original_date
+    db.commit()
+    returned = update_report_status(db, report.id, "printed")
+    assert returned.report_date == date.today()
 
 
 def test_status_rollback_aborts_when_snapshot_fails(monkeypatch, db):

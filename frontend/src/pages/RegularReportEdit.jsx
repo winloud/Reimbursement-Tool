@@ -560,6 +560,10 @@ export default function RegularReportEdit() {
       const response = await updateReportStatus(saved.reportId, target);
       if (!response.success) throw new Error(response.message || "状态更新失败");
       setStatus(response.data?.status || target);
+      if (response.data?.report_date) {
+        setForm((current) => ({ ...current, report_date: response.data.report_date }));
+        setDefaults((current) => ({ ...current, report_date: response.data.report_date }));
+      }
       setSaveState("saved");
       setToast("状态已更新");
     } catch (statusError) {

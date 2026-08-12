@@ -1029,6 +1029,17 @@ def purge_report(db: Session, report_id: int) -> int:
     return deleted_files
 
 
+def apply_report_status(
+    report: ExpenseReport,
+    target_status: ReportStatus,
+    *,
+    submitted_on: date | None = None,
+) -> None:
+    report.status = target_status
+    if target_status == "printed":
+        report.report_date = submitted_on or date.today()
+
+
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     validate_status_transition(report.status, target_status)
@@ -1036,7 +1047,7 @@ def update_report_status(db: Session, report_id: int, target_status: ReportStatu
         ensure_report_ready_to_leave_draft(report)
     if REPORT_STATUS_ORDER.get(target_status, 0) < REPORT_STATUS_ORDER.get(report.status, 0):
         create_safety_snapshot(db, reason="pre_status_rollback")
-    report.status = target_status
+    apply_report_status(report, target_status)
     db.commit()
     db.refresh(report)
     return report

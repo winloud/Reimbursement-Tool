@@ -685,6 +685,10 @@ export default function ReportEdit() {
       const res = await updateReportStatus(saved.reportId, target);
       if (res.success) {
         setStatus(res.data.status);
+        if (res.data.report_date) {
+          setForm((current) => ({ ...current, report_date: res.data.report_date }));
+          setDefaults((current) => ({ ...current, report_date: res.data.report_date }));
+        }
         setToast("状态已更新");
         setSaveState("saved");
       } else {
