@@ -9,7 +9,6 @@ import {
   Card,
   CardContent,
   Chip,
-  CircularProgress,
   Dialog,
   DialogActions,
   DialogContent,
@@ -19,11 +18,9 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
-  LinearProgress,
   ListItemIcon,
   Menu,
   MenuItem,
-  Paper,
   Snackbar,
   Stack,
   Switch,
@@ -32,18 +29,14 @@ import {
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
-import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
-import DownloadIcon from "@mui/icons-material/Download";
 import MoreVertIcon from "@mui/icons-material/MoreVert";
-import SaveIcon from "@mui/icons-material/Save";
 import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
-import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useState } from "react";
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
@@ -51,6 +44,28 @@ import TicketImportDialog from "../components/TicketImportDialog";
 import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
 import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
 import ReportAttachmentSection from "../features/report-edit/ReportAttachmentSection";
+import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
+import EditPageLoading from "../features/report-edit-shared/EditPageLoading";
+import EditPageNotices from "../features/report-edit-shared/EditPageNotices";
+import InvoiceCardList from "../features/report-edit-shared/InvoiceCardList";
+import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
+import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
+import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
+import SectionHeader from "../features/report-edit-shared/SectionHeader";
+import {
+  FIELD_GAP,
+  SECTION_GAP,
+  accordionCardSx,
+  cardSubSectionDividerSx,
+  editMainLayoutSx,
+  pageContentSx,
+  repeatedCardGridSx,
+  sectionAnchorSx,
+  sectionCardContentSx,
+  subtlePanelSx,
+  summarySidebarSx,
+  workCardSx,
+} from "../features/report-edit-shared/editPageStyles";
 import {
   TRIP_CARD_ACTION_POLICY,
   formatAmount,
@@ -73,42 +88,6 @@ const TRIP_OVERFLOW_ACTION_META = {
 };
 
 const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
-const SECTION_GAP = { xs: 2, md: 2.5 };
-const FIELD_GAP = { xs: 1.5, md: 2 };
-
-const pageContentSx = {
-  width: "100%",
-  pb: 4,
-};
-
-const sectionCardContentSx = {
-  p: { xs: 2, md: 2.5 },
-  "&:last-child": {
-    pb: { xs: 2, md: 2.5 },
-  },
-};
-
-const workCardSx = {
-  height: "100%",
-  border: 1,
-  borderColor: "divider",
-  borderRadius: 2,
-  boxShadow: "none",
-};
-
-const mainLayoutSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", xl: "minmax(0, 1fr) 320px" },
-  gap: { xs: 2, md: 2.5, xl: 3 },
-  alignItems: "start",
-};
-
-const repeatedCardGridSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-  gap: SECTION_GAP,
-  alignItems: "stretch",
-};
 
 const tripCardTitleSx = {
   minWidth: 0,
@@ -170,10 +149,6 @@ const editSectionNavSx = {
   backdropFilter: "blur(10px)",
 };
 
-const sectionAnchorSx = {
-  scrollMarginTop: { xs: 24, lg: 80 },
-};
-
 const subsidyModeSwitchSx = {
   width: 40,
   height: 22,
@@ -213,10 +188,7 @@ const tripSegmentGridSx = {
 };
 
 const tripSegmentPanelSx = {
-  border: 1,
-  borderColor: "divider",
-  borderRadius: 1,
-  bgcolor: "#F8FAFC",
+  ...subtlePanelSx,
   p: { xs: 1.25, md: 1.5 },
 };
 
@@ -228,126 +200,6 @@ const EDIT_SECTIONS = [
 ];
 
 const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
-
-function InvoiceList({ items, readonly, uploadSlot, onSelect, onDelete }) {
-  return (
-    <Stack spacing={0.5}>
-      <Stack direction="row" alignItems="center" spacing={0.5}>
-        <Typography variant="caption" fontWeight={800} color="text.secondary">
-          已上传发票
-        </Typography>
-        <Box
-          sx={{
-            px: 0.625,
-            py: 0,
-            borderRadius: 999,
-            bgcolor: "#EEF1F4",
-            color: "text.secondary",
-            fontSize: 11,
-            fontWeight: 700,
-            lineHeight: 1.5,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {items.length} 张
-        </Box>
-        <Divider sx={{ flex: 1 }} />
-      </Stack>
-      {items.length === 0 && readonly ? (
-        <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
-          暂无发票
-        </Typography>
-      ) : (
-        <Box
-          sx={{
-            display: "grid",
-            gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-            gap: 0.5,
-            alignItems: "stretch",
-          }}
-        >
-          {items.map((invoice) => {
-            const invoiceNumber = invoice.invoice_no || "无发票号码";
-            const confirmationLabel = invoice.amount_confirmed ? "已确认" : "待确认";
-
-            return (
-              <Paper
-                key={invoice.id}
-                variant="outlined"
-                sx={{
-                  minWidth: 0,
-                  minHeight: 54,
-                  height: "100%",
-                  px: 0.75,
-                  py: 0.5,
-                  borderRadius: 1,
-                  bgcolor: "#F8FAFC",
-                  borderColor: "divider",
-                  borderLeft: 3,
-                  borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
-                }}
-              >
-                <Stack spacing={0.125} sx={{ minWidth: 0 }}>
-                  <Stack direction="row" spacing={0.5} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
-                    <Tooltip title={formatAmount(invoice.amount)}>
-                      <Typography
-                        variant="body2"
-                        fontWeight={800}
-                        noWrap
-                        sx={{ fontVariantNumeric: "tabular-nums", lineHeight: 1.2, minWidth: 0, maxWidth: "100%" }}
-                      >
-                        {formatAmount(invoice.amount)}
-                      </Typography>
-                    </Tooltip>
-                    <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
-                      <Box component="span" sx={{ fontWeight: 700 }}>
-                        {invoice.file_type.toUpperCase()}
-                      </Box>
-                      <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
-                        ·
-                      </Box>
-                      <Box component="span" color={invoice.amount_confirmed ? "success.dark" : "warning.dark"} sx={{ fontWeight: 700 }}>
-                        {confirmationLabel}
-                      </Box>
-                    </Typography>
-                  </Stack>
-                  <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
-                    <Tooltip title={invoiceNumber}>
-                      <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
-                        {invoiceNumber}
-                      </Typography>
-                    </Tooltip>
-                    <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
-                      <Tooltip title="查看发票">
-                        <IconButton size="small" aria-label="查看发票" onClick={() => onSelect(invoice)}>
-                          <VisibilityIcon fontSize="small" />
-                        </IconButton>
-                      </Tooltip>
-                      <Tooltip title="删除发票">
-                        <span>
-                          <IconButton
-                            size="small"
-                            color="error"
-                            aria-label="删除发票"
-                            disabled={readonly}
-                            onClick={() => onDelete(invoice.id)}
-                          >
-                            <DeleteIcon fontSize="small" />
-                          </IconButton>
-                        </span>
-                      </Tooltip>
-                    </Stack>
-                  </Stack>
-                </Stack>
-              </Paper>
-            );
-          })}
-          {!readonly && uploadSlot}
-        </Box>
-      )}
-    </Stack>
-  );
-}
 
 export default function ReportEditView({
   page,
@@ -488,8 +340,8 @@ export default function ReportEditView({
   };
 
   const renderInvoiceList = (items, uploadSlot) => (
-    <InvoiceList
-      items={items}
+    <InvoiceCardList
+      invoices={items}
       readonly={readonly}
       uploadSlot={uploadSlot}
       onSelect={onSelectInvoice}
@@ -504,76 +356,35 @@ export default function ReportEditView({
     : "无预支";
 
   if (loading) {
-    return (
-      <Box sx={{ display: "flex", justifyContent: "center", py: 8 }}>
-        <Stack spacing={2} alignItems="center">
-          <CircularProgress />
-          <Typography color="text.secondary">{creatingDraft ? "正在准备报销单..." : "正在加载报销单..."}</Typography>
-        </Stack>
-      </Box>
-    );
+    return <EditPageLoading message={creatingDraft ? "正在准备报销单..." : "正在加载报销单..."} />;
   }
 
   return (
     <Stack spacing={SECTION_GAP} sx={pageContentSx}>
-      <Stack
-        direction={{ xs: "column", md: "row" }}
-        justifyContent="space-between"
-        alignItems={{ xs: "stretch", md: "center" }}
-        spacing={2}
-      >
-        <Box>
-          <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
-            <Typography variant="h5" fontWeight={800}>
-              报销单录入
-            </Typography>
+      <EditPageHeader
+        title={id ? `出差报销单 #${id}` : "新建出差报销单"}
+        subtitle="基本信息、行程、发票和预支信息在一页完成。"
+        chips={
+          <>
             <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
             <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
-          </Stack>
-          <Typography color="text.secondary">基本信息、行程、发票和预支信息在一页完成。</Typography>
-        </Box>
-        <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ "& > .MuiButton-root": { whiteSpace: "nowrap" } }}>
-          <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={() => requestNavigation("/reports")}>
-            返回列表
-          </Button>
-          <Button
-            startIcon={saveState === "saving" ? <CircularProgress size={16} /> : <SaveIcon />}
-            variant="contained"
-            onClick={() => saveReport({ quiet: false, force: true })}
-            disabled={readonly || saveState === "saving" || !canSaveReport}
-          >
-            手动保存
-          </Button>
-          {actions.map((action) => (
-            <Button
-              key={action.target}
-              variant="outlined"
-              color={action.color === "inherit" ? "inherit" : action.color}
-              onClick={() => handleStatusAction(action.target)}
-              disabled={loading || saveState === "saving"}
-            >
-              {action.label}
-            </Button>
-          ))}
-        </Stack>
-      </Stack>
+          </>
+        }
+        onBack={() => requestNavigation("/reports")}
+        saveState={saveState}
+        canSave={canSaveReport}
+        readonly={readonly}
+        onSave={() => saveReport({ quiet: false, force: true })}
+        statusActions={actions}
+        onStatusAction={handleStatusAction}
+      />
 
-      {error && (
-        <Alert severity="error" sx={{ whiteSpace: "pre-line", overflowWrap: "anywhere" }}>
-          {error}
-        </Alert>
-      )}
-      {readonly && <Alert severity="info">已核对、已提交和已报销状态为只读，不可修改报销单内容、发票、附件和车票。</Alert>}
-      {uploadState && (
-        <Alert severity="info">
-          <Stack spacing={1}>
-            <Typography variant="body2">
-              正在上传 {uploadState.current}/{uploadState.total}：{uploadState.name}
-            </Typography>
-            <LinearProgress />
-          </Stack>
-        </Alert>
-      )}
+      <EditPageNotices
+        error={error}
+        readonly={readonly}
+        readonlyMessage="已核对、已提交和已报销状态为只读，不可修改报销单内容、发票、附件和车票。"
+        uploadState={uploadState}
+      />
 
       <Card sx={editSectionNavSx}>
         <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
@@ -593,13 +404,11 @@ export default function ReportEditView({
         </CardContent>
       </Card>
 
-      <Box sx={mainLayoutSx}>
+      <Box sx={editMainLayoutSx}>
         <Box sx={{ minWidth: 0 }}>
           <Stack spacing={SECTION_GAP}>
             <Stack id="basic-info-section" spacing={1.5} sx={sectionAnchorSx}>
-              <Typography variant="h6" fontWeight={800}>
-                基本信息
-              </Typography>
+              <SectionHeader title="基本信息" />
               <Card sx={workCardSx}>
                 <CardContent sx={sectionCardContentSx}>
                   <Box sx={basicInfoGridSx}>
@@ -665,12 +474,8 @@ export default function ReportEditView({
                           disableGutters
                           elevation={0}
                           sx={{
+                            ...accordionCardSx,
                             gridColumn: { xs: "1 / -1", sm: "span 12" },
-                            border: 1,
-                            borderColor: "divider",
-                            borderRadius: "8px !important",
-                            overflow: "hidden",
-                            "&:before": { display: "none" },
                           }}
                         >
                           <AccordionSummary
@@ -744,27 +549,21 @@ export default function ReportEditView({
             </Stack>
 
             <Stack id="trip-list-section" spacing={1.5} sx={sectionAnchorSx}>
-              <Stack direction="row" alignItems="center" justifyContent="space-between">
-                <Box>
-                  <Stack direction="row" alignItems="center" spacing={1} flexWrap="wrap">
-                    <Typography variant="h6" fontWeight={800}>
-                      行程列表
-                    </Typography>
-                    {tripYearRangeLabel && <Chip size="small" color="info" variant="outlined" label={tripYearRangeLabel} />}
-                  </Stack>
-                  <Typography variant="body2" color="text.secondary">
-                    复制、返程和排序都会自动保存。
-                  </Typography>
-                </Box>
-                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                  <Button variant="contained" onClick={handleOpenTicketImport} disabled={readonly || saveState === "saving"}>
-                    从车票导入
-                  </Button>
-                  <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
-                    手动添加
-                  </Button>
-                </Stack>
-              </Stack>
+              <SectionHeader
+                title="行程列表"
+                chip={tripYearRangeLabel && <Chip size="small" color="info" variant="outlined" label={tripYearRangeLabel} />}
+                description="复制、返程和排序都会自动保存。"
+                actions={
+                  <>
+                    <Button variant="contained" onClick={handleOpenTicketImport} disabled={readonly || saveState === "saving"}>
+                      从车票导入
+                    </Button>
+                    <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
+                      手动添加
+                    </Button>
+                  </>
+                }
+              />
 
               {trips.length === 0 ? (
                 <Alert severity="info">暂无行程。可以批量导入铁路电子客票自动生成，也可以手动添加第一段行程。</Alert>
@@ -812,8 +611,7 @@ export default function ReportEditView({
                           onDrop={() => dropTrip(index)}
                           sx={{
                             ...workCardSx,
-                            border: dragIndex === index ? 2 : 1,
-                            borderColor: dragIndex === index ? "primary.main" : "divider",
+                            ...(dragIndex === index ? { border: 2, borderColor: "primary.main" } : {}),
                           }}
                         >
                       <CardContent sx={sectionCardContentSx}>
@@ -1054,7 +852,7 @@ export default function ReportEditView({
                                   />,
                                 )}
                                 {(!readonly || hasPaperInvoice(trip)) && (
-                                  <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
+                                  <Box sx={cardSubSectionDividerSx}>
                                     <PaperInvoiceEntry
                                       value={trip}
                                       editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
@@ -1104,20 +902,20 @@ export default function ReportEditView({
             </Menu>
 
             <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
-              <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1}>
-                <Typography variant="h6" fontWeight={800}>
-                  其他费用发票
-                </Typography>
-                <Button
-                  size="small"
-                  variant="outlined"
-                  startIcon={<AddIcon />}
-                  disabled={readonly}
-                  onClick={openCustomDialog}
-                >
-                  添加自定义费用
-                </Button>
-              </Stack>
+              <SectionHeader
+                title="其他费用发票"
+                actions={
+                  <Button
+                    size="small"
+                    variant="outlined"
+                    startIcon={<AddIcon />}
+                    disabled={readonly}
+                    onClick={openCustomDialog}
+                  >
+                    添加自定义费用
+                  </Button>
+                }
+              />
               <Box sx={repeatedCardGridSx}>
                 {expenseCategoryOptions.map((category) => {
                   const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
@@ -1145,13 +943,7 @@ export default function ReportEditView({
                         defaultExpanded={shouldExpandExpenseItem(item, categoryInvoices)}
                         disableGutters
                         elevation={0}
-                        sx={{
-                          border: 1,
-                          borderColor: "divider",
-                          borderRadius: "8px !important",
-                          overflow: "hidden",
-                          "&:before": { display: "none" },
-                        }}
+                        sx={accordionCardSx}
                       >
                         <AccordionSummary
                           expandIcon={<ExpandMoreIcon />}
@@ -1232,7 +1024,7 @@ export default function ReportEditView({
                               />,
                             )}
                             {(!readonly || hasPaperInvoice(item)) && (
-                              <Box sx={{ mt: 0.25, pt: 0.75, borderTop: "1px solid", borderColor: "rgba(148, 163, 184, 0.28)" }}>
+                              <Box sx={cardSubSectionDividerSx}>
                                 <PaperInvoiceEntry
                                   value={item}
                                   editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
@@ -1265,15 +1057,7 @@ export default function ReportEditView({
           </Stack>
         </Box>
 
-        <Box
-          id="summary-section"
-          sx={{
-            minWidth: 0,
-            ...sectionAnchorSx,
-            position: { xl: "sticky" },
-            top: { xl: 80 },
-          }}
-        >
+        <Box id="summary-section" sx={{ ...summarySidebarSx, ...sectionAnchorSx }}>
           <Card sx={workCardSx}>
             <CardContent sx={sectionCardContentSx}>
               <Stack spacing={2}>
@@ -1413,28 +1197,16 @@ export default function ReportEditView({
 
                 <Divider />
 
-                <Stack direction={{ xs: "column", sm: "row" }} spacing={1}>
-                  <Button
-                    fullWidth
-                    variant="outlined"
-                    startIcon={pdfBusy === "preview" ? <CircularProgress size={16} /> : <VisibilityIcon />}
-                    onClick={handlePdfPreview}
-                    disabled={!canCreateOutput || !canAccessPdf || pdfBusy === "download"}
-                    sx={hasUnconfirmedInvoices ? { color: "text.disabled", borderColor: "divider" } : undefined}
-                  >
-                    {pdfBusy === "preview" ? "生成中" : hasUnconfirmedInvoices ? "待确认后预览" : "预览"}
-                  </Button>
-                  <Button
-                    fullWidth
-                    variant="contained"
-                    startIcon={pdfBusy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
-                    onClick={handlePdfDownload}
-                    disabled={!canCreateOutput || !canAccessPdf || pdfBusy === "preview" || hasFuelSubsidyInvoiceShortfall}
-                    sx={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? { bgcolor: "action.disabledBackground", color: "text.disabled" } : undefined}
-                  >
-                    {pdfBusy === "download" ? "生成中" : hasUnconfirmedInvoices ? "待确认后下载" : "下载"}
-                  </Button>
-                </Stack>
+                <PdfActionButtons
+                  busy={pdfBusy}
+                  previewDisabled={!canCreateOutput || !canAccessPdf}
+                  downloadDisabled={!canCreateOutput || !canAccessPdf || hasFuelSubsidyInvoiceShortfall}
+                  previewBlocked={hasUnconfirmedInvoices}
+                  downloadBlocked={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall}
+                  downloadBlockedLabel={hasUnconfirmedInvoices ? "确认后下载" : "补足后下载"}
+                  onPreview={handlePdfPreview}
+                  onDownload={handlePdfDownload}
+                />
               </Stack>
             </CardContent>
           </Card>
@@ -1538,43 +1310,18 @@ export default function ReportEditView({
         </DialogActions>
       </Dialog>
 
-      <Dialog open={pdfPreviewOpen} onClose={closePdfPreview} fullWidth maxWidth="lg">
-        <DialogTitle>PDF 预览</DialogTitle>
-        <DialogContent dividers>
-          <Stack spacing={2}>
-            {pdfPreviewPages.map((page) => (
-              <Paper key={page.page} variant="outlined" sx={{ p: 1, bgcolor: "grey.50" }}>
-                <Typography variant="caption" color="text.secondary">
-                  第 {page.page} 页
-                </Typography>
-                <Box
-                  component="img"
-                  src={page.image_url}
-                  alt={`PDF 预览第 ${page.page} 页`}
-                  sx={{ display: "block", width: "100%", mt: 1, borderRadius: 1 }}
-                />
-              </Paper>
-            ))}
-          </Stack>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closePdfPreview}>关闭</Button>
-        </DialogActions>
-      </Dialog>
+      <PdfPreviewDialog open={pdfPreviewOpen} onClose={closePdfPreview} pages={pdfPreviewPages} title="PDF 预览" />
 
-      <Dialog open={pdfBlockedOpen} onClose={closePdfBlocked} fullWidth maxWidth="xs">
-        <DialogTitle>{hasUnconfirmedInvoices ? "存在未确认发票" : "燃油补助发票金额不足"}</DialogTitle>
-        <DialogContent>
-          <DialogContentText>
-            {hasUnconfirmedInvoices
-              ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
-              : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。仍可预览 PDF，补充足额发票后才能修改状态或下载。`}
-          </DialogContentText>
-        </DialogContent>
-        <DialogActions>
-          <Button onClick={closePdfBlocked}>知道了</Button>
-        </DialogActions>
-      </Dialog>
+      <PdfBlockedDialog
+        open={pdfBlockedOpen}
+        onClose={closePdfBlocked}
+        title={hasUnconfirmedInvoices ? "存在未确认发票" : "燃油补助发票金额不足"}
+        message={
+          hasUnconfirmedInvoices
+            ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
+            : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。仍可预览 PDF，补充足额发票后才能修改状态或下载。`
+        }
+      />
 
       <Snackbar
         open={Boolean(toast)}

@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CircularProgress } from "@mui/material";
-import CheckCircleIcon from "@mui/icons-material/CheckCircle";
-import ErrorOutlineIcon from "@mui/icons-material/ErrorOutline";
 import { useNavigate, useParams } from "react-router-dom";
 import { useNavigationGuard } from "../navigationGuard";
+import { getApiErrorMessage } from "../features/report-edit-shared/apiError";
+import { getSaveStateMeta } from "../features/report-edit-shared/saveStateMeta";
 import {
   createReport,
   deleteReportAttachment,
@@ -57,22 +56,6 @@ import {
 } from "./settingsPageUtils";
 import ReportEditView from "./ReportEditView";
 
-const SAVE_LABELS = {
-  pristine: { text: "无需保存", icon: null, color: "default" },
-  idle: { text: "等待修改", icon: null, color: "default" },
-  dirty: { text: "有未保存修改", icon: null, color: "warning" },
-  saving: { text: "保存中...", icon: <CircularProgress size={14} />, color: "info" },
-  saved: { text: "已保存", icon: <CheckCircleIcon fontSize="small" />, color: "success" },
-  error: { text: "保存失败，请重试", icon: <ErrorOutlineIcon fontSize="small" />, color: "error" },
-};
-
-const getApiErrorMessage = (err, fallback) => {
-  const detail = err.response?.data?.detail;
-  if (typeof detail === "string") return detail;
-  if (Array.isArray(detail)) return detail.map((item) => item?.msg || String(item)).join("；");
-  return err.response?.data?.message || err.message || fallback;
-};
-
 export default function ReportEdit() {
   const { id: routeId } = useParams();
   const navigate = useNavigate();
@@ -121,7 +104,7 @@ export default function ReportEdit() {
 
   const statusMeta = STATUS_META[status] || { label: status, chipSx: {} };
   const actions = STATUS_ACTIONS[status] || [];
-  const saveMeta = SAVE_LABELS[saveState] || SAVE_LABELS.idle;
+  const saveMeta = getSaveStateMeta(saveState);
   const currentPayload = useMemo(
     () => buildReportPayload({ form, trips, expenseItems }),
     [expenseItems, form, trips],
