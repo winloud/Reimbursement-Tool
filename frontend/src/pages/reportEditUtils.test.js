@@ -22,6 +22,7 @@ import {
   getFuelSubsidyInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
+  getTripPdfGate,
   hasExpenseItemData,
   hasPaperInvoice,
   getTripYearRangeLabel,
@@ -48,6 +49,48 @@ describe("report edit utilities", () => {
       directActions: ["start", "end", "return"],
       overflowActions: ["duplicate", "swap", "delete"],
     });
+  });
+
+  it("blocks both PDF actions while invoices are unconfirmed", () => {
+    const gate = getTripPdfGate({ unconfirmedCount: 3, confirmedInvoiceCount: 1 });
+    assert.equal(gate.severity, "warning");
+    assert.equal(gate.previewBlocked, true);
+    assert.equal(gate.downloadBlocked, true);
+    assert.equal(gate.unconfirmedCount, 3);
+    assert.equal(gate.dialogTitle, "存在未确认发票");
+    assert.match(gate.message, /3 张发票待确认/);
+  });
+
+  it("blocks only download when the fuel subsidy invoice total falls short, and keeps it clickable", () => {
+    const gate = getTripPdfGate({ fuelSubsidyShortfall: 42.5, confirmedInvoiceCount: 2 });
+    assert.equal(gate.severity, "warning");
+    assert.equal(gate.previewBlocked, false);
+    assert.equal(gate.downloadBlocked, true);
+    // blocked 但不 disabled：按钮仍可点，由页面弹窗解释原因。
+    assert.equal(gate.downloadDisabled, false);
+    assert.equal(gate.downloadBlockedLabel, "补足后下载");
+    assert.equal(gate.dialogTitle, "燃油补助发票金额不足");
+  });
+
+  it("clears the gate once invoices are confirmed and distinguishes the empty report", () => {
+    const ready = getTripPdfGate({ confirmedInvoiceCount: 2 });
+    assert.equal(ready.severity, "info");
+    assert.equal(ready.previewBlocked, false);
+    assert.equal(ready.downloadBlocked, false);
+    assert.equal(ready.message, "发票已确认，可生成 PDF。");
+
+    const empty = getTripPdfGate({ confirmedInvoiceCount: 0 });
+    assert.equal(empty.message, "暂无已确认发票，可先录入行程和费用。");
+  });
+
+  it("disables both PDF actions when the status or empty draft forbids output", () => {
+    const byStatus = getTripPdfGate({ confirmedInvoiceCount: 2, canAccessPdf: false });
+    assert.equal(byStatus.previewDisabled, true);
+    assert.equal(byStatus.downloadDisabled, true);
+
+    const byEmptyDraft = getTripPdfGate({ confirmedInvoiceCount: 0, canCreateOutput: false });
+    assert.equal(byEmptyDraft.previewDisabled, true);
+    assert.equal(byEmptyDraft.downloadDisabled, true);
   });
 
   it("detects an untouched client-side draft as empty and every meaningful edit as non-empty", () => {
@@ -143,6 +186,10 @@ describe("report edit utilities", () => {
       new URL("../components/FileUploadPlaceholder.jsx", import.meta.url),
       "utf8",
     );
+    const fileListShellSource = readFileSync(
+      new URL("../features/report-edit-shared/FileListShell.jsx", import.meta.url),
+      "utf8",
+    );
     const handlerStart = source.indexOf("const handleAttachmentFilesUpload = async");
     const handlerEnd = source.indexOf("const handleDeleteReportAttachment", handlerStart);
     const handler = source.slice(handlerStart, handlerEnd);
@@ -152,10 +199,12 @@ describe("report edit utilities", () => {
     assert.ok(handler.indexOf("ensureSavedBeforeAction({ allowEmptyCreate: true })") < handler.indexOf("uploadReportAttachment"));
     assert.match(viewSource, /<Stack id="basic-info-section"[^>]*>[\s\S]*?基本信息[\s\S]*?<Card sx=\{workCardSx\}>/);
     assert.doesNotMatch(viewSource, /<Card id="basic-info-section"/);
-    assert.match(attachmentSource, /<Stack\s+id="report-attachment-section"[\s\S]*?非发票附件[\s\S]*?<Paper variant="outlined"/);
+    assert.match(attachmentSource, /<Stack\s+id="report-attachment-section"[\s\S]*?非发票附件[\s\S]*?<Card sx=\{workCardSx\}>/);
     assert.match(attachmentSource, /不计入发票数量，导出时排在全部发票之后/);
     assert.match(attachmentSource, /暂无非发票附件/);
-    assert.ok(attachmentSource.indexOf("attachments.map") < attachmentSource.indexOf("<FileUploadPlaceholder"));
+    // 附件与发票共用同一列表外壳，上传入口始终排在已上传文件之后。
+    assert.match(attachmentSource, /<AttachmentCardList/);
+    assert.ok(fileListShellSource.indexOf("{children}") < fileListShellSource.indexOf("!readonly && uploadSlot"));
     assert.match(uploadPlaceholderSource, /const uploadConfirm = keyframes/);
     assert.match(uploadPlaceholderSource, /transform: activeVisual \? "translateY\(-2px\)"/);
     assert.match(uploadPlaceholderSource, /animation: received \? `\$\{uploadConfirm\} 480ms ease-out`/);

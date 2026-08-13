@@ -20,22 +20,22 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import KeyboardArrowDownIcon from "@mui/icons-material/KeyboardArrowDown";
-import KeyboardArrowUpIcon from "@mui/icons-material/KeyboardArrowUp";
 import LockOutlinedIcon from "@mui/icons-material/LockOutlined";
 
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
-import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
-import RegularEvidenceSection from "../features/regular-report/RegularEvidenceSection";
+import AttachmentCardList from "../features/report-edit-shared/AttachmentCardList";
+import CardOrderControls, { DragHandle } from "../features/report-edit-shared/CardOrderControls";
 import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
 import EditPageLoading from "../features/report-edit-shared/EditPageLoading";
 import EditPageNotices from "../features/report-edit-shared/EditPageNotices";
+import FileDropSlot from "../features/report-edit-shared/FileDropSlot";
 import InvoiceCardList from "../features/report-edit-shared/InvoiceCardList";
 import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
 import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
 import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
 import SectionHeader from "../features/report-edit-shared/SectionHeader";
+import stopSummaryInteraction from "../features/report-edit-shared/stopSummaryInteraction";
 import {
   FIELD_GAP,
   SECTION_GAP,
@@ -54,13 +54,6 @@ import {
   getRegularModeLabel,
 } from "./regularReportUtils";
 
-const stopSummaryInteraction = {
-  onClick: (event) => event.stopPropagation(),
-  onMouseDown: (event) => event.stopPropagation(),
-  onKeyDown: (event) => event.stopPropagation(),
-  onFocus: (event) => event.stopPropagation(),
-};
-
 function AddRegularItemPlaceholder({ onClick }) {
   return (
     <Button fullWidth variant="outlined" startIcon={<AddIcon />} onClick={onClick} sx={dashedAddCardSx}>
@@ -78,8 +71,12 @@ function RegularItemCard({
   attachments,
   readonly,
   uploadState,
+  dragging,
   onUpdate,
   onMove,
+  onDragStart,
+  onDrop,
+  onDragEnd,
   onDelete,
   onInvoiceFiles,
   onEvidenceFiles,
@@ -97,7 +94,13 @@ function RegularItemCard({
       defaultExpanded={index === 0 || !item.id}
       disableGutters
       elevation={0}
-      sx={{ ...accordionCardSx, height: "100%" }}
+      onDragOver={(event) => event.preventDefault()}
+      onDrop={() => onDrop(index)}
+      sx={{
+        ...accordionCardSx,
+        height: "100%",
+        ...(dragging ? { border: 2, borderColor: "primary.main" } : {}),
+      }}
     >
       <AccordionSummary
         expandIcon={<ExpandMoreIcon />}
@@ -108,6 +111,13 @@ function RegularItemCard({
         }}
       >
         <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, width: "100%", pr: 1 }}>
+          <DragHandle
+            label={`拖动排序：${title}`}
+            disabled={readonly}
+            active={dragging}
+            onDragStart={() => onDragStart(index)}
+            onDragEnd={onDragEnd}
+          />
           <Chip size="small" label={index + 1} sx={{ minWidth: 30 }} />
           <Box sx={{ minWidth: 0, flex: 1 }}>
             <Tooltip title={title}>
@@ -123,37 +133,8 @@ function RegularItemCard({
             {formatRegularAmount(derived.amount)}
           </Typography>
           {!readonly && (
-            <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }} {...stopSummaryInteraction}>
-              <Tooltip title="上移">
-                <span>
-                  <IconButton
-                    size="small"
-                    disabled={index === 0}
-                    aria-label={`上移项目：${title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMove(index, index - 1);
-                    }}
-                  >
-                    <KeyboardArrowUpIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
-              <Tooltip title="下移">
-                <span>
-                  <IconButton
-                    size="small"
-                    disabled={index === totalItems - 1}
-                    aria-label={`下移项目：${title}`}
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onMove(index, index + 1);
-                    }}
-                  >
-                    <KeyboardArrowDownIcon fontSize="small" />
-                  </IconButton>
-                </span>
-              </Tooltip>
+            <Stack direction="row" spacing={0} alignItems="center" sx={{ flexShrink: 0 }} {...stopSummaryInteraction}>
+              <CardOrderControls index={index} totalItems={totalItems} itemLabel={title} onMove={onMove} />
               <Tooltip title="删除项目">
                 <IconButton
                   size="small"
@@ -228,25 +209,36 @@ function RegularItemCard({
                 invoices={derived.invoices}
                 readonly={readonly}
                 uploadSlot={
-                  <InvoiceDropzone
+                  <FileDropSlot
+                    kind="invoice"
                     disabled={readonly}
                     uploading={uploading && uploadState?.kind === "invoice"}
                     onFiles={(files) => onInvoiceFiles(item, files)}
                     onPasteError={onUploadError}
-                    hint="上传发票"
                   />
                 }
                 onSelect={onSelectInvoice}
                 onDelete={onDeleteInvoice}
               />
             ) : (
-              <RegularEvidenceSection
+              <AttachmentCardList
                 attachments={derived.attachments}
-                disabled={readonly}
-                uploading={uploading && uploadState?.kind === "evidence"}
-                onFiles={(files) => onEvidenceFiles(item, files)}
+                title="已上传凭据"
+                countUnit="个"
+                emptyText="暂无报销凭据"
+                readonly={readonly}
+                uploadSlot={
+                  <FileDropSlot
+                    kind="attachment"
+                    hint="添加报销凭据"
+                    uploadingText="正在上传凭据"
+                    disabled={readonly}
+                    uploading={uploading && uploadState?.kind === "evidence"}
+                    onFiles={(files) => onEvidenceFiles(item, files)}
+                    onPasteError={onUploadError}
+                  />
+                }
                 onDelete={onDeleteEvidence}
-                onError={onUploadError}
               />
             )}
           </Box>
@@ -283,9 +275,13 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
     attachments,
     summary,
     uploadState,
+    dragIndex,
     onAdd,
     onUpdate,
     onMove,
+    onDragStart,
+    onDrop,
+    onDragEnd,
     onDelete,
     onInvoiceFiles,
     onEvidenceFiles,
@@ -401,8 +397,12 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                     attachments={attachments}
                     readonly={readonly}
                     uploadState={uploadState}
+                    dragging={dragIndex === index}
                     onUpdate={onUpdate}
                     onMove={onMove}
+                    onDragStart={onDragStart}
+                    onDrop={onDrop}
+                    onDragEnd={onDragEnd}
                     onDelete={onDelete}
                     onInvoiceFiles={onInvoiceFiles}
                     onEvidenceFiles={onEvidenceFiles}
@@ -461,9 +461,12 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
 
                 <PdfActionButtons
                   busy={pdfBusy}
+                  previewDisabled={pdfGate.previewDisabled}
+                  downloadDisabled={pdfGate.downloadDisabled}
                   previewBlocked={pdfGate.previewBlocked}
                   downloadBlocked={pdfGate.downloadBlocked}
-                  downloadBlockedLabel={pdfGate.unconfirmedCount > 0 ? "确认后下载" : "完善后下载"}
+                  previewBlockedLabel={pdfGate.previewBlockedLabel}
+                  downloadBlockedLabel={pdfGate.downloadBlockedLabel}
                   onPreview={onPreview}
                   onDownload={onDownload}
                 />
@@ -493,7 +496,7 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
       <PdfBlockedDialog
         open={overlays.pdfBlockedOpen}
         onClose={overlays.onClosePdfBlocked}
-        title={pdfGate.unconfirmedCount > 0 ? "存在未确认发票" : "报销信息尚未完整"}
+        title={pdfGate.dialogTitle}
         message={pdfGate.message}
       />
 

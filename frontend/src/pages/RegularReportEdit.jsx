@@ -64,6 +64,7 @@ export default function RegularReportEdit() {
   const [error, setError] = useState("");
   const [toast, setToast] = useState("");
   const [uploadState, setUploadState] = useState(null);
+  const [dragIndex, setDragIndex] = useState(null);
   const [selectedInvoice, setSelectedInvoice] = useState(null);
   const [invoiceQueue, setInvoiceQueue] = useState([]);
   const [uploadResult, setUploadResult] = useState(null);
@@ -360,6 +361,15 @@ export default function RegularReportEdit() {
 
   const handleMoveItem = (fromIndex, toIndex) => setItems((current) => moveRegularItem(current, fromIndex, toIndex));
 
+  const handleItemDragStart = (index) => setDragIndex(index);
+
+  const handleItemDrop = (index) => {
+    setItems((current) => (dragIndex === null ? current : moveRegularItem(current, dragIndex, index)));
+    setDragIndex(null);
+  };
+
+  const handleItemDragEnd = () => setDragIndex(null);
+
   const handleDeleteItem = (item) => {
     if (!canDeleteRegularItem({ item, mode, invoices, attachments })) {
       setError(mode === "invoice" ? "该项目已有发票，请先删除发票后再删除项目" : "该项目已有报销凭据，请先删除凭据后再删除项目");
@@ -640,9 +650,13 @@ export default function RegularReportEdit() {
     attachments,
     summary,
     uploadState,
+    dragIndex,
     onAdd: handleAddItem,
     onUpdate: handleUpdateItem,
     onMove: handleMoveItem,
+    onDragStart: handleItemDragStart,
+    onDrop: handleItemDrop,
+    onDragEnd: handleItemDragEnd,
     onDelete: handleDeleteItem,
     onInvoiceFiles: handleInvoiceFiles,
     onEvidenceFiles: handleEvidenceFiles,

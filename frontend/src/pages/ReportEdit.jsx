@@ -24,12 +24,12 @@ import {
   cloneTripAfter,
   createInvoiceUploadIssue,
   emptyForm,
-  formatAmount,
   getExpenseItemAmount,
   getExpenseCategoryOptions,
   getFuelSubsidyInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
+  getTripPdfGate,
   getTripYearRangeLabel,
   hasPaperInvoice,
   isEmptyDraft,
@@ -276,10 +276,6 @@ export default function ReportEdit() {
     [expenseCategoryOptions, expenseItems, invoices],
   );
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
-  const hasUnconfirmedInvoices = useMemo(
-    () => invoices.some((invoice) => !invoice.amount_confirmed),
-    [invoices],
-  );
   const unconfirmedInvoiceCount = useMemo(
     () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
     [invoices],
@@ -298,17 +294,28 @@ export default function ReportEdit() {
       expenseItems.reduce((sum, item) => sum + getPaperInvoiceCount(item), 0),
     [expenseItems, invoices, trips],
   );
-  const pdfBlockMessage = hasUnconfirmedInvoices
-    ? `${unconfirmedInvoiceCount} 张发票待确认，确认后才能预览或下载 PDF。`
-    : hasFuelSubsidyInvoiceShortfall
-      ? `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
-    : confirmedInvoiceCount > 0
-      ? "发票已确认，可生成 PDF。"
-      : "暂无已确认发票，可先录入行程和费用。";
-
   const emptyDraft = useMemo(
     () => status === "draft" && isEmptyDraft({ form, defaults, trips, invoices, expenseItems, attachments }),
     [attachments, defaults, expenseItems, form, invoices, status, trips],
+  );
+
+  const pdfGate = useMemo(
+    () =>
+      getTripPdfGate({
+        unconfirmedCount: unconfirmedInvoiceCount,
+        fuelSubsidyShortfall: fuelSubsidyInvoiceShortfall,
+        confirmedInvoiceCount,
+        canAccessPdf,
+        canCreateOutput: Boolean(activeReportId) || !emptyDraft,
+      }),
+    [
+      activeReportId,
+      canAccessPdf,
+      confirmedInvoiceCount,
+      emptyDraft,
+      fuelSubsidyInvoiceShortfall,
+      unconfirmedInvoiceCount,
+    ],
   );
 
   const saveReport = useCallback(
@@ -685,7 +692,7 @@ export default function ReportEdit() {
   };
 
   const handlePdfPreview = async () => {
-    if (hasUnconfirmedInvoices) {
+    if (pdfGate.previewBlocked) {
       setPdfBlockedOpen(true);
       return;
     }
@@ -710,7 +717,7 @@ export default function ReportEdit() {
   };
 
   const handlePdfDownload = async () => {
-    if (hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall) {
+    if (pdfGate.downloadBlocked) {
       setPdfBlockedOpen(true);
       return;
     }
@@ -949,6 +956,12 @@ export default function ReportEdit() {
     setDragIndex(null);
   };
 
+  const handleTripDragEnd = () => setDragIndex(null);
+
+  const handleMoveTrip = (fromIndex, toIndex) => {
+    setTrips((previous) => moveTrip(previous, fromIndex, toIndex));
+  };
+
   const handleCloseInvoiceViewer = () => {
     setSelectedInvoice(null);
     setInvoiceQueue([]);
@@ -1015,7 +1028,6 @@ export default function ReportEdit() {
     saveState,
     id: activeReportId,
     canSaveReport: activeReportId ? hasUnsavedChanges : !emptyDraft,
-    canCreateOutput: Boolean(activeReportId) || !emptyDraft,
     statusActions: actions,
     requestNavigation,
     saveReport,
@@ -1043,6 +1055,8 @@ export default function ReportEdit() {
     removeTrip,
     startTripDrag: handleTripDragStart,
     dropTrip: handleTripDrop,
+    endTripDrag: handleTripDragEnd,
+    moveTripByIndex: handleMoveTrip,
   };
 
   const expenseEditorView = {
@@ -1070,18 +1084,13 @@ export default function ReportEdit() {
 
   const summaryPanelView = {
     summary,
-    pdfBlockMessage,
+    pdfGate,
     hasManualSubsidy,
     subsidyModeToggleTooltip,
     subsidyModeLabel,
     handleSubsidyModeToggle,
     openManualSubsidyDialog,
-    hasFuelSubsidyInvoiceShortfall,
-    hasUnconfirmedInvoices,
-    unconfirmedInvoiceCount,
-    fuelSubsidyInvoiceShortfall,
     visibleOtherExpenseItems,
-    canAccessPdf,
     pdfBusy,
     handlePdfPreview,
     handlePdfDownload,

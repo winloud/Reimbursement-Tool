@@ -31,7 +31,6 @@ import {
 import AddIcon from "@mui/icons-material/Add";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
-import DragIndicatorIcon from "@mui/icons-material/DragIndicator";
 import EditIcon from "@mui/icons-material/Edit";
 import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
@@ -41,17 +40,19 @@ import { useState } from "react";
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
-import InvoiceDropzone from "../features/report-edit/InvoiceDropzone";
 import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
 import ReportAttachmentSection from "../features/report-edit/ReportAttachmentSection";
+import CardOrderControls, { DragHandle } from "../features/report-edit-shared/CardOrderControls";
 import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
 import EditPageLoading from "../features/report-edit-shared/EditPageLoading";
 import EditPageNotices from "../features/report-edit-shared/EditPageNotices";
+import FileDropSlot from "../features/report-edit-shared/FileDropSlot";
 import InvoiceCardList from "../features/report-edit-shared/InvoiceCardList";
 import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
 import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
 import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
 import SectionHeader from "../features/report-edit-shared/SectionHeader";
+import stopSummaryInteraction from "../features/report-edit-shared/stopSummaryInteraction";
 import {
   FIELD_GAP,
   SECTION_GAP,
@@ -222,7 +223,6 @@ export default function ReportEditView({
     saveState,
     id,
     canSaveReport,
-    canCreateOutput,
     statusActions: actions,
     requestNavigation,
     saveReport,
@@ -245,6 +245,8 @@ export default function ReportEditView({
     removeTrip,
     startTripDrag,
     dropTrip,
+    endTripDrag,
+    moveTripByIndex,
   } = tripEditor;
   const {
     expenseCategoryOptions,
@@ -269,18 +271,13 @@ export default function ReportEditView({
   } = reportAttachments;
   const {
     summary,
-    pdfBlockMessage,
+    pdfGate,
     hasManualSubsidy,
     subsidyModeToggleTooltip,
     subsidyModeLabel,
     handleSubsidyModeToggle,
     openManualSubsidyDialog,
-    hasFuelSubsidyInvoiceShortfall,
-    hasUnconfirmedInvoices,
-    unconfirmedInvoiceCount,
-    fuelSubsidyInvoiceShortfall,
     visibleOtherExpenseItems,
-    canAccessPdf,
     pdfBusy,
     handlePdfPreview,
     handlePdfDownload,
@@ -605,8 +602,6 @@ export default function ReportEditView({
                     return (
                       <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
                         <Card
-                          draggable={!readonly}
-                          onDragStart={() => startTripDrag(index)}
                           onDragOver={(event) => event.preventDefault()}
                           onDrop={() => dropTrip(index)}
                           sx={{
@@ -623,7 +618,13 @@ export default function ReportEditView({
                             spacing={1}
                           >
                             <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flex: "1 1 auto" }}>
-                              <DragIndicatorIcon color="disabled" sx={{ flex: "0 0 auto" }} />
+                              <DragHandle
+                                label={`拖动排序：${tripTitle}`}
+                                disabled={readonly}
+                                active={dragIndex === index}
+                                onDragStart={() => startTripDrag(index)}
+                                onDragEnd={endTripDrag}
+                              />
                               <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
                                 <Tooltip title={tripTitle}>
                                   <Typography fontWeight={900} noWrap sx={tripCardTitleSx}>
@@ -691,6 +692,13 @@ export default function ReportEditView({
                                   </span>
                                 </Tooltip>
                               )}
+                              <CardOrderControls
+                                index={index}
+                                totalItems={trips.length}
+                                itemLabel={tripTitle}
+                                disabled={readonly}
+                                onMove={moveTripByIndex}
+                              />
                               <Tooltip title="更多行程操作">
                                 <span>
                                   <IconButton
@@ -837,7 +845,8 @@ export default function ReportEditView({
                                 </Stack>
                                 {renderInvoiceList(
                                   tripInvoices,
-                                  <InvoiceDropzone
+                                  <FileDropSlot
+                                    kind="invoice"
                                     disabled={uploadDisabled}
                                     uploading={uploading}
                                     onPasteError={onUploadError}
@@ -962,18 +971,16 @@ export default function ReportEditView({
                             </Box>
                             {isCustomExpenseCategory(category.value) && (
                               <Tooltip title="删除自定义费用">
-                                <span>
+                                <span {...stopSummaryInteraction}>
                                   <IconButton
                                     size="small"
                                     color="error"
                                     disabled={readonly}
+                                    aria-label={`删除自定义费用：${category.label}`}
                                     onClick={(event) => {
                                       event.stopPropagation();
                                       handleDeleteCustomCategory(category.value);
                                     }}
-                                    onMouseDown={(event) => event.stopPropagation()}
-                                    onKeyDown={(event) => event.stopPropagation()}
-                                    onFocus={(event) => event.stopPropagation()}
                                   >
                                     <DeleteIcon fontSize="small" />
                                   </IconButton>
@@ -1010,7 +1017,8 @@ export default function ReportEditView({
                             )}
                             {renderInvoiceList(
                               categoryInvoices,
-                              <InvoiceDropzone
+                              <FileDropSlot
+                                kind="invoice"
                                 disabled={readonly || saveState === "saving"}
                                 uploading={uploading}
                                 onPasteError={onUploadError}
@@ -1070,8 +1078,8 @@ export default function ReportEditView({
                   </Typography>
                 </Box>
 
-                <Alert severity={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall ? "warning" : "info"} sx={{ py: 0.75 }}>
-                  {pdfBlockMessage}
+                <Alert severity={pdfGate.severity} sx={{ py: 0.75 }}>
+                  {pdfGate.message}
                 </Alert>
 
                 <Divider />
@@ -1199,11 +1207,12 @@ export default function ReportEditView({
 
                 <PdfActionButtons
                   busy={pdfBusy}
-                  previewDisabled={!canCreateOutput || !canAccessPdf}
-                  downloadDisabled={!canCreateOutput || !canAccessPdf || hasFuelSubsidyInvoiceShortfall}
-                  previewBlocked={hasUnconfirmedInvoices}
-                  downloadBlocked={hasUnconfirmedInvoices || hasFuelSubsidyInvoiceShortfall}
-                  downloadBlockedLabel={hasUnconfirmedInvoices ? "确认后下载" : "补足后下载"}
+                  previewDisabled={pdfGate.previewDisabled}
+                  downloadDisabled={pdfGate.downloadDisabled}
+                  previewBlocked={pdfGate.previewBlocked}
+                  downloadBlocked={pdfGate.downloadBlocked}
+                  previewBlockedLabel={pdfGate.previewBlockedLabel}
+                  downloadBlockedLabel={pdfGate.downloadBlockedLabel}
                   onPreview={handlePdfPreview}
                   onDownload={handlePdfDownload}
                 />
@@ -1315,12 +1324,8 @@ export default function ReportEditView({
       <PdfBlockedDialog
         open={pdfBlockedOpen}
         onClose={closePdfBlocked}
-        title={hasUnconfirmedInvoices ? "存在未确认发票" : "燃油补助发票金额不足"}
-        message={
-          hasUnconfirmedInvoices
-            ? `当前报销单有 ${unconfirmedInvoiceCount} 张发票待确认，请先逐张确认发票信息后再预览或下载 PDF。`
-            : `燃油补助发票还差 ${formatAmount(fuelSubsidyInvoiceShortfall)}。仍可预览 PDF，补充足额发票后才能修改状态或下载。`
-        }
+        title={pdfGate.dialogTitle}
+        message={pdfGate.message}
       />
 
       <Snackbar

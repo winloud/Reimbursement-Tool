@@ -92,18 +92,29 @@ test("pdf gate blocks on unconfirmed invoices first, then on completeness", () =
   assert.equal(unconfirmedGate.downloadBlocked, true);
   assert.equal(unconfirmedGate.severity, "warning");
   assert.equal(unconfirmedGate.unconfirmedCount, 1);
+  assert.equal(unconfirmedGate.dialogTitle, "存在未确认发票");
+  assert.equal(unconfirmedGate.downloadBlockedLabel, "确认后下载");
   assert.match(unconfirmedGate.message, /1 张发票待确认/);
 
   const incompleteGate = getRegularPdfGate({ form: { ...form, employee_name: "" }, mode: "no_invoice", items: [item] });
   assert.equal(incompleteGate.previewBlocked, false);
   assert.equal(incompleteGate.downloadBlocked, true);
   assert.equal(incompleteGate.severity, "info");
+  assert.equal(incompleteGate.dialogTitle, "报销信息尚未完整");
+  assert.equal(incompleteGate.downloadBlockedLabel, "完善后下载");
   assert.match(incompleteGate.message, /报销人/);
 
   const readyGate = getRegularPdfGate({ form, mode: "no_invoice", items: [item] });
   assert.equal(readyGate.previewBlocked, false);
   assert.equal(readyGate.downloadBlocked, false);
+  assert.equal(readyGate.dialogTitle, "");
   assert.match(readyGate.message, /可生成 PDF/);
+
+  // 常规页没有状态级门槛，disabled 恒为 false，与差旅页共用同一组字段。
+  for (const gate of [unconfirmedGate, incompleteGate, readyGate]) {
+    assert.equal(gate.previewDisabled, false);
+    assert.equal(gate.downloadDisabled, false);
+  }
 });
 
 test("related file mutations wait for a successful report save", async () => {
@@ -165,7 +176,14 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
     new URL("../features/report-edit-shared/InvoiceCardList.jsx", import.meta.url),
     "utf8",
   );
-  const evidenceSource = readFileSync(new URL("../features/regular-report/RegularEvidenceSection.jsx", import.meta.url), "utf8");
+  const attachmentCardListSource = readFileSync(
+    new URL("../features/report-edit-shared/AttachmentCardList.jsx", import.meta.url),
+    "utf8",
+  );
+  const fileListShellSource = readFileSync(
+    new URL("../features/report-edit-shared/FileListShell.jsx", import.meta.url),
+    "utf8",
+  );
   const invoiceViewerSource = readFileSync(new URL("../components/InvoiceViewer.jsx", import.meta.url), "utf8");
   assert.ok(appSource.indexOf('label: "出差报销单"') < appSource.indexOf('key: "report-type-divider"'));
   assert.ok(appSource.indexOf('key: "report-type-divider"') < appSource.indexOf('label: "常规报销单"'));
@@ -199,12 +217,14 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.match(regularListSource, /const \[summaryError, setSummaryError\] = useState\(""\)/);
   assert.match(regularListSource, /unavailable=\{Boolean\(summaryError\)\}/);
   assert.equal((regularListSource.match(/`选择报销单 \$\{report\.id\}`/g) || []).length, 2);
-  assert.match(viewSource, /InvoiceDropzone/);
-  assert.match(viewSource, /RegularEvidenceSection/);
+  assert.match(viewSource, /FileDropSlot/);
+  assert.match(viewSource, /AttachmentCardList/);
   assert.match(viewSource, /InvoiceCardList/);
-  assert.ok(invoiceCardListSource.indexOf("invoices.map") < invoiceCardListSource.indexOf("!readonly && uploadSlot"));
-  assert.ok(evidenceSource.indexOf("attachments.map") < evidenceSource.indexOf("<FileUploadPlaceholder"));
-  assert.match(evidenceSource, /attachments\.length === 0 && disabled/);
-  assert.match(evidenceSource, /暂无报销凭据/);
+  // 发票与凭据共用同一外壳，上传入口固定排在已上传文件之后。
+  assert.ok(fileListShellSource.indexOf("{children}") < fileListShellSource.indexOf("!readonly && uploadSlot"));
+  assert.match(fileListShellSource, /count === 0 && readonly/);
+  assert.match(invoiceCardListSource, /invoices\.map/);
+  assert.match(attachmentCardListSource, /attachments\.map/);
+  assert.match(viewSource, /暂无报销凭据/);
   assert.doesNotMatch(viewSource, /PaperInvoiceEntry/);
 });

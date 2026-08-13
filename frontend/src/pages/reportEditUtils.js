@@ -263,6 +263,59 @@ export const validateFuelSubsidyAmount = (item = {}) => {
   return "";
 };
 
+// 汇总卡的 PDF 门槛，返回结构与 getRegularPdfGate 保持一致，两页共用同一段消费代码。
+// blocked 表示按钮置灰但仍可点，由页面弹窗解释原因；disabled 表示状态不允许，按钮不可点。
+export const getTripPdfGate = ({
+  unconfirmedCount = 0,
+  fuelSubsidyShortfall = 0,
+  confirmedInvoiceCount = 0,
+  canAccessPdf = true,
+  canCreateOutput = true,
+} = {}) => {
+  const blockedByStatus = !canAccessPdf || !canCreateOutput;
+  const base = {
+    previewDisabled: blockedByStatus,
+    downloadDisabled: blockedByStatus,
+    previewBlockedLabel: "确认后预览",
+    downloadBlockedLabel: "确认后下载",
+  };
+
+  if (unconfirmedCount > 0) {
+    return {
+      ...base,
+      severity: "warning",
+      message: `${unconfirmedCount} 张发票待确认，确认后才能预览或下载 PDF。`,
+      dialogTitle: "存在未确认发票",
+      previewBlocked: true,
+      downloadBlocked: true,
+      unconfirmedCount,
+    };
+  }
+
+  if (fuelSubsidyShortfall > 0) {
+    return {
+      ...base,
+      severity: "warning",
+      message: `燃油补助发票还差 ${formatAmount(fuelSubsidyShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`,
+      dialogTitle: "燃油补助发票金额不足",
+      previewBlocked: false,
+      downloadBlocked: true,
+      downloadBlockedLabel: "补足后下载",
+      unconfirmedCount: 0,
+    };
+  }
+
+  return {
+    ...base,
+    severity: "info",
+    message: confirmedInvoiceCount > 0 ? "发票已确认，可生成 PDF。" : "暂无已确认发票，可先录入行程和费用。",
+    dialogTitle: "",
+    previewBlocked: false,
+    downloadBlocked: false,
+    unconfirmedCount: 0,
+  };
+};
+
 export const validatePaperInvoice = (item = {}) => {
   const amount = Number(item.paper_invoice_amount ?? 0);
   const count = Number(item.paper_invoice_count ?? 0);

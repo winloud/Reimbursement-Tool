@@ -187,33 +187,47 @@ export const canDeleteRegularItem = ({ item, mode, invoices = [], attachments = 
 };
 
 // 汇总卡的 PDF 门槛：先看未确认发票，再看必填信息；预览只受未确认发票限制。
+// 返回结构与 getTripPdfGate 保持一致，两页共用同一段消费代码。
 export const getRegularPdfGate = ({ form, mode, items = [], invoices = [] }) => {
+  const base = {
+    previewDisabled: false,
+    downloadDisabled: false,
+    previewBlockedLabel: "确认后预览",
+    downloadBlockedLabel: "确认后下载",
+  };
   const unconfirmedCount =
     mode === "invoice" ? invoices.filter((invoice) => !invoice.amount_confirmed).length : 0;
   if (unconfirmedCount > 0) {
     return {
+      ...base,
       severity: "warning",
       previewBlocked: true,
       downloadBlocked: true,
       unconfirmedCount,
+      dialogTitle: "存在未确认发票",
       message: `${unconfirmedCount} 张发票待确认，确认后才能预览或下载 PDF。`,
     };
   }
   const validationError = validateRegularReport({ form, mode, items, invoices });
   if (validationError) {
     return {
+      ...base,
       severity: "info",
       previewBlocked: false,
       downloadBlocked: true,
+      downloadBlockedLabel: "完善后下载",
       unconfirmedCount: 0,
+      dialogTitle: "报销信息尚未完整",
       message: `${validationError}；补全后才能下载 PDF，仍可先预览。`,
     };
   }
   return {
+    ...base,
     severity: "info",
     previewBlocked: false,
     downloadBlocked: false,
     unconfirmedCount: 0,
+    dialogTitle: "",
     message: "信息完整，可生成 PDF。",
   };
 };

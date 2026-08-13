@@ -54,6 +54,19 @@ export const accordionCardSx = {
   "&:before": { display: "none" },
 };
 
+// 已上传文件小卡（发票、附件、凭据）的统一基座，左侧色条由各列表叠加。
+export const fileCardSx = {
+  minWidth: 0,
+  minHeight: 54,
+  height: "100%",
+  px: 0.75,
+  py: 0.5,
+  borderRadius: 1,
+  bgcolor: "#F8FAFC",
+  borderColor: "divider",
+  borderLeft: 3,
+};
+
 // 卡片内的浅色分区面板（如行程的出发/到达）。
 export const subtlePanelSx = {
   border: 1,
