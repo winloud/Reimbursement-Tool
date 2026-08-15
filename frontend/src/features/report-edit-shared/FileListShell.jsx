@@ -12,14 +12,15 @@ const countBadgeSx = {
   whiteSpace: "nowrap",
 };
 
+// 小卡按可用宽度自适应列数：单列布局下展开区能一行放多张，窄屏自动降列。
 const fileGridSx = {
   display: "grid",
-  gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
   gap: 0.5,
   alignItems: "stretch",
 };
 
-// 已上传文件列表的统一外壳：标题行（计数徽标）+ 两列小卡网格 + 末尾上传占位。
+// 已上传文件列表的统一外壳：标题行（计数徽标）+ 自适应列数的小卡网格 + 末尾上传占位。
 // 发票列表与附件/凭据列表共用，保证两类填报页的构图一致。
 export default function FileListShell({
   title,

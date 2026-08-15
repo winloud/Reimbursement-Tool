@@ -444,7 +444,7 @@ export default function ReportEditView({
               <Card sx={workCardSx}>
                 <CardContent sx={sectionCardContentSx}>
                   <Box sx={basicInfoGridSx}>
-                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
+                        <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -456,10 +456,10 @@ export default function ReportEditView({
                             disabled={readonly}
                           />
                         </Box>
-                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
+                        <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>
                           <TextField fullWidth size="small" label="部门" value={form.department} onChange={handleChange("department")} disabled={readonly} />
                         </Box>
-                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
+                        <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>
                           <TextField
                             fullWidth
                             size="small"
@@ -469,7 +469,7 @@ export default function ReportEditView({
                             disabled={readonly}
                           />
                         </Box>
-                        <Box sx={{ gridColumn: { sm: "span 6" } }}>
+                        <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>
                           <TextField
                             fullWidth
                             size="small"

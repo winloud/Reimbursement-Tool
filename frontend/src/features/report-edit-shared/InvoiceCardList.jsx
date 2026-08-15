@@ -6,7 +6,7 @@ import { formatAmount } from "../../pages/reportEditUtils";
 import FileListShell from "./FileListShell";
 import { fileCardSx } from "./editPageStyles";
 
-// 已上传发票的统一卡片列表：标题行（张数徽标）+ 两列发票小卡 + 上传占位。
+// 已上传发票的统一卡片列表：标题行（张数徽标）+ 自适应列数的发票小卡 + 上传占位。
 export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSelect, onDelete }) {
   return (
     <FileListShell
