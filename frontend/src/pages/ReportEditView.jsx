@@ -923,7 +923,7 @@ export default function ReportEditView({
             <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
               <SectionHeader
                 title="其他费用发票"
-                description="只显示已录入或有发票的费用类别，其余通过「添加费用」补充。"
+                description="只显示已录入或有发票的费用类别。"
                 actions={
                   <Button
                     size="small"
@@ -943,7 +943,7 @@ export default function ReportEditView({
                 <CardContent sx={sectionCardContentSx}>
                   {visibleExpenseCategories.length === 0 ? (
                     <Typography variant="body2" color="text.secondary">
-                      暂无其他费用。点击「添加费用」选择费用类别。
+                      {readonly ? "暂无其他费用。" : "暂无其他费用。点击「添加费用」选择费用类别。"}
                     </Typography>
                   ) : (
                     <ExpenseCategoryList
