@@ -32,6 +32,7 @@ import {
   getTripPdfGate,
   getTripYearRangeLabel,
   hasPaperInvoice,
+  hydrateTripDates,
   isEmptyDraft,
   makeBlankTrip,
   makeReturnTripAfter,
@@ -150,9 +151,10 @@ export default function ReportEdit() {
           advance_date_day: report.advance_date_day || "",
           advance_amount: toMoney(report.advance_amount),
         };
-        const nextTrips = [...(report.trips || [])]
-          .sort((a, b) => a.sort_order - b.sort_order)
-          .map(normalizeTrip);
+        const nextTrips = hydrateTripDates(
+          nextForm.report_date,
+          [...(report.trips || [])].sort((a, b) => a.sort_order - b.sort_order),
+        );
         const nextItems = (report.expense_items || []).map(normalizeExpenseItem);
         const nextInvoices = report.invoices || [];
         const nextAttachments = report.attachments || [];
@@ -386,9 +388,10 @@ export default function ReportEdit() {
             savedForm = form;
           }
 
-          const nextTrips = [...(savedReport.trips || [])]
-            .sort((a, b) => a.sort_order - b.sort_order)
-            .map(normalizeTrip);
+          const nextTrips = hydrateTripDates(
+            savedForm.report_date,
+            [...(savedReport.trips || [])].sort((a, b) => a.sort_order - b.sort_order),
+          );
           const nextItems = (savedReport.expense_items || []).map(normalizeExpenseItem);
           setStatus(savedReport.status || "draft");
           setTrips(nextTrips);
@@ -543,7 +546,14 @@ export default function ReportEdit() {
   };
 
   const updateTrip = (index, field, value) => {
-    setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, [field]: value } : trip)));
+    setTrips((prev) =>
+      prev.map((trip, i) => {
+        if (i !== index) return trip;
+        const next = { ...trip, [field]: value };
+        // 改日期时顺带刷新派生的月/日，摘要和补贴天数才跟着走。
+        return field === "depart_date" || field === "arrive_date" ? normalizeTrip(next, i) : next;
+      }),
+    );
   };
 
   const addTrip = () => {

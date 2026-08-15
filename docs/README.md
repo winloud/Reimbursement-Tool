@@ -23,6 +23,7 @@
 - 铁路客票文本解码与中转分组：[decisions/0004-rail-ticket-pdf-text-decoding.md](decisions/0004-rail-ticket-pdf-text-decoding.md)
 - 桌面端视口支持边界：[decisions/0005-desktop-viewport-support.md](decisions/0005-desktop-viewport-support.md)
 - 常规报销数据模型：[decisions/0006-regular-reimbursement-model.md](decisions/0006-regular-reimbursement-model.md)
+- 行程完整日期存储：[decisions/0007-trip-full-date-storage.md](decisions/0007-trip-full-date-storage.md)
 
 ## 测试依据
 - testing/

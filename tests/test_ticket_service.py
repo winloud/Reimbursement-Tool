@@ -761,6 +761,7 @@ def test_import_merged_transfer_creates_one_trip_with_two_invoices(db, monkeypat
     assert result.trip_ids == [trips[0].id]
     assert len(trips) == 1
     assert (trips[0].depart_month, trips[0].depart_day, trips[0].depart_hour) == (7, 10, None)
+    assert (trips[0].depart_date, trips[0].arrive_date) == (date(2026, 7, 10), date(2026, 7, 10))
     assert (trips[0].depart_place, trips[0].arrive_place, trips[0].arrive_hour) == ("杭州", "芜湖", None)
     assert trips[0].transport == "高铁"
     assert len(invoices) == 2

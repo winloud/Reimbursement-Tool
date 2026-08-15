@@ -160,38 +160,49 @@ export const formatAmount = (value) =>
 
 export const toMoney = (value) => Number(value || 0).toFixed(2);
 
-export const normalizeTrip = (trip = {}, index = 0) => ({
-  id: trip.id ?? null,
-  sort_order: index + 1,
-  depart_month: trip.depart_month ?? 1,
-  depart_day: trip.depart_day ?? 1,
-  depart_hour: trip.depart_hour ?? "",
-  depart_place: trip.depart_place ?? "",
-  arrive_month: trip.arrive_month ?? 1,
-  arrive_day: trip.arrive_day ?? 1,
-  arrive_hour: trip.arrive_hour ?? "",
-  arrive_place: trip.arrive_place ?? "",
-  transport: trip.transport ?? "",
-  subsidy_start: Boolean(trip.subsidy_start),
-  subsidy_end: Boolean(trip.subsidy_end),
-  paper_invoice_amount: toMoney(trip.paper_invoice_amount),
-  paper_invoice_count: trip.paper_invoice_count ?? 0,
-  collapsed: trip.collapsed ?? false,
-});
+// 行程日期以 "YYYY-MM-DD" 字符串在表单里流转，月/日只是展示与提交时的派生值。
+export const toDateInputValue = (value) => {
+  if (!value) return "";
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? "" : formatDateInput(value);
+  }
+  const text = String(value).trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) ? text : "";
+};
+
+export const formatDateInput = (date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+
+const dateInputPart = (value, start, end) => Number(value.slice(start, end));
+
+export const normalizeTrip = (trip = {}, index = 0) => {
+  const departDate = toDateInputValue(trip.depart_date);
+  const arriveDate = toDateInputValue(trip.arrive_date);
+  return {
+    id: trip.id ?? null,
+    sort_order: index + 1,
+    depart_date: departDate,
+    depart_month: departDate ? dateInputPart(departDate, 5, 7) : (trip.depart_month ?? 1),
+    depart_day: departDate ? dateInputPart(departDate, 8, 10) : (trip.depart_day ?? 1),
+    depart_hour: trip.depart_hour ?? "",
+    depart_place: trip.depart_place ?? "",
+    arrive_date: arriveDate,
+    arrive_month: arriveDate ? dateInputPart(arriveDate, 5, 7) : (trip.arrive_month ?? 1),
+    arrive_day: arriveDate ? dateInputPart(arriveDate, 8, 10) : (trip.arrive_day ?? 1),
+    arrive_hour: trip.arrive_hour ?? "",
+    arrive_place: trip.arrive_place ?? "",
+    transport: trip.transport ?? "",
+    subsidy_start: Boolean(trip.subsidy_start),
+    subsidy_end: Boolean(trip.subsidy_end),
+    paper_invoice_amount: toMoney(trip.paper_invoice_amount),
+    paper_invoice_count: trip.paper_invoice_count ?? 0,
+    collapsed: trip.collapsed ?? false,
+  };
+};
 
 export const makeBlankTrip = (reportDate) => {
-  const date = reportDate ? new Date(`${reportDate}T00:00:00`) : new Date();
-  const month = Number.isNaN(date.getTime()) ? 1 : date.getMonth() + 1;
-  const day = Number.isNaN(date.getTime()) ? 1 : date.getDate();
-  return normalizeTrip(
-    {
-      depart_month: month,
-      depart_day: day,
-      arrive_month: month,
-      arrive_day: day,
-    },
-    0,
-  );
+  const value = formatDateInput(reportDateAnchor(reportDate));
+  return normalizeTrip({ depart_date: value, arrive_date: value }, 0);
 };
 
 export const normalizeExpenseItem = (item = {}) => ({
@@ -352,6 +363,9 @@ export const validatePurposeForStatusTransition = ({ currentStatus, targetStatus
 
 export const validateTrips = (trips = []) => {
   for (const trip of trips) {
+    if (!toDateInputValue(trip.depart_date) || !toDateInputValue(trip.arrive_date)) {
+      return "行程的出发日期和到达日期都需要填写";
+    }
     const paperInvoiceError = validatePaperInvoice(trip);
     if (paperInvoiceError) return paperInvoiceError;
   }
@@ -389,6 +403,14 @@ const daysBetween = (start, end) => Math.floor((end.getTime() - start.getTime())
 const compareMonthDay = ([leftMonth, leftDay], [rightMonth, rightDay]) =>
   leftMonth === rightMonth ? leftDay - rightDay : leftMonth - rightMonth;
 
+const parseDateInput = (value) => {
+  const text = toDateInputValue(value);
+  if (!text) return null;
+  return makeDate(dateInputPart(text, 0, 4), dateInputPart(text, 5, 7), dateInputPart(text, 8, 10));
+};
+
+// 与后端 infer_trip_date_ranges 逐条对齐：已存日期直接用，只有缺日期的历史行程才按
+// 报销单日期推断年份；已知日期会把后续推断的年份重新对齐。
 export const buildTripDateRanges = (reportDate, trips = []) => {
   const normalized = trips.map((trip, index) => normalizeTrip(trip, index));
   if (normalized.length === 0) return [];
@@ -399,29 +421,39 @@ export const buildTripDateRanges = (reportDate, trips = []) => {
 
   return normalized
     .map((trip, index) => {
-      const departMonth = Number(trip.depart_month);
-      const departDay = Number(trip.depart_day);
       const arriveMonth = Number(trip.arrive_month);
       const arriveDay = Number(trip.arrive_day);
-      const departMonthDay = [departMonth, departDay];
+      const storedDepart = parseDateInput(trip.depart_date);
+      const storedArrive = parseDateInput(trip.arrive_date);
+      let departMonthDay = [Number(trip.depart_month), Number(trip.depart_day)];
       let depart;
 
-      if (index === 0) {
-        depart = makeDate(currentYear, departMonth, departDay);
+      if (storedDepart) {
+        depart = storedDepart;
+        currentYear = depart.getFullYear();
+        departMonthDay = [depart.getMonth() + 1, depart.getDate()];
+      } else if (index === 0) {
+        depart = makeDate(currentYear, departMonthDay[0], departMonthDay[1]);
         if (depart && daysBetween(anchor, depart) > 180) {
           currentYear -= 1;
-          depart = makeDate(currentYear, departMonth, departDay);
+          depart = makeDate(currentYear, departMonthDay[0], departMonthDay[1]);
         }
       } else {
         if (previousDepartMonthDay && compareMonthDay(departMonthDay, previousDepartMonthDay) < 0) {
           currentYear += 1;
         }
-        depart = makeDate(currentYear, departMonth, departDay);
+        depart = makeDate(currentYear, departMonthDay[0], departMonthDay[1]);
       }
 
-      const isCrossYearArrival = compareMonthDay([arriveMonth, arriveDay], departMonthDay) < 0;
-      const arriveYear = isCrossYearArrival ? currentYear + 1 : currentYear;
-      const arrive = makeDate(arriveYear, arriveMonth, arriveDay);
+      let arrive;
+      let isCrossYearArrival;
+      if (storedArrive) {
+        arrive = storedArrive;
+        isCrossYearArrival = Boolean(depart) && arrive.getFullYear() > depart.getFullYear();
+      } else {
+        isCrossYearArrival = compareMonthDay([arriveMonth, arriveDay], departMonthDay) < 0;
+        arrive = makeDate(isCrossYearArrival ? currentYear + 1 : currentYear, arriveMonth, arriveDay);
+      }
       previousDepartMonthDay = departMonthDay;
       if (!depart || !arrive) return null;
 
@@ -445,6 +477,26 @@ export const buildTripDateRanges = (reportDate, trips = []) => {
 };
 
 const formatYearMonth = (value) => `${value.getFullYear()}/${value.getMonth() + 1}`;
+
+// 历史行程只有月日时，把推断出的年份补成完整日期，日历控件才有值可显示。
+// 推断失败（有行程被判为无效日期）时保持原样，交由页面提示用户修正。
+export const hydrateTripDates = (reportDate, trips = []) => {
+  const normalized = trips.map((trip, index) => normalizeTrip(trip, index));
+  if (normalized.every((trip) => trip.depart_date && trip.arrive_date)) return normalized;
+
+  const ranges = buildTripDateRanges(reportDate, normalized);
+  if (ranges.length !== normalized.length) return normalized;
+  return normalized.map((trip, index) =>
+    normalizeTrip(
+      {
+        ...trip,
+        depart_date: trip.depart_date || formatDateInput(ranges[index].depart),
+        arrive_date: trip.arrive_date || formatDateInput(ranges[index].arrive),
+      },
+      index,
+    ),
+  );
+};
 
 export const getTripYearRangeLabel = (reportDate, trips = []) => {
   const ranges = buildTripDateRanges(reportDate, trips);
@@ -583,10 +635,12 @@ export const buildTripPayload = (trips) =>
   trips.map((trip, index) => ({
     id: trip.id || null,
     sort_order: index + 1,
+    depart_date: toDateInputValue(trip.depart_date) || null,
     depart_month: Number(trip.depart_month || 1),
     depart_day: Number(trip.depart_day || 1),
     depart_hour: trip.depart_hour === "" ? null : Number(trip.depart_hour),
     depart_place: nullableText(trip.depart_place),
+    arrive_date: toDateInputValue(trip.arrive_date) || null,
     arrive_month: Number(trip.arrive_month || 1),
     arrive_day: Number(trip.arrive_day || 1),
     arrive_hour: trip.arrive_hour === "" ? null : Number(trip.arrive_hour),
@@ -638,10 +692,12 @@ export const cloneTripAfter = (trips, index) => {
 
 export const swapTripEndpoints = (trip) => ({
   ...trip,
+  depart_date: trip.arrive_date,
   depart_month: trip.arrive_month,
   depart_day: trip.arrive_day,
   depart_hour: trip.arrive_hour,
   depart_place: trip.arrive_place,
+  arrive_date: trip.depart_date,
   arrive_month: trip.depart_month,
   arrive_day: trip.depart_day,
   arrive_hour: trip.depart_hour,

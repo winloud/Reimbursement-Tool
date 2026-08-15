@@ -12,6 +12,7 @@ from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportRead, R
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     ReportFilters,
+    backfill_report_trip_dates,
     create_report,
     list_report_category_options,
     list_reports,
@@ -107,6 +108,73 @@ def test_report_read_invoice_count_includes_electronic_and_paper_invoices(db):
     db.flush()
     assert report.invoice_count == 2
     assert ReportRead.model_validate(report).invoice_count == 2
+
+
+def test_trip_write_derives_month_and_day_from_dates():
+    trip = TripWrite(sort_order=1, depart_date=date(2025, 12, 30), arrive_date=date(2026, 1, 2))
+
+    assert (trip.depart_month, trip.depart_day) == (12, 30)
+    assert (trip.arrive_month, trip.arrive_day) == (1, 2)
+
+
+def test_trip_write_requires_a_date_or_month_day_pair():
+    with pytest.raises(ValidationError, match="行程缺少出发日期"):
+        TripWrite(sort_order=1, arrive_date=date(2026, 1, 2))
+
+    with pytest.raises(ValidationError, match="行程缺少到达日期"):
+        TripWrite(sort_order=1, depart_date=date(2026, 1, 2))
+
+
+def test_create_report_stores_trip_dates_and_counts_cross_year_subsidy(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 1, 6),
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_date=date(2025, 12, 30), arrive_date=date(2026, 1, 2))],
+        ),
+    )
+
+    trip = report.trips[0]
+    assert (trip.depart_date, trip.arrive_date) == (date(2025, 12, 30), date(2026, 1, 2))
+    assert (trip.depart_month, trip.depart_day) == (12, 30)
+    assert report.subsidy_days == 4
+
+
+def test_backfill_report_trip_dates_fills_inferred_years_for_legacy_trips(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 1, 5),
+            trips=[
+                TripWrite(sort_order=1, depart_month=12, depart_day=30, arrive_month=12, arrive_day=31),
+                TripWrite(sort_order=2, depart_month=1, depart_day=2, arrive_month=1, arrive_day=2),
+            ],
+        ),
+    )
+    assert all(trip.depart_date is None for trip in report.trips)
+
+    assert backfill_report_trip_dates(report) is True
+    db.commit()
+
+    trips = sorted(report.trips, key=lambda item: item.sort_order)
+    assert (trips[0].depart_date, trips[0].arrive_date) == (date(2025, 12, 30), date(2025, 12, 31))
+    assert (trips[1].depart_date, trips[1].arrive_date) == (date(2026, 1, 2), date(2026, 1, 2))
+    # 幂等：日期补齐后再跑一次不应该改动任何东西
+    assert backfill_report_trip_dates(report) is False
+
+
+def test_backfill_report_trip_dates_keeps_existing_dates(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 5),
+            trips=[TripWrite(sort_order=1, depart_date=date(2025, 6, 1), arrive_date=date(2025, 6, 2))],
+        ),
+    )
+
+    assert backfill_report_trip_dates(report) is False
+    assert report.trips[0].depart_date == date(2025, 6, 1)
 
 
 def test_paper_invoice_amount_and_count_must_be_filled_together():

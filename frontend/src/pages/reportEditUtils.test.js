@@ -26,6 +26,7 @@ import {
   hasExpenseItemData,
   hasPaperInvoice,
   getTripYearRangeLabel,
+  hydrateTripDates,
   isEmptyDraft,
   isSupportedReportAttachmentFile,
   isSupportedInvoiceFile,
@@ -41,9 +42,85 @@ import {
   validateManualSubsidyTotal,
   validatePaperInvoice,
   validatePurposeForStatusTransition,
+  validateTrips,
 } from "./reportEditUtils.js";
 
 describe("report edit utilities", () => {
+  it("derives month and day from the trip date and keeps them in sync", () => {
+    const trip = normalizeTrip({ depart_date: "2025-12-30", arrive_date: "2026-01-02" }, 0);
+
+    assert.equal(trip.depart_date, "2025-12-30");
+    assert.deepEqual([trip.depart_month, trip.depart_day], [12, 30]);
+    assert.deepEqual([trip.arrive_month, trip.arrive_day], [1, 2]);
+  });
+
+  it("keeps legacy month and day when a trip has no stored date", () => {
+    const trip = normalizeTrip({ depart_month: 6, depart_day: 3, arrive_month: 6, arrive_day: 4 }, 0);
+
+    assert.equal(trip.depart_date, "");
+    assert.deepEqual([trip.depart_month, trip.depart_day], [6, 3]);
+  });
+
+  it("blanks a new trip with the report date instead of a bare month and day", () => {
+    assert.equal(makeBlankTrip("2026-06-03").depart_date, "2026-06-03");
+    assert.equal(makeBlankTrip("2026-06-03").arrive_date, "2026-06-03");
+  });
+
+  it("counts subsidy days from stored dates instead of guessing the year", () => {
+    // 报销单日期在 2026 年初：靠月日推断会把 12/30 算成 2026-12-30，存了日期就按日期算。
+    const trips = [normalizeTrip({ depart_date: "2025-12-30", arrive_date: "2026-01-02" }, 0)];
+
+    assert.equal(calculateSubsidyDays("2026-01-06", trips), 4);
+    const [range] = buildTripDateRanges("2026-01-06", trips);
+    assert.equal(range.depart.getFullYear(), 2025);
+    assert.equal(range.arrive.getFullYear(), 2026);
+  });
+
+  it("realigns inferred years to the last stored trip date", () => {
+    const trips = [
+      normalizeTrip({ depart_date: "2025-03-01", arrive_date: "2025-03-02" }, 0),
+      normalizeTrip({ depart_month: 3, depart_day: 5, arrive_month: 3, arrive_day: 6 }, 1),
+    ];
+
+    const ranges = buildTripDateRanges("2026-06-01", trips);
+
+    assert.deepEqual(
+      ranges.map((range) => range.depart.getFullYear()),
+      [2025, 2025],
+    );
+  });
+
+  it("hydrates legacy trips with inferred dates and leaves stored ones alone", () => {
+    const hydrated = hydrateTripDates("2026-01-05", [
+      { depart_month: 12, depart_day: 30, arrive_month: 12, arrive_day: 31 },
+      { depart_date: "2026-01-02", arrive_date: "2026-01-02" },
+    ]);
+
+    assert.deepEqual(
+      hydrated.map((trip) => [trip.depart_date, trip.arrive_date]),
+      [
+        ["2025-12-30", "2025-12-31"],
+        ["2026-01-02", "2026-01-02"],
+      ],
+    );
+  });
+
+  it("swaps trip dates along with the endpoints", () => {
+    const swapped = swapTripEndpoints(
+      normalizeTrip({ depart_date: "2026-06-01", depart_place: "杭州", arrive_date: "2026-06-02", arrive_place: "北京" }, 0),
+    );
+
+    assert.deepEqual(
+      [swapped.depart_date, swapped.depart_place, swapped.arrive_date, swapped.arrive_place],
+      ["2026-06-02", "北京", "2026-06-01", "杭州"],
+    );
+  });
+
+  it("rejects saving a trip whose date was cleared", () => {
+    assert.match(validateTrips([normalizeTrip({ depart_date: "", arrive_date: "2026-06-02" }, 0)]), /行程的出发日期/);
+    assert.equal(validateTrips([normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-02" }, 0)]), "");
+  });
+
   it("keeps start, end, and return visible while secondary trip actions use overflow", () => {
     assert.deepEqual(TRIP_CARD_ACTION_POLICY, {
       directActions: ["start", "end", "return"],
@@ -368,12 +445,10 @@ describe("report edit utilities", () => {
       normalizeTrip(
         {
           id: 8,
-          depart_month: "6",
-          depart_day: "3",
+          depart_date: "2026-06-03",
           depart_hour: "",
           depart_place: "深圳",
-          arrive_month: "6",
-          arrive_day: "3",
+          arrive_date: "2026-06-03",
           arrive_hour: "12",
           arrive_place: "成都",
           transport: "高铁",
@@ -408,10 +483,12 @@ describe("report edit utilities", () => {
         {
           id: 8,
           sort_order: 1,
+          depart_date: "2026-06-03",
           depart_month: 6,
           depart_day: 3,
           depart_hour: null,
           depart_place: "深圳",
+          arrive_date: "2026-06-03",
           arrive_month: 6,
           arrive_day: 3,
           arrive_hour: 12,

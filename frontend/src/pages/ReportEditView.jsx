@@ -115,11 +115,25 @@ const tripCardActionsSx = {
   alignSelf: { xs: "flex-end", sm: "auto" },
 };
 
+// 出发/到达各压成一行：段标签 + 日历日期 + 手填「时」+ 地点。
 const tripFieldGridSx = {
   display: "grid",
-  gridTemplateColumns: "repeat(3, minmax(calc(2ch + 34px), 1fr))",
+  gridTemplateColumns: {
+    xs: "auto minmax(0, 1fr) calc(3ch + 34px)",
+    sm: "auto minmax(132px, 0.9fr) calc(3ch + 34px) minmax(0, 1.1fr)",
+  },
   gap: { xs: 1, md: 1.25 },
-  alignItems: "start",
+  alignItems: "center",
+};
+
+const tripSegmentLabelSx = {
+  whiteSpace: "nowrap",
+  color: "text.secondary",
+};
+
+const tripDateFieldSx = {
+  width: "100%",
+  minWidth: 0,
 };
 
 const tripNumberFieldSx = {
@@ -128,7 +142,7 @@ const tripNumberFieldSx = {
 };
 
 const tripPlaceFieldSx = {
-  gridColumn: "1 / -1",
+  gridColumn: { xs: "1 / -1", sm: "auto" },
   width: "100%",
   minWidth: 0,
 };
@@ -184,13 +198,13 @@ const subsidyModeSwitchSx = {
 
 const tripSegmentGridSx = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 280px), 1fr))",
+  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
   gap: FIELD_GAP,
 };
 
 const tripSegmentPanelSx = {
   ...subtlePanelSx,
-  p: { xs: 1.25, md: 1.5 },
+  p: { xs: 1, md: 1.25 },
 };
 
 const EDIT_SECTIONS = [
@@ -718,98 +732,74 @@ export default function ReportEditView({
 
                           <Box sx={tripSegmentGridSx}>
                             <Box sx={tripSegmentPanelSx}>
-                              <Stack spacing={1.25}>
-                                <Typography variant="subtitle2" fontWeight={900}>
+                              <Box sx={tripFieldGridSx}>
+                                <Typography variant="subtitle2" fontWeight={900} sx={tripSegmentLabelSx}>
                                   出发
                                 </Typography>
-                                <Box sx={tripFieldGridSx}>
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="月"
-                                    type="number"
-                                    value={trip.depart_month}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "depart_month", event.target.value)}
-                                    inputProps={{ min: 1, max: 12 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="日"
-                                    type="number"
-                                    value={trip.depart_day}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "depart_day", event.target.value)}
-                                    inputProps={{ min: 1, max: 31 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="时"
-                                    type="number"
-                                    value={trip.depart_hour}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "depart_hour", event.target.value)}
-                                    inputProps={{ min: 0, max: 23 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripPlaceFieldSx}
-                                    label="地点"
-                                    value={trip.depart_place}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "depart_place", event.target.value)}
-                                  />
-                                </Box>
-                              </Stack>
+                                <TextField
+                                  size="small"
+                                  sx={tripDateFieldSx}
+                                  label="日期"
+                                  type="date"
+                                  value={trip.depart_date}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "depart_date", event.target.value)}
+                                  InputLabelProps={{ shrink: true }}
+                                />
+                                <TextField
+                                  size="small"
+                                  sx={tripNumberFieldSx}
+                                  label="时"
+                                  type="number"
+                                  value={trip.depart_hour}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "depart_hour", event.target.value)}
+                                  inputProps={{ min: 0, max: 23 }}
+                                />
+                                <TextField
+                                  size="small"
+                                  sx={tripPlaceFieldSx}
+                                  label="地点"
+                                  value={trip.depart_place}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "depart_place", event.target.value)}
+                                />
+                              </Box>
                             </Box>
                             <Box sx={tripSegmentPanelSx}>
-                              <Stack spacing={1.25}>
-                                <Typography variant="subtitle2" fontWeight={900}>
+                              <Box sx={tripFieldGridSx}>
+                                <Typography variant="subtitle2" fontWeight={900} sx={tripSegmentLabelSx}>
                                   到达
                                 </Typography>
-                                <Box sx={tripFieldGridSx}>
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="月"
-                                    type="number"
-                                    value={trip.arrive_month}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "arrive_month", event.target.value)}
-                                    inputProps={{ min: 1, max: 12 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="日"
-                                    type="number"
-                                    value={trip.arrive_day}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "arrive_day", event.target.value)}
-                                    inputProps={{ min: 1, max: 31 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripNumberFieldSx}
-                                    label="时"
-                                    type="number"
-                                    value={trip.arrive_hour}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "arrive_hour", event.target.value)}
-                                    inputProps={{ min: 0, max: 23 }}
-                                  />
-                                  <TextField
-                                    size="small"
-                                    sx={tripPlaceFieldSx}
-                                    label="地点"
-                                    value={trip.arrive_place}
-                                    disabled={readonly}
-                                    onChange={(event) => updateTrip(index, "arrive_place", event.target.value)}
-                                  />
-                                </Box>
-                              </Stack>
+                                <TextField
+                                  size="small"
+                                  sx={tripDateFieldSx}
+                                  label="日期"
+                                  type="date"
+                                  value={trip.arrive_date}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "arrive_date", event.target.value)}
+                                  InputLabelProps={{ shrink: true }}
+                                />
+                                <TextField
+                                  size="small"
+                                  sx={tripNumberFieldSx}
+                                  label="时"
+                                  type="number"
+                                  value={trip.arrive_hour}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "arrive_hour", event.target.value)}
+                                  inputProps={{ min: 0, max: 23 }}
+                                />
+                                <TextField
+                                  size="small"
+                                  sx={tripPlaceFieldSx}
+                                  label="地点"
+                                  value={trip.arrive_place}
+                                  disabled={readonly}
+                                  onChange={(event) => updateTrip(index, "arrive_place", event.target.value)}
+                                />
+                              </Box>
                             </Box>
                             <Box sx={{ gridColumn: "1 / -1" }}>
                               <Autocomplete

@@ -287,6 +287,12 @@ def trip_date_anchor(report_reference: date | int) -> date:
 
 
 def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> list[TripDateRange]:
+    """给每段行程定出实际日期区间。
+
+    depart_date/arrive_date 已落库时直接采用（跨年由数据本身表达）；只有历史数据缺日期
+    时，才以报销单日期为锚点按月日推断年份。两种来源可以混合：已知日期会把后续推断的
+    年份重新对齐到该行程所在年份。
+    """
     if not trips:
         return []
 
@@ -298,7 +304,11 @@ def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> l
 
     for index, trip in enumerate(sorted_trips):
         depart_month_day = (trip.depart_month, trip.depart_day)
-        if index == 0:
+        if trip.depart_date is not None:
+            depart = trip.depart_date
+            current_year = depart.year
+            depart_month_day = (depart.month, depart.day)
+        elif index == 0:
             depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
             if (depart - anchor).days > 180:
                 current_year -= 1
@@ -308,13 +318,44 @@ def infer_trip_date_ranges(report_reference: date | int, trips: list[Trip]) -> l
                 current_year += 1
             depart = build_trip_date(current_year, trip.depart_month, trip.depart_day)
 
-        arrive_year = current_year + 1 if (trip.arrive_month, trip.arrive_day) < depart_month_day else current_year
-        arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
-        validate_trip_chronology(trip, depart, arrive, arrive_year > current_year)
+        if trip.arrive_date is not None:
+            arrive = trip.arrive_date
+            is_cross_year_arrival = arrive.year > depart.year
+        else:
+            arrive_year = current_year + 1 if (trip.arrive_month, trip.arrive_day) < depart_month_day else current_year
+            arrive = build_trip_date(arrive_year, trip.arrive_month, trip.arrive_day)
+            is_cross_year_arrival = arrive_year > current_year
+        validate_trip_chronology(trip, depart, arrive, is_cross_year_arrival)
         ranges.append(TripDateRange(trip=trip, depart=depart, arrive=arrive))
         previous_depart_month_day = depart_month_day
 
     return ranges
+
+
+def backfill_report_trip_dates(report: ExpenseReport) -> bool:
+    """给缺年份的历史行程补上完整日期，返回是否有改动。
+
+    只补空缺：已经带日期的行程不动。推断失败（日期无效或时序矛盾）时整张单放弃，
+    留给用户在页面上修正，不阻断导入或启动。幂等。
+    """
+    if report.report_date is None or not report.trips:
+        return False
+    if all(trip.depart_date is not None and trip.arrive_date is not None for trip in report.trips):
+        return False
+    try:
+        ranges = infer_trip_date_ranges(report.report_date, list(report.trips))
+    except TripDateError:
+        return False
+
+    changed = False
+    for trip_range in ranges:
+        if trip_range.trip.depart_date is None:
+            trip_range.trip.depart_date = trip_range.depart
+            changed = True
+        if trip_range.trip.arrive_date is None:
+            trip_range.trip.arrive_date = trip_range.arrive
+            changed = True
+    return changed
 
 
 def calculate_subsidy_days(report_reference: date | int, trips: list[Trip]) -> int:
@@ -492,6 +533,10 @@ def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None
     for index, payload in enumerate(trip_payloads, start=1):
         data = payload.model_dump(exclude={"id"}, exclude_none=True)
         data["sort_order"] = index
+        # 日期是真源，必须原样写入：exclude_none 会吞掉「清空日期」的意图，
+        # 让旧年份残留在库里而月日已经改了。
+        data["depart_date"] = payload.depart_date
+        data["arrive_date"] = payload.arrive_date
         if payload.id is not None and payload.id in by_id:
             trip = by_id[payload.id]
             for key, value in data.items():

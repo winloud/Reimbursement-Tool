@@ -28,6 +28,7 @@ def create_db_and_tables() -> None:
     Base.metadata.create_all(bind=engine)
     migrate_sqlite_schema()
     normalize_subsidy_markers()
+    backfill_trip_dates()
     recalculate_existing_reports()
 
 
@@ -35,6 +36,10 @@ def migrate_sqlite_schema() -> None:
     with engine.begin() as connection:
         tables = {row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         trip_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(trips)")).fetchall()}
+        if "depart_date" not in trip_columns:
+            connection.execute(text("ALTER TABLE trips ADD COLUMN depart_date DATE"))
+        if "arrive_date" not in trip_columns:
+            connection.execute(text("ALTER TABLE trips ADD COLUMN arrive_date DATE"))
         if "subsidy_start" not in trip_columns:
             connection.execute(text("ALTER TABLE trips ADD COLUMN subsidy_start BOOLEAN NOT NULL DEFAULT 0"))
         if "subsidy_end" not in trip_columns:
@@ -131,6 +136,30 @@ def normalize_subsidy_markers() -> None:
                 "WHERE sort_order = (SELECT MAX(t2.sort_order) FROM trips t2 WHERE t2.report_id = trips.report_id)"
             )
         )
+
+
+def backfill_trip_dates() -> None:
+    """给历史行程补上含年份的 depart_date/arrive_date。
+
+    旧数据只存月日，年份由 infer_trip_date_ranges 以报销单日期为锚点推断。这里把推断
+    结果一次性落库，之后跨年就读实际日期而不再依赖推断。已有日期的行程不动；推断失败
+    （无效日期或时序矛盾）的报销单整张跳过，留给用户在页面上修正。幂等。
+    """
+    from sqlalchemy import select
+    from sqlalchemy.orm import Session
+
+    from backend.models.report import ExpenseReport
+    from backend.services.report_service import backfill_report_trip_dates
+
+    with Session(engine) as session:
+        # 含回收站里的报销单：恢复出来的单据也该带完整日期。
+        reports = list(session.scalars(select(ExpenseReport)).all())
+        changed = False
+        for report in reports:
+            if backfill_report_trip_dates(report):
+                changed = True
+        if changed:
+            session.commit()
 
 
 def recalculate_existing_reports() -> None:

@@ -650,10 +650,12 @@ def import_ticket_preview(db: Session, report_id: int, payload: RailTicketImport
                 trip = Trip(
                     report=report,
                     sort_order=next_sort_order,
+                    depart_date=first.travel_date,
                     depart_month=first.travel_date.month,
                     depart_day=first.travel_date.day,
                     depart_hour=None,
                     depart_place=first.depart_station.strip(),
+                    arrive_date=last.travel_date,
                     arrive_month=last.travel_date.month,
                     arrive_day=last.travel_date.day,
                     arrive_hour=None,

@@ -36,6 +36,7 @@ from backend.services.report_attachment_service import build_report_attachment_s
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import (
     ReportFilters,
+    backfill_report_trip_dates,
     ensure_report_ready_to_leave_draft,
     list_reports,
     recalculate_report_totals,
@@ -206,10 +207,12 @@ def _serialize_report(report: ExpenseReport) -> dict:
         {
             "original_id": trip.id,
             "sort_order": trip.sort_order,
+            "depart_date": _date(trip.depart_date),
             "depart_month": trip.depart_month,
             "depart_day": trip.depart_day,
             "depart_hour": trip.depart_hour,
             "depart_place": trip.depart_place,
+            "arrive_date": _date(trip.arrive_date),
             "arrive_month": trip.arrive_month,
             "arrive_day": trip.arrive_day,
             "arrive_hour": trip.arrive_hour,
@@ -623,10 +626,12 @@ def _create_or_overwrite_report(
     for trip_payload in report_item.get("trips", []):
         trip = Trip(
             sort_order=trip_payload["sort_order"],
+            depart_date=_parse_date(trip_payload.get("depart_date")),
             depart_month=trip_payload["depart_month"],
             depart_day=trip_payload["depart_day"],
             depart_hour=trip_payload.get("depart_hour"),
             depart_place=trip_payload.get("depart_place"),
+            arrive_date=_parse_date(trip_payload.get("arrive_date")),
             arrive_month=trip_payload["arrive_month"],
             arrive_day=trip_payload["arrive_day"],
             arrive_hour=trip_payload.get("arrive_hour"),
@@ -794,6 +799,8 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 attachment.file_path = final_relative.as_posix()
                 pending_files.append((temp_file, _invoice_file_path(final_relative)))
                 result.attachments_written += 1
+            # 旧导入包只带月日，按报销单日期补出年份，导入后即与新数据同构。
+            backfill_report_trip_dates(report)
             recalculate_report_totals(report)
             if report.report_type == "regular" and report.status != "draft":
                 ensure_report_ready_to_leave_draft(report)

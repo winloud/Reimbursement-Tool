@@ -25,7 +25,14 @@ from backend.services.invoice_service import (
     upload_invoices,
 )
 from backend.services import report_service
-from backend.services.report_service import TripDateError, calculate_subsidy_days, create_report, update_report, update_report_status
+from backend.services.report_service import (
+    TripDateError,
+    calculate_subsidy_days,
+    create_report,
+    infer_trip_date_ranges,
+    update_report,
+    update_report_status,
+)
 
 
 def test_parse_pdf_invoice_reads_text_amount_number_and_date(monkeypatch, tmp_path: Path):
@@ -405,6 +412,46 @@ def test_custom_category_filename_uses_safe_hash_prefix():
     assert safe_category_filename_prefix("custom:宴请").startswith("custom_")
     assert safe_category_filename_prefix("custom:宴请") == safe_category_filename_prefix("custom:宴请")
     assert safe_category_filename_prefix("custom:宴请") != "custom:宴请"
+
+
+def test_calculate_subsidy_days_uses_stored_trip_dates_across_year_end():
+    trips = [
+        Trip(
+            depart_date=date(2025, 12, 30),
+            depart_month=12,
+            depart_day=30,
+            arrive_date=date(2026, 1, 2),
+            arrive_month=1,
+            arrive_day=2,
+            sort_order=1,
+        ),
+    ]
+
+    # 锚点年份是 2026，靠月日推断会把出发算成 2026-12-30；存了日期就按日期算。
+    assert calculate_subsidy_days(2026, trips) == 4
+    ranges = infer_trip_date_ranges(2026, trips)
+    assert (ranges[0].depart, ranges[0].arrive) == (date(2025, 12, 30), date(2026, 1, 2))
+
+
+def test_infer_trip_date_ranges_realigns_inferred_year_to_stored_dates():
+    trips = [
+        Trip(
+            depart_date=date(2025, 3, 1),
+            depart_month=3,
+            depart_day=1,
+            arrive_date=date(2025, 3, 2),
+            arrive_month=3,
+            arrive_day=2,
+            sort_order=1,
+        ),
+        # 历史行程只有月日，年份应接着上一段的 2025 走，而不是回到锚点年份。
+        Trip(depart_month=3, depart_day=5, arrive_month=3, arrive_day=6, sort_order=2),
+    ]
+
+    ranges = infer_trip_date_ranges(2026, trips)
+
+    assert [item.depart for item in ranges] == [date(2025, 3, 1), date(2025, 3, 5)]
+    assert [item.arrive for item in ranges] == [date(2025, 3, 2), date(2025, 3, 6)]
 
 
 def test_calculate_subsidy_days_across_month():

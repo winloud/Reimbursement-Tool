@@ -26,12 +26,16 @@ ExpenseCategory = Literal[
 class TripWrite(BaseModel):
     id: int | None = None
     sort_order: int = Field(ge=1)
-    depart_month: int = Field(ge=1, le=12)
-    depart_day: int = Field(ge=1, le=31)
+    # depart_date/arrive_date 是行程日期的真源；月日可省略，由日期拆出后写库供 PDF 等沿用。
+    # 只有旧客户端和历史导入包才会只带月日，此时年份仍由后端按报销单日期推断。
+    depart_date: date | None = None
+    depart_month: int | None = Field(default=None, ge=1, le=12)
+    depart_day: int | None = Field(default=None, ge=1, le=31)
     depart_hour: int | None = Field(default=None, ge=0, le=23)
     depart_place: str | None = None
-    arrive_month: int = Field(ge=1, le=12)
-    arrive_day: int = Field(ge=1, le=31)
+    arrive_date: date | None = None
+    arrive_month: int | None = Field(default=None, ge=1, le=12)
+    arrive_day: int | None = Field(default=None, ge=1, le=31)
     arrive_hour: int | None = Field(default=None, ge=0, le=23)
     arrive_place: str | None = None
     transport: str | None = None
@@ -39,6 +43,20 @@ class TripWrite(BaseModel):
     subsidy_end: bool = False
     paper_invoice_amount: Decimal | None = Field(default=None, ge=0)
     paper_invoice_count: int | None = Field(default=None, ge=0)
+
+    @model_validator(mode="after")
+    def sync_month_day_from_dates(self):
+        if self.depart_date is not None:
+            self.depart_month = self.depart_date.month
+            self.depart_day = self.depart_date.day
+        elif self.depart_month is None or self.depart_day is None:
+            raise ValueError("行程缺少出发日期")
+        if self.arrive_date is not None:
+            self.arrive_month = self.arrive_date.month
+            self.arrive_day = self.arrive_date.day
+        elif self.arrive_month is None or self.arrive_day is None:
+            raise ValueError("行程缺少到达日期")
+        return self
 
     @model_validator(mode="after")
     def validate_paper_invoice_pair(self):
@@ -221,10 +239,12 @@ class ReportFilterOptionsRead(BaseModel):
 class TripRead(BaseModel):
     id: int
     sort_order: int
+    depart_date: date | None = None
     depart_month: int
     depart_day: int
     depart_hour: int | None = None
     depart_place: str | None = None
+    arrive_date: date | None = None
     arrive_month: int
     arrive_day: int
     arrive_hour: int | None = None
