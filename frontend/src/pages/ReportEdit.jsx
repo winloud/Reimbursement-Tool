@@ -18,6 +18,7 @@ import {
 } from "../api/client";
 import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
+  EXPENSE_CATEGORIES,
   buildCustomExpenseCategory,
   buildReportPayload,
   calculateSummary,
@@ -31,8 +32,10 @@ import {
   getPaperInvoiceCount,
   getTripPdfGate,
   getTripYearRangeLabel,
+  getVisibleExpenseCategories,
   hasPaperInvoice,
   hydrateTripDates,
+  isCustomExpenseCategory,
   isEmptyDraft,
   makeBlankTrip,
   makeReturnTripAfter,
@@ -83,6 +86,9 @@ export default function ReportEdit() {
   const [customDialogOpen, setCustomDialogOpen] = useState(false);
   const [customName, setCustomName] = useState("");
   const [customNameError, setCustomNameError] = useState("");
+  // 本次会话手动添加、但还没填任何内容的费用类别。自动保存会用后端结果覆盖 expenseItems，
+  // 这个集合不受影响，所以刚添加的空行不会被保存冲掉。
+  const [pinnedExpenseCategories, setPinnedExpenseCategories] = useState(() => new Set());
   const [paperInvoiceEditor, setPaperInvoiceEditor] = useState(null);
   const [paperInvoiceClearTarget, setPaperInvoiceClearTarget] = useState(null);
   const [subsidyDialogOpen, setSubsidyDialogOpen] = useState(false);
@@ -266,6 +272,22 @@ export default function ReportEdit() {
       : "切换为人工核定";
   const automaticSubsidyTotal = summary.subsidyDays * Number(form.daily_subsidy || 0);
   const expenseCategoryOptions = useMemo(() => getExpenseCategoryOptions(expenseItems), [expenseItems]);
+  // 后端为 7 个固定类别自动建空行，这里只按有无业务数据/发票决定显示，PDF 仍打印固定 7 行。
+  const visibleExpenseCategories = useMemo(
+    () =>
+      getVisibleExpenseCategories({
+        categories: expenseCategoryOptions,
+        expenseItems,
+        getInvoices: (category) =>
+          invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id),
+        pinnedCategories: pinnedExpenseCategories,
+      }),
+    [expenseCategoryOptions, expenseItems, invoices, pinnedExpenseCategories],
+  );
+  const addableExpenseCategories = useMemo(() => {
+    const visible = new Set(visibleExpenseCategories.map((category) => category.value));
+    return EXPENSE_CATEGORIES.filter((category) => !visible.has(category.value));
+  }, [visibleExpenseCategories]);
   const visibleOtherExpenseItems = useMemo(
     () =>
       expenseCategoryOptions
@@ -939,6 +961,36 @@ export default function ReportEdit() {
     setToast("自定义费用类别已删除");
   };
 
+  const unpinExpenseCategory = (category) => {
+    setPinnedExpenseCategories((prev) => {
+      if (!prev.has(category)) return prev;
+      const next = new Set(prev);
+      next.delete(category);
+      return next;
+    });
+  };
+
+  const handleAddExpenseCategory = (category) => {
+    setPinnedExpenseCategories((prev) => (prev.has(category) ? prev : new Set(prev).add(category)));
+  };
+
+  // 移除一行：自定义类别真删；固定类别只清空业务字段并移出手动添加集合，
+  // 后端的空行留着，PDF 仍打印固定 7 行。
+  const handleRemoveExpenseCategory = (category) => {
+    if (isCustomExpenseCategory(category)) {
+      handleDeleteCustomCategory(category);
+      return;
+    }
+    updateExpenseItem(category, {
+      remark: "",
+      reimbursable_amount: "",
+      paper_invoice_amount: "0.00",
+      paper_invoice_count: 0,
+    });
+    unpinExpenseCategory(category);
+    setToast("已移除该费用");
+  };
+
   const handleInvoiceUpdated = async () => {
     await loadForEdit({ quiet: true });
     setInvoiceQueue((prev) => {
@@ -1070,11 +1122,14 @@ export default function ReportEdit() {
   };
 
   const expenseEditorView = {
-    expenseCategoryOptions,
+    visibleExpenseCategories,
+    addableExpenseCategories,
+    pinnedExpenseCategories,
     expenseItems,
     invoicesForCategory,
     updateExpenseItem,
-    handleDeleteCustomCategory,
+    addExpenseCategory: handleAddExpenseCategory,
+    removeExpenseCategory: handleRemoveExpenseCategory,
     openCustomDialog: handleOpenCustomDialog,
     paperInvoiceEditor,
     openPaperInvoiceEditor,

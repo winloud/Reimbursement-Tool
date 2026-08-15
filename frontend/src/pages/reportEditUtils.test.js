@@ -23,6 +23,7 @@ import {
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getTripPdfGate,
+  getVisibleExpenseCategories,
   hasExpenseItemData,
   hasPaperInvoice,
   getTripYearRangeLabel,
@@ -220,6 +221,51 @@ describe("report edit utilities", () => {
     assert.equal(shouldExpandExpenseItem({ ...emptyFixed, remark: "无票说明" }, []), true);
     assert.equal(shouldExpandExpenseItem({ ...emptyFixed, category: "fuel_subsidy", reimbursable_amount: "0" }, []), true);
     assert.equal(shouldExpandExpenseItem({ ...emptyFixed, category: "custom:资料费" }, []), true);
+  });
+
+  it("lists an other-expense category only when it has data, invoices, or was just added", () => {
+    const categories = [
+      { value: "luggage", label: "行李费" },
+      { value: "accommodation", label: "住宿费" },
+      { value: "toll", label: "通行费" },
+      { value: "postal", label: "邮电费" },
+      { value: "custom:资料费", label: "资料费", custom: true },
+    ];
+    // 后端总会为 7 个固定类别回填空行，因此过滤不能只看 item 是否存在。
+    const emptyFields = { remark: "", reimbursable_amount: "", paper_invoice_amount: "0.00", paper_invoice_count: 0 };
+    const expenseItems = [
+      { category: "luggage", ...emptyFields },
+      { category: "accommodation", ...emptyFields },
+      { category: "toll", ...emptyFields, paper_invoice_amount: "12.00", paper_invoice_count: 1 },
+      { category: "postal", ...emptyFields },
+      { category: "custom:资料费", ...emptyFields },
+    ];
+    // 住宿费只上传了发票、item 字段全空：必须仍然可见，否则发票会在界面上失踪。
+    const invoicesByCategory = { accommodation: [{ id: 1, amount_confirmed: false }] };
+
+    const visible = getVisibleExpenseCategories({
+      categories,
+      expenseItems,
+      getInvoices: (category) => invoicesByCategory[category] || [],
+      pinnedCategories: new Set(["postal"]),
+    });
+    assert.deepEqual(visible.map((category) => category.value), [
+      "accommodation",
+      "toll",
+      "postal",
+      "custom:资料费",
+    ]);
+
+    // 没有手动添加时，空的固定类别全部隐藏；自定义类别始终显示。
+    const withoutPinned = getVisibleExpenseCategories({
+      categories,
+      expenseItems,
+      getInvoices: () => [],
+      pinnedCategories: [],
+    });
+    assert.deepEqual(withoutPinned.map((category) => category.value), ["toll", "custom:资料费"]);
+
+    assert.deepEqual(getVisibleExpenseCategories(), []);
   });
 
   it("requires purpose only for the draft to checked transition", () => {

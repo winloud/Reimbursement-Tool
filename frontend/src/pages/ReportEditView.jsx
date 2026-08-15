@@ -29,6 +29,7 @@ import {
   Typography,
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
+import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
 import ContentCopyIcon from "@mui/icons-material/ContentCopy";
 import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
@@ -41,6 +42,7 @@ import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
 import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
+import ExpenseCategoryList from "../features/report-edit/ExpenseCategoryList";
 import ReportAttachmentSection from "../features/report-edit/ReportAttachmentSection";
 import CardOrderControls, { DragHandle } from "../features/report-edit-shared/CardOrderControls";
 import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
@@ -52,7 +54,6 @@ import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
 import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
 import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
 import SectionHeader from "../features/report-edit-shared/SectionHeader";
-import stopSummaryInteraction from "../features/report-edit-shared/stopSummaryInteraction";
 import {
   FIELD_GAP,
   SECTION_GAP,
@@ -72,14 +73,8 @@ import {
   formatAmount,
   getConfirmedInvoiceCount,
   getConfirmedInvoiceTotal,
-  getExpenseItemAmount,
-  getExpenseItemInvoiceTotal,
-  getFuelSubsidyInvoiceShortfall,
   getPaperInvoiceCount,
   hasPaperInvoice,
-  isCustomExpenseCategory,
-  shouldExpandExpenseItem,
-  validateFuelSubsidyAmount,
 } from "./reportEditUtils";
 
 const TRIP_OVERFLOW_ACTION_META = {
@@ -263,11 +258,14 @@ export default function ReportEditView({
     moveTripByIndex,
   } = tripEditor;
   const {
-    expenseCategoryOptions,
+    visibleExpenseCategories,
+    addableExpenseCategories,
+    pinnedExpenseCategories,
     expenseItems,
     invoicesForCategory,
     updateExpenseItem,
-    handleDeleteCustomCategory,
+    addExpenseCategory,
+    removeExpenseCategory,
     openCustomDialog,
     paperInvoiceEditor,
     openPaperInvoiceEditor,
@@ -348,6 +346,17 @@ export default function ReportEditView({
     if (actionId === "duplicate") duplicateTrip(tripIndex);
     if (actionId === "swap") swapTrip(tripIndex);
     if (actionId === "delete") removeTrip(tripIndex);
+  };
+
+  const [expenseMenuAnchor, setExpenseMenuAnchor] = useState(null);
+  const closeExpenseMenu = () => setExpenseMenuAnchor(null);
+  const handleAddExpenseCategory = (category) => {
+    closeExpenseMenu();
+    addExpenseCategory(category);
+  };
+  const handleOpenCustomExpense = () => {
+    closeExpenseMenu();
+    openCustomDialog();
   };
 
   const renderInvoiceList = (items, uploadSlot) => (
@@ -903,146 +912,74 @@ export default function ReportEditView({
             <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
               <SectionHeader
                 title="其他费用发票"
+                description="只显示已录入或有发票的费用类别，其余通过「添加费用」补充。"
                 actions={
                   <Button
                     size="small"
                     variant="outlined"
                     startIcon={<AddIcon />}
+                    endIcon={<ArrowDropDownIcon />}
                     disabled={readonly}
-                    onClick={openCustomDialog}
+                    onClick={(event) => setExpenseMenuAnchor(event.currentTarget)}
+                    aria-haspopup="menu"
+                    aria-expanded={expenseMenuAnchor ? "true" : undefined}
                   >
-                    添加自定义费用
+                    添加费用
                   </Button>
                 }
               />
-              <Box sx={repeatedCardGridSx}>
-                {expenseCategoryOptions.map((category) => {
-                  const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
-                    category: category.value,
-                    remark: "",
-                    reimbursable_amount: "",
-                    paper_invoice_amount: "0.00",
-                    paper_invoice_count: 0,
-                    invoice_total: "0.00",
-                    amount: "0.00",
-                    invoice_count: 0,
-                  };
-                  const uploadKey = `expense-${category.value}`;
-                  const paperInvoiceKey = `expense:${category.value}`;
-                  const uploading = uploadState?.key === uploadKey;
-                  const isFuelSubsidy = category.value === "fuel_subsidy";
-                  const categoryInvoices = invoicesForCategory(category.value);
-                  const invoiceTotal = getExpenseItemInvoiceTotal(item, categoryInvoices);
-                  const invoiceCount = getConfirmedInvoiceCount(categoryInvoices) + getPaperInvoiceCount(item);
-                  const fuelAmountError = validateFuelSubsidyAmount(item);
-                  const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
-                  return (
-                    <Box key={category.value} sx={{ minWidth: 0 }}>
-                      <Accordion
-                        defaultExpanded={shouldExpandExpenseItem(item, categoryInvoices)}
-                        disableGutters
-                        elevation={0}
-                        sx={accordionCardSx}
-                      >
-                        <AccordionSummary
-                          expandIcon={<ExpandMoreIcon />}
-                          sx={{
-                            minHeight: 64,
-                            px: { xs: 1.5, md: 2 },
-                            "& .MuiAccordionSummary-content": { my: 1.25, minWidth: 0 },
-                          }}
-                        >
-                          <Stack direction="row" alignItems="center" justifyContent="space-between" spacing={1} sx={{ width: "100%", minWidth: 0 }}>
-                            <Box sx={{ minWidth: 0 }}>
-                              <Typography fontWeight={800}>{category.label}</Typography>
-                              <Typography variant="body2" color="text.secondary" sx={{ overflowWrap: "anywhere" }}>
-                                报销 {formatAmount(getExpenseItemAmount(item, categoryInvoices))} / 发票 {formatAmount(invoiceTotal)} / {invoiceCount} 张
-                              </Typography>
-                            </Box>
-                            {isCustomExpenseCategory(category.value) && (
-                              <Tooltip title="删除自定义费用">
-                                <span {...stopSummaryInteraction}>
-                                  <IconButton
-                                    size="small"
-                                    color="error"
-                                    disabled={readonly}
-                                    aria-label={`删除自定义费用：${category.label}`}
-                                    onClick={(event) => {
-                                      event.stopPropagation();
-                                      handleDeleteCustomCategory(category.value);
-                                    }}
-                                  >
-                                    <DeleteIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                            )}
-                          </Stack>
-                        </AccordionSummary>
-                        <AccordionDetails sx={{ px: { xs: 1.5, md: 2 }, pt: 0.5, pb: { xs: 1.5, md: 2 } }}>
-                          <Stack spacing={1.5}>
-                            {isFuelSubsidy && (
-                              <TextField
-                                fullWidth
-                                size="small"
-                                label="燃油补助报销金额"
-                                type="number"
-                                value={item.reimbursable_amount ?? ""}
-                                disabled={readonly}
-                                error={Boolean(fuelAmountError)}
-                                helperText={
-                                  fuelAmountError ||
-                                  (fuelShortfall > 0
-                                    ? `发票金额不足 ${formatAmount(fuelShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
-                                    : "留空则按已确认发票合计报销")
-                                }
-                                onChange={(event) =>
-                                  updateExpenseItem(category.value, { reimbursable_amount: event.target.value })
-                                }
-                                InputProps={{
-                                  startAdornment: <InputAdornment position="start">¥</InputAdornment>,
-                                  inputProps: { min: 0, step: "0.01" },
-                                }}
-                              />
-                            )}
-                            {renderInvoiceList(
-                              categoryInvoices,
-                              <FileDropSlot
-                                kind="invoice"
-                                disabled={readonly || saveState === "saving"}
-                                uploading={uploading}
-                                onPasteError={onUploadError}
-                                onFiles={(files) =>
-                                  handleFilesUpload({
-                                    files,
-                                    expenseCategory: category.value,
-                                    key: uploadKey,
-                                  })
-                                }
-                              />,
-                            )}
-                            {(!readonly || hasPaperInvoice(item)) && (
-                              <Box sx={cardSubSectionDividerSx}>
-                                <PaperInvoiceEntry
-                                  value={item}
-                                  editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
-                                  disabled={readonly}
-                                  onOpen={() => openPaperInvoiceEditor({ key: paperInvoiceKey, kind: "expense", category: category.value }, item)}
-                                  onChange={updatePaperInvoiceEditor}
-                                  onSave={savePaperInvoiceEditor}
-                                  onCancel={closePaperInvoiceEditor}
-                                  onClear={requestPaperInvoiceClear}
-                                />
-                              </Box>
-                            )}
-                          </Stack>
-                        </AccordionDetails>
-                      </Accordion>
-                    </Box>
-                  );
-                })}
-              </Box>
+              <Card sx={workCardSx}>
+                <CardContent sx={sectionCardContentSx}>
+                  {visibleExpenseCategories.length === 0 ? (
+                    <Typography variant="body2" color="text.secondary">
+                      暂无其他费用。点击「添加费用」选择费用类别。
+                    </Typography>
+                  ) : (
+                    <ExpenseCategoryList
+                      categories={visibleExpenseCategories}
+                      expenseItems={expenseItems}
+                      invoicesForCategory={invoicesForCategory}
+                      readonly={readonly}
+                      saveState={saveState}
+                      uploadState={uploadState}
+                      pinnedCategories={pinnedExpenseCategories}
+                      paperInvoiceEditor={paperInvoiceEditor}
+                      onUpdateExpenseItem={updateExpenseItem}
+                      onRemoveCategory={removeExpenseCategory}
+                      onFilesUpload={handleFilesUpload}
+                      onUploadError={onUploadError}
+                      onSelectInvoice={onSelectInvoice}
+                      onDeleteInvoice={handleDeleteInvoice}
+                      onOpenPaperInvoice={openPaperInvoiceEditor}
+                      onChangePaperInvoice={updatePaperInvoiceEditor}
+                      onSavePaperInvoice={savePaperInvoiceEditor}
+                      onCancelPaperInvoice={closePaperInvoiceEditor}
+                      onClearPaperInvoice={requestPaperInvoiceClear}
+                    />
+                  )}
+                </CardContent>
+              </Card>
             </Stack>
+
+            <Menu
+              anchorEl={expenseMenuAnchor}
+              open={Boolean(expenseMenuAnchor)}
+              onClose={closeExpenseMenu}
+              MenuListProps={{ "aria-label": "添加费用" }}
+            >
+              {addableExpenseCategories.map((category) => (
+                <MenuItem key={category.value} onClick={() => handleAddExpenseCategory(category.value)}>
+                  {category.label}
+                </MenuItem>
+              ))}
+              {addableExpenseCategories.length > 0 && <Divider />}
+              <MenuItem onClick={handleOpenCustomExpense}>
+                <ListItemIcon>
+                  <AddIcon fontSize="small" />
+                </ListItemIcon>
+                自定义费用…
+              </MenuItem>
+            </Menu>
 
             <ReportAttachmentSection
               attachments={attachments}

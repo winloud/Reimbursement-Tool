@@ -240,6 +240,25 @@ export const hasExpenseItemData = (item = {}) =>
 export const shouldExpandExpenseItem = (item = {}, invoices = []) =>
   (Array.isArray(invoices) && invoices.length > 0) || hasExpenseItemData(item);
 
+// 其他费用只显示「有数据 ∪ 有发票 ∪ 本次会话手动添加」的类别，避免 7 个固定类别恒定空占位。
+// 后端仍为固定类别保留空行、PDF 也仍打印固定 7 行，这里只是视图层过滤。
+// 注意必须并入「有发票」：只上传了发票、item 字段全空的类别若被隐藏，发票会在界面上失踪。
+export const getVisibleExpenseCategories = ({
+  categories = [],
+  expenseItems = [],
+  getInvoices = () => [],
+  pinnedCategories = [],
+} = {}) => {
+  const pinned = pinnedCategories instanceof Set ? pinnedCategories : new Set(pinnedCategories);
+  return categories.filter((category) => {
+    if (pinned.has(category.value)) return true;
+    const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
+      category: category.value,
+    };
+    return shouldExpandExpenseItem(item, getInvoices(category.value) || []);
+  });
+};
+
 export const getConfirmedInvoiceTotal = (invoices = []) =>
   invoices.filter((invoice) => invoice.amount_confirmed).reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
 
