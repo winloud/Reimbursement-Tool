@@ -41,9 +41,9 @@ import {
   SECTION_GAP,
   accordionCardSx,
   dashedAddCardSx,
+  draggingCardSx,
   editMainLayoutSx,
   pageContentSx,
-  repeatedCardGridSx,
   sectionCardContentSx,
   summarySidebarSx,
   workCardSx,
@@ -61,6 +61,32 @@ function AddRegularItemPlaceholder({ onClick }) {
     </Button>
   );
 }
+
+// 详情字段：xl 下把备注并进同一行，窄屏时备注独占一行。
+const itemFieldGridSx = {
+  no_invoice: {
+    display: "grid",
+    gridTemplateColumns: {
+      xs: "1fr",
+      sm: "170px minmax(0, 1fr) 160px",
+      xl: "170px minmax(0, 1fr) 160px minmax(0, 1fr)",
+    },
+    gap: 1.25,
+  },
+  invoice: {
+    display: "grid",
+    gridTemplateColumns: {
+      xs: "1fr",
+      sm: "170px minmax(0, 1fr)",
+      xl: "170px minmax(0, 1fr) minmax(0, 1fr)",
+    },
+    gap: 1.25,
+  },
+};
+
+const itemRemarkFieldSx = {
+  gridColumn: { xs: "1 / -1", xl: "auto" },
+};
 
 function RegularItemCard({
   item,
@@ -98,8 +124,7 @@ function RegularItemCard({
       onDrop={() => onDrop(index)}
       sx={{
         ...accordionCardSx,
-        height: "100%",
-        ...(dragging ? { border: 2, borderColor: "primary.main" } : {}),
+        ...(dragging ? draggingCardSx : {}),
       }}
     >
       <AccordionSummary
@@ -155,7 +180,7 @@ function RegularItemCard({
       <AccordionDetails sx={{ pt: 0, px: { xs: 1.5, md: 2 }, pb: { xs: 1.5, md: 2 } }}>
         <Divider sx={{ mb: 1.5 }} />
         <Stack spacing={1.5}>
-          <Box sx={{ display: "grid", gridTemplateColumns: { xs: "1fr", sm: mode === "no_invoice" ? "170px minmax(0, 1fr) 160px" : "170px minmax(0, 1fr)" }, gap: 1.25 }}>
+          <Box sx={mode === "no_invoice" ? itemFieldGridSx.no_invoice : itemFieldGridSx.invoice}>
             <TextField
               size="small"
               label="发生日期"
@@ -187,15 +212,16 @@ function RegularItemCard({
                 InputProps={{ startAdornment: <InputAdornment position="start">¥</InputAdornment>, inputProps: { min: 0, step: "0.01" } }}
               />
             )}
+            <TextField
+              size="small"
+              sx={itemRemarkFieldSx}
+              label="备注（可选）"
+              disabled={readonly}
+              value={item.remark}
+              onChange={(event) => onUpdate(index, "remark", event.target.value)}
+              inputProps={{ maxLength: 200 }}
+            />
           </Box>
-          <TextField
-            size="small"
-            label="备注（可选）"
-            disabled={readonly}
-            value={item.remark}
-            onChange={(event) => onUpdate(index, "remark", event.target.value)}
-            inputProps={{ maxLength: 200 }}
-          />
 
           <Box>
             <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "flex-start", sm: "center" }} spacing={0.25} sx={{ mb: 0.75 }}>
@@ -385,7 +411,7 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                   </Button>
                 }
               />
-              <Box sx={repeatedCardGridSx}>
+              <Stack spacing={SECTION_GAP}>
                 {items.map((item, index) => (
                   <RegularItemCard
                     key={item.clientKey || item.id}
@@ -413,10 +439,8 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                   />
                 ))}
                 {!readonly && <AddRegularItemPlaceholder onClick={onAdd} />}
-                {items.length === 0 && readonly && (
-                  <Alert severity="info" sx={{ gridColumn: "1 / -1" }}>暂无报销项目。</Alert>
-                )}
-              </Box>
+                {items.length === 0 && readonly && <Alert severity="info">暂无报销项目。</Alert>}
+              </Stack>
             </Stack>
           </Stack>
         </Box>

@@ -32,16 +32,15 @@ export const summarySidebarSx = {
   top: { xl: 80 },
 };
 
-// 行程卡、报销项目卡等成组卡片的两列网格。
-export const repeatedCardGridSx = {
-  display: "grid",
-  gridTemplateColumns: { xs: "1fr", md: "repeat(2, minmax(0, 1fr))" },
-  gap: SECTION_GAP,
-  alignItems: "stretch",
-};
-
 export const sectionAnchorSx = {
   scrollMarginTop: { xs: 24, lg: 80 },
+};
+
+// 拖拽激活态：用 outline 而不是 border——border 会占掉 2px 内容宽度，
+// 让卡内一行排布的字段被挤到下一行，拖动时整卡跳动。
+export const draggingCardSx = {
+  outline: (theme) => `2px solid ${theme.palette.primary.main}`,
+  outlineOffset: "-2px",
 };
 
 // 折叠卡（Accordion）统一为描边、8px 圆角、无阴影。
@@ -83,9 +82,9 @@ export const cardSubSectionDividerSx = {
   borderColor: "rgba(148, 163, 184, 0.28)",
 };
 
-// 网格尾部的虚线“添加”占位卡。
+// 列表尾部的虚线“添加”占位卡（单列时占满整行，不需要网格时代的高度）。
 export const dashedAddCardSx = {
-  minHeight: { xs: 96, md: 132 },
+  minHeight: 72,
   borderStyle: "dashed",
   borderColor: "divider",
   bgcolor: "#F8FAFC",

@@ -59,9 +59,9 @@ import {
   SECTION_GAP,
   accordionCardSx,
   cardSubSectionDividerSx,
+  draggingCardSx,
   editMainLayoutSx,
   pageContentSx,
-  repeatedCardGridSx,
   sectionAnchorSx,
   sectionCardContentSx,
   subtlePanelSx,
@@ -111,11 +111,12 @@ const tripCardActionsSx = {
 };
 
 // 出发/到达各压成一行：段标签 + 日历日期 + 手填「时」+ 地点。
+// 日期列下限要容得下 "2026/07/25" 加日历图标，否则原生 date 输入会直接截断末位。
 const tripFieldGridSx = {
   display: "grid",
   gridTemplateColumns: {
     xs: "auto minmax(0, 1fr) calc(3ch + 34px)",
-    sm: "auto minmax(132px, 0.9fr) calc(3ch + 34px) minmax(0, 1.1fr)",
+    sm: "auto minmax(158px, 0.9fr) calc(3ch + 34px) minmax(0, 1.1fr)",
   },
   gap: { xs: 1, md: 1.25 },
   alignItems: "center",
@@ -191,10 +192,21 @@ const subsidyModeSwitchSx = {
   },
 };
 
+// 单列后主列约 1050-1330px：xl 把出发、到达、交通工具排成一行，lg 及以下回退两行。
 const tripSegmentGridSx = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 360px), 1fr))",
+  gridTemplateColumns: {
+    xs: "1fr",
+    md: "repeat(2, minmax(0, 1fr))",
+    xl: "minmax(0, 1fr) minmax(0, 1fr) minmax(150px, 180px)",
+  },
   gap: FIELD_GAP,
+  alignItems: "start",
+};
+
+const tripTransportFieldSx = {
+  gridColumn: { xs: "1 / -1", xl: "auto" },
+  alignSelf: "center",
 };
 
 const tripSegmentPanelSx = {
@@ -588,7 +600,7 @@ export default function ReportEditView({
               {trips.length === 0 ? (
                 <Alert severity="info">暂无行程。可以批量导入铁路电子客票自动生成，也可以手动添加第一段行程。</Alert>
               ) : (
-                <Box sx={repeatedCardGridSx}>
+                <Stack spacing={SECTION_GAP}>
                   {trips.map((trip, index) => {
                     const tripInvoices = trip.id ? invoicesForTrip(trip.id) : [];
                     const uploadKey = `trip-${index}`;
@@ -623,15 +635,15 @@ export default function ReportEditView({
                     }${markerSuffix} · ${trip.transport || "交通工具"}${invoiceAmountText}`;
 
                     return (
-                      <Box key={trip.id || `new-${index}`} sx={{ minWidth: 0 }}>
-                        <Card
-                          onDragOver={(event) => event.preventDefault()}
-                          onDrop={() => dropTrip(index)}
-                          sx={{
-                            ...workCardSx,
-                            ...(dragIndex === index ? { border: 2, borderColor: "primary.main" } : {}),
-                          }}
-                        >
+                      <Card
+                        key={trip.id || `new-${index}`}
+                        onDragOver={(event) => event.preventDefault()}
+                        onDrop={() => dropTrip(index)}
+                        sx={{
+                          ...workCardSx,
+                          ...(dragIndex === index ? draggingCardSx : {}),
+                        }}
+                      >
                       <CardContent sx={sectionCardContentSx}>
                         <Stack spacing={2}>
                           <Stack
@@ -810,7 +822,7 @@ export default function ReportEditView({
                                 />
                               </Box>
                             </Box>
-                            <Box sx={{ gridColumn: "1 / -1" }}>
+                            <Box sx={tripTransportFieldSx}>
                               <Autocomplete
                                 freeSolo
                                 clearOnBlur={false}
@@ -876,11 +888,10 @@ export default function ReportEditView({
                               </Stack>
                         </Stack>
                       </CardContent>
-                        </Card>
-                      </Box>
+                      </Card>
                     );
                   })}
-                </Box>
+                </Stack>
               )}
             </Stack>
 
