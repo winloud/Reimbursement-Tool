@@ -61,6 +61,7 @@ import {
   cardSubSectionDividerSx,
   draggingCardSx,
   editMainLayoutSx,
+  listCardContentSx,
   pageContentSx,
   sectionAnchorSx,
   sectionCardContentSx,
@@ -940,7 +941,7 @@ export default function ReportEditView({
                 }
               />
               <Card sx={workCardSx}>
-                <CardContent sx={sectionCardContentSx}>
+                <CardContent sx={visibleExpenseCategories.length === 0 ? sectionCardContentSx : listCardContentSx}>
                   {visibleExpenseCategories.length === 0 ? (
                     <Typography variant="body2" color="text.secondary">
                       {readonly ? "暂无其他费用。" : "暂无其他费用。点击「添加费用」选择费用类别。"}

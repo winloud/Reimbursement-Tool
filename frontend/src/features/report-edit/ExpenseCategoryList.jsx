@@ -84,9 +84,10 @@ const rowAccordionSx = {
 };
 
 const rowSummarySx = {
-  minHeight: 52,
+  minHeight: 40,
   px: 0,
-  "& .MuiAccordionSummary-content": { my: 1, minWidth: 0 },
+  "& .MuiAccordionSummary-content": { my: 0.5, minWidth: 0 },
+  "& .MuiAccordionSummary-expandIconWrapper": { color: "action.active" },
 };
 
 function Metric({ label, value, muted }) {
@@ -162,7 +163,7 @@ export default function ExpenseCategoryList({
               <Stack direction="row" alignItems="center" spacing={1} sx={{ width: "100%", minWidth: 0 }}>
                 <Box sx={categoryRowGridSx}>
                   <Box sx={categoryNameCellSx}>
-                    <Typography fontWeight={800} noWrap>
+                    <Typography variant="body2" fontWeight={800} noWrap>
                       {category.label}
                     </Typography>
                   </Box>
@@ -190,7 +191,7 @@ export default function ExpenseCategoryList({
                 )}
               </Stack>
             </AccordionSummary>
-            <AccordionDetails sx={{ px: 0, pt: 0.5, pb: 2 }}>
+            <AccordionDetails sx={{ px: 0, pt: 0.25, pb: 1.5 }}>
               <Stack spacing={1.5}>
                 {isFuelSubsidy && (
                   <TextField

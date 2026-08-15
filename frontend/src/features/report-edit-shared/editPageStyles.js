@@ -5,6 +5,9 @@ export const FIELD_GAP = { xs: 1.5, md: 2 };
 export const pageContentSx = {
   width: "100%",
   pb: 4,
+  // 关掉滚动锚定：折叠一行会让页面变矮，浏览器补偿滚动位置后，被折叠行以上的内容
+  // 看起来是往下滑的，同一个列表里折叠不同行方向还不一样。禁用后统一为向上收拢。
+  overflowAnchor: "none",
 };
 
 export const workCardSx = {
@@ -15,6 +18,15 @@ export const sectionCardContentSx = {
   p: { xs: 2, md: 2.5 },
   "&:last-child": {
     pb: { xs: 2, md: 2.5 },
+  },
+};
+
+// 行列表型卡片（如其他费用）：留白由每行自己承担，卡片只保留很小的上下内边距。
+export const listCardContentSx = {
+  px: { xs: 2, md: 2.5 },
+  py: { xs: 0.75, md: 1 },
+  "&:last-child": {
+    pb: { xs: 0.75, md: 1 },
   },
 };
 
