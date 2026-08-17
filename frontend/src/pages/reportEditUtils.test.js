@@ -22,6 +22,8 @@ import {
   getFuelSubsidyInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
+  getSubsidySpans,
+  getTripGapWarnings,
   getTripPdfGate,
   getVisibleExpenseCategories,
   hasExpenseItemData,
@@ -127,6 +129,22 @@ describe("report edit utilities", () => {
       directActions: ["start", "end", "return"],
       overflowActions: ["duplicate", "swap", "delete"],
     });
+
+    const timelineSource = readFileSync(
+      new URL("../features/report-edit/TripTimeline.jsx", import.meta.url),
+      "utf8",
+    );
+    const dividerMarkup = '<Divider orientation="vertical" flexItem sx={{ mx: 1 }} />';
+    const leadingDividerIndex = timelineSource.indexOf(dividerMarkup);
+    const startMarkerIndex = timelineSource.indexOf('toggleTripMarker(index, "subsidy_start")');
+    const endMarkerIndex = timelineSource.indexOf('toggleTripMarker(index, "subsidy_end")');
+    const trailingDividerIndex = timelineSource.indexOf(dividerMarkup, leadingDividerIndex + 1);
+
+    assert.match(timelineSource, /useFlexGap/);
+    assert.equal((timelineSource.match(/<Divider orientation="vertical" flexItem sx=\{\{ mx: 1 \}\} \/>/g) || []).length, 2);
+    assert.ok(leadingDividerIndex < startMarkerIndex);
+    assert.ok(startMarkerIndex < endMarkerIndex);
+    assert.ok(endMarkerIndex < trailingDividerIndex);
   });
 
   it("blocks both PDF actions while invoices are unconfirmed", () => {
@@ -137,6 +155,22 @@ describe("report edit utilities", () => {
     assert.equal(gate.unconfirmedCount, 3);
     assert.equal(gate.dialogTitle, "存在未确认发票");
     assert.match(gate.message, /3 张发票待确认/);
+  });
+
+  it("blocks both PDF actions when trip start and end markers are unmatched", () => {
+    const gate = getTripPdfGate({ hasTripMarkerIssue: true, confirmedInvoiceCount: 2 });
+
+    assert.equal(gate.severity, "warning");
+    assert.equal(gate.previewBlocked, true);
+    assert.equal(gate.downloadBlocked, true);
+    // 行程数据问题需要弹窗解释，默认状态下按钮仍可点击；状态门槛仍由 disabled 字段独立控制。
+    assert.equal(gate.previewDisabled, false);
+    assert.equal(gate.downloadDisabled, false);
+    assert.equal(gate.previewBlockedLabel, "补齐起止后预览");
+    assert.equal(gate.downloadBlockedLabel, "补齐起止后下载");
+    assert.equal(gate.hasTripMarkerIssue, true);
+    assert.equal(gate.dialogTitle, "行程起止未成对");
+    assert.match(gate.message, /“起”“止”没有成对/);
   });
 
   it("blocks only download when the fuel subsidy invoice total falls short, and keeps it clickable", () => {
@@ -318,11 +352,12 @@ describe("report edit utilities", () => {
     const handler = source.slice(handlerStart, handlerEnd);
 
     assert.equal((viewSource.match(/<ReportAttachmentSection/g) || []).length, 1);
-    assert.ok(viewSource.indexOf('<Stack id="expense-section"') < viewSource.indexOf("<ReportAttachmentSection"));
+    assert.ok(viewSource.indexOf('id="expense-section"') < viewSource.indexOf("<ReportAttachmentSection"));
     assert.ok(handler.indexOf("ensureSavedBeforeAction({ allowEmptyCreate: true })") < handler.indexOf("uploadReportAttachment"));
-    assert.match(viewSource, /<Stack id="basic-info-section"[^>]*>[\s\S]*?基本信息[\s\S]*?<Card sx=\{workCardSx\}>/);
+    assert.match(viewSource, /<BlockCard[\s\S]*?id="basic-info-section"[\s\S]*?title="基本信息"[\s\S]*?basicInfoSummary/);
     assert.doesNotMatch(viewSource, /<Card id="basic-info-section"/);
-    assert.match(attachmentSource, /<Stack\s+id="report-attachment-section"[\s\S]*?非发票附件[\s\S]*?<Card sx=\{workCardSx\}>/);
+    assert.doesNotMatch(viewSource, /editSectionNavSx|EDIT_SECTIONS|onClick=\{\(\) => scrollToSection/);
+    assert.match(attachmentSource, /<BlockCard[\s\S]*?id="report-attachment-section"[\s\S]*?非发票附件/);
     assert.match(attachmentSource, /不计入发票数量，导出时排在全部发票之后/);
     assert.match(attachmentSource, /暂无非发票附件/);
     // 附件与发票共用同一列表外壳，上传入口始终排在已上传文件之后。
@@ -772,6 +807,10 @@ describe("report edit utilities", () => {
     const visibleItems = expenseItems.filter((item) => getExpenseItemAmount(item) > 0);
     const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
     const viewSource = readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8");
+    const expenseSource = readFileSync(
+      new URL("../features/report-edit/ExpenseCategoryList.jsx", import.meta.url),
+      "utf8",
+    );
     const paperInvoiceSource = readFileSync(
       new URL("../features/report-edit/PaperInvoiceEntry.jsx", import.meta.url),
       "utf8",
@@ -782,8 +821,37 @@ describe("report edit utilities", () => {
     assert.match(source, /visibleOtherExpenseItems,/);
     assert.match(viewSource, /summaryPanel/);
     assert.match(viewSource, /visibleOtherExpenseItems\.map/);
-    assert.match(viewSource, /<PaperInvoiceEntry/);
+    assert.match(viewSource, /<ExpenseCategoryList/);
+    assert.match(expenseSource, /<PaperInvoiceEntry/);
     assert.match(paperInvoiceSource, /添加纸质发票/);
+
+    const expenseSummaryStart = expenseSource.indexOf("const summary =");
+    const expenseSummaryEnd = expenseSource.indexOf("const actions =", expenseSummaryStart);
+    const expenseSummarySource = expenseSource.slice(expenseSummaryStart, expenseSummaryEnd);
+    assert.match(expenseSummarySource, /<Metric label="报销"/);
+    assert.match(expenseSummarySource, /invoiceCount/);
+    assert.doesNotMatch(expenseSummarySource, /<Metric label="发票"/);
+  });
+
+  it("collapses loaded trip and expense rows while expanding newly added rows", () => {
+    const timelineSource = readFileSync(
+      new URL("../features/report-edit/TripTimeline.jsx", import.meta.url),
+      "utf8",
+    );
+    const expenseSource = readFileSync(
+      new URL("../features/report-edit/ExpenseCategoryList.jsx", import.meta.url),
+      "utf8",
+    );
+
+    assert.match(timelineSource, /const \[expandedKeys, setExpandedKeys\] = useState\(\(\) => new Set\(\)\)/);
+    assert.match(timelineSource, /const addedKeys = keys\.filter\(\(key\) => !knownKeysRef\.current\.has\(key\)\)/);
+    assert.match(timelineSource, /addedKeys\.forEach\(\(key\) => next\.add\(key\)\)/);
+    assert.match(expenseSource, /const \[expandedCategories, setExpandedCategories\] = useState\(\(\) => new Set\(\)\)/);
+    assert.match(expenseSource, /if \(!ready\)[\s\S]*?initializedRef\.current = false/);
+    assert.match(expenseSource, /if \(!initializedRef\.current\)[\s\S]*?knownCategoriesRef\.current = current/);
+    assert.match(expenseSource, /if \(!knownCategoriesRef\.current\.has\(category\.value\)\)/);
+    assert.match(expenseSource, /next\.add\(category\.value\)/);
+    assert.match(readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8"), /ready:\s*!loading/);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {
@@ -835,6 +903,80 @@ describe("report edit utilities", () => {
     ];
 
     assert.equal(calculateSubsidyDays("2026-03-01", trips), 5);
+  });
+
+  it("builds subsidy spans with the same merged day total for multiple trips", () => {
+    const trips = [
+      normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-03", subsidy_end: true }, 0),
+      normalizeTrip({ depart_date: "2026-06-03", arrive_date: "2026-06-05", subsidy_start: true }, 1),
+    ];
+
+    const spans = getSubsidySpans("2026-06-01", trips);
+
+    assert.deepEqual(spans, [
+      { startIndex: 0, endIndex: 0, days: 3 },
+      { startIndex: 1, endIndex: 1, days: 2 },
+    ]);
+    assert.equal(
+      spans.reduce((sum, span) => sum + span.days, 0),
+      calculateSubsidyDays("2026-06-01", trips),
+    );
+  });
+
+  it("builds a cross-year subsidy span with the same day total", () => {
+    const trips = [normalizeTrip({ depart_date: "2025-12-30", arrive_date: "2026-01-02" }, 0)];
+
+    const spans = getSubsidySpans("2026-01-06", trips);
+
+    assert.deepEqual(spans, [{ startIndex: 0, endIndex: 0, days: 4 }]);
+    assert.equal(
+      spans.reduce((sum, span) => sum + span.days, 0),
+      calculateSubsidyDays("2026-01-06", trips),
+    );
+  });
+
+  it("points to unmatched subsidy markers and zeros every span day", () => {
+    const duplicateStartTrips = [
+      normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-01" }, 0),
+      normalizeTrip({ depart_date: "2026-06-02", arrive_date: "2026-06-02", subsidy_start: true }, 1),
+      normalizeTrip({ depart_date: "2026-06-03", arrive_date: "2026-06-03" }, 2),
+    ];
+    const unmatchedEndTrips = [
+      normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-01", subsidy_end: true }, 0),
+      normalizeTrip({ depart_date: "2026-06-02", arrive_date: "2026-06-02", subsidy_end: true }, 1),
+    ];
+
+    const duplicateStartSpans = getSubsidySpans("2026-06-01", duplicateStartTrips);
+    const unmatchedEndSpans = getSubsidySpans("2026-06-01", unmatchedEndTrips);
+
+    assert.deepEqual(duplicateStartSpans, [
+      { startIndex: 0, endIndex: 2, days: 0 },
+      { startIndex: 1, endIndex: null, days: 0, issue: "start" },
+    ]);
+    assert.deepEqual(unmatchedEndSpans, [
+      { startIndex: 0, endIndex: 0, days: 0 },
+      { startIndex: null, endIndex: 1, days: 0, issue: "end" },
+    ]);
+    for (const [trips, spans] of [
+      [duplicateStartTrips, duplicateStartSpans],
+      [unmatchedEndTrips, unmatchedEndSpans],
+    ]) {
+      assert.equal(spans.reduce((sum, span) => sum + span.days, 0), calculateSubsidyDays("2026-06-01", trips));
+      assert.equal(calculateSubsidyDays("2026-06-01", trips), 0);
+    }
+  });
+
+  it("warns about place gaps only within the same subsidy span", () => {
+    const trips = [
+      normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-01", depart_place: "公司", arrive_place: "机场", subsidy_end: true }, 0),
+      normalizeTrip({ depart_date: "2026-06-08", arrive_date: "2026-06-08", depart_place: "酒店", arrive_place: "车站", subsidy_start: true }, 1),
+      normalizeTrip({ depart_date: "2026-06-09", arrive_date: "2026-06-09", depart_place: "机场", arrive_place: "公司" }, 2),
+    ];
+    const spans = getSubsidySpans("2026-06-01", trips);
+
+    assert.deepEqual(getTripGapWarnings(trips, spans), [
+      { index: 2, previousIndex: 1, previousPlace: "车站", currentPlace: "机场" },
+    ]);
   });
 
   it("allows a short cross-year trip and rejects invalid trip spans", () => {

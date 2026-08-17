@@ -1,9 +1,5 @@
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Alert,
-  Autocomplete,
   Box,
   Button,
   Card,
@@ -30,135 +26,41 @@ import {
 } from "@mui/material";
 import AddIcon from "@mui/icons-material/Add";
 import ArrowDropDownIcon from "@mui/icons-material/ArrowDropDown";
-import ContentCopyIcon from "@mui/icons-material/ContentCopy";
-import DeleteIcon from "@mui/icons-material/Delete";
 import EditIcon from "@mui/icons-material/Edit";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
-import KeyboardReturnIcon from "@mui/icons-material/KeyboardReturn";
-import MoreVertIcon from "@mui/icons-material/MoreVert";
-import SwapHorizIcon from "@mui/icons-material/SwapHoriz";
 import { useState } from "react";
 import InvoiceUploadResultDialog from "../components/InvoiceUploadResultDialog";
 import InvoiceViewer from "../components/InvoiceViewer";
 import TicketImportDialog from "../components/TicketImportDialog";
-import PaperInvoiceEntry from "../features/report-edit/PaperInvoiceEntry";
-import ExpenseCategoryList from "../features/report-edit/ExpenseCategoryList";
+import ExpenseCategoryList, { useExpenseCategoryExpansion } from "../features/report-edit/ExpenseCategoryList";
 import ReportAttachmentSection from "../features/report-edit/ReportAttachmentSection";
-import CardOrderControls, { DragHandle } from "../features/report-edit-shared/CardOrderControls";
+import TripTimeline from "../features/report-edit/TripTimeline";
+import BlockCard from "../features/report-edit-shared/BlockCard";
+import CollapsibleRow from "../features/report-edit-shared/CollapsibleRow";
 import EditPageHeader from "../features/report-edit-shared/EditPageHeader";
 import EditPageLoading from "../features/report-edit-shared/EditPageLoading";
 import EditPageNotices from "../features/report-edit-shared/EditPageNotices";
-import FileDropSlot from "../features/report-edit-shared/FileDropSlot";
-import InvoiceCardList from "../features/report-edit-shared/InvoiceCardList";
 import PdfActionButtons from "../features/report-edit-shared/PdfActionButtons";
 import PdfBlockedDialog from "../features/report-edit-shared/PdfBlockedDialog";
 import PdfPreviewDialog from "../features/report-edit-shared/PdfPreviewDialog";
-import SectionHeader from "../features/report-edit-shared/SectionHeader";
 import {
   FIELD_GAP,
   SECTION_GAP,
-  accordionCardSx,
-  cardSubSectionDividerSx,
-  draggingCardSx,
   editMainLayoutSx,
-  listCardContentSx,
   pageContentSx,
   sectionAnchorSx,
   sectionCardContentSx,
-  subtlePanelSx,
   summarySidebarSx,
   workCardSx,
 } from "../features/report-edit-shared/editPageStyles";
 import {
-  TRIP_CARD_ACTION_POLICY,
   formatAmount,
-  getConfirmedInvoiceCount,
-  getConfirmedInvoiceTotal,
-  getPaperInvoiceCount,
-  hasPaperInvoice,
 } from "./reportEditUtils";
-
-const TRIP_OVERFLOW_ACTION_META = {
-  duplicate: { label: "复制行程", Icon: ContentCopyIcon },
-  swap: { label: "交换出发/到达", Icon: SwapHorizIcon },
-  delete: { label: "删除行程", Icon: DeleteIcon, destructive: true },
-};
-
-const TRANSPORT_OPTIONS = ["飞机", "高铁/动车", "网约车", "自驾"];
-
-const tripCardTitleSx = {
-  minWidth: 0,
-};
-
-const tripCardMetaRowSx = {
-  minWidth: 0,
-  flexWrap: "nowrap",
-  mt: 0.25,
-};
-
-const tripCardInvoiceChipSx = {
-  flex: "0 0 auto",
-};
-
-const tripCardSummarySx = {
-  minWidth: 0,
-  flex: "1 1 auto",
-};
-
-const tripCardActionsSx = {
-  flex: "0 0 auto",
-  flexWrap: "nowrap",
-  alignSelf: { xs: "flex-end", sm: "auto" },
-};
-
-// 出发/到达各压成一行：段标签 + 日历日期 + 手填「时」+ 地点。
-// 日期列下限要容得下 "2026/07/25" 加日历图标，否则原生 date 输入会直接截断末位。
-const tripFieldGridSx = {
-  display: "grid",
-  gridTemplateColumns: {
-    xs: "auto minmax(0, 1fr) calc(3ch + 34px)",
-    sm: "auto minmax(158px, 0.9fr) calc(3ch + 34px) minmax(0, 1.1fr)",
-  },
-  gap: { xs: 1, md: 1.25 },
-  alignItems: "center",
-};
-
-const tripSegmentLabelSx = {
-  whiteSpace: "nowrap",
-  color: "text.secondary",
-};
-
-const tripDateFieldSx = {
-  width: "100%",
-  minWidth: 0,
-};
-
-const tripNumberFieldSx = {
-  width: "100%",
-  minWidth: 0,
-};
-
-const tripPlaceFieldSx = {
-  gridColumn: { xs: "1 / -1", sm: "auto" },
-  width: "100%",
-  minWidth: 0,
-};
 
 const basicInfoGridSx = {
   display: "grid",
   gridTemplateColumns: { xs: "1fr", sm: "repeat(12, minmax(0, 1fr))" },
   gap: FIELD_GAP,
   alignItems: "start",
-};
-
-const editSectionNavSx = {
-  position: { lg: "sticky" },
-  top: { lg: 12 },
-  zIndex: 2,
-  border: 1,
-  borderColor: "divider",
-  bgcolor: "rgba(255, 255, 255, 0.92)",
-  backdropFilter: "blur(10px)",
 };
 
 const subsidyModeSwitchSx = {
@@ -193,37 +95,6 @@ const subsidyModeSwitchSx = {
   },
 };
 
-// 单列后主列约 1050-1330px：xl 把出发、到达、交通工具排成一行，lg 及以下回退两行。
-const tripSegmentGridSx = {
-  display: "grid",
-  gridTemplateColumns: {
-    xs: "1fr",
-    md: "repeat(2, minmax(0, 1fr))",
-    xl: "minmax(0, 1fr) minmax(0, 1fr) minmax(150px, 180px)",
-  },
-  gap: FIELD_GAP,
-  alignItems: "start",
-};
-
-const tripTransportFieldSx = {
-  gridColumn: { xs: "1 / -1", xl: "auto" },
-  alignSelf: "center",
-};
-
-const tripSegmentPanelSx = {
-  ...subtlePanelSx,
-  p: { xs: 1, md: 1.25 },
-};
-
-const EDIT_SECTIONS = [
-  { id: "basic-info-section", label: "基本信息" },
-  { id: "trip-list-section", label: "行程" },
-  { id: "expense-section", label: "其他费用" },
-  { id: "summary-section", label: "汇总", hideOnXl: true },
-];
-
-const tripTime = (month, day, hour) => `${month}/${day}${hour === "" || hour === null ? "" : ` ${hour}时`}`;
-
 export default function ReportEditView({
   page,
   basicInfo,
@@ -249,7 +120,6 @@ export default function ReportEditView({
     requestNavigation,
     saveReport,
     handleStatusAction,
-    scrollToSection,
   } = page;
   const { form, handleChange } = basicInfo;
   const {
@@ -259,6 +129,7 @@ export default function ReportEditView({
     dragIndex,
     invoicesForTrip,
     addTrip,
+    insertTripAt,
     updateTrip,
     toggleTripMarker,
     duplicateTrip,
@@ -296,6 +167,7 @@ export default function ReportEditView({
   } = reportAttachments;
   const {
     summary,
+    hasTripMarkerIssue,
     pdfGate,
     hasManualSubsidy,
     subsidyModeToggleTooltip,
@@ -350,17 +222,6 @@ export default function ReportEditView({
     clearToast,
   } = overlays;
 
-  const [tripActionMenu, setTripActionMenu] = useState({ anchorEl: null, index: null });
-  const closeTripActionMenu = () => setTripActionMenu({ anchorEl: null, index: null });
-  const handleTripOverflowAction = (actionId) => {
-    const tripIndex = tripActionMenu.index;
-    closeTripActionMenu();
-    if (tripIndex === null) return;
-    if (actionId === "duplicate") duplicateTrip(tripIndex);
-    if (actionId === "swap") swapTrip(tripIndex);
-    if (actionId === "delete") removeTrip(tripIndex);
-  };
-
   const [expenseMenuAnchor, setExpenseMenuAnchor] = useState(null);
   const closeExpenseMenu = () => setExpenseMenuAnchor(null);
   const handleAddExpenseCategory = (category) => {
@@ -371,19 +232,23 @@ export default function ReportEditView({
     closeExpenseMenu();
     openCustomDialog();
   };
+  const {
+    expandedCategories: expandedExpenseCategories,
+    setExpandedCategories: setExpandedExpenseCategories,
+    allExpanded: allExpenseCategoriesExpanded,
+    toggleAll: toggleAllExpenseCategories,
+  } = useExpenseCategoryExpansion({
+    categories: visibleExpenseCategories,
+    expenseItems,
+    invoicesForCategory,
+    pinnedCategories: pinnedExpenseCategories,
+    ready: !loading,
+  });
 
-  const renderInvoiceList = (items, uploadSlot) => (
-    <InvoiceCardList
-      invoices={items}
-      readonly={readonly}
-      uploadSlot={uploadSlot}
-      onSelect={onSelectInvoice}
-      onDelete={handleDeleteInvoice}
-    />
-  );
   const hasAdvanceInfo = Boolean(
     form.advance_date_month || form.advance_date_day || Number(form.advance_amount || 0),
   );
+  const basicInfoSummary = `${form.employee_name || "出差人待填写"} · ${form.department || "部门待填写"} · ${form.report_date || "报销日期待填写"}`;
   const advanceSummary = hasAdvanceInfo
     ? `${form.advance_date_month || "-"} 月 ${form.advance_date_day || "-"} 日 · ${formatAmount(form.advance_amount)}`
     : "无预支";
@@ -419,31 +284,16 @@ export default function ReportEditView({
         uploadState={uploadState}
       />
 
-      <Card sx={editSectionNavSx}>
-        <CardContent sx={{ py: 1.25, "&:last-child": { pb: 1.25 } }}>
-          <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
-            {EDIT_SECTIONS.map((section) => (
-              <Button
-                key={section.id}
-                size="small"
-                variant="text"
-                onClick={() => scrollToSection(section.id)}
-                sx={section.hideOnXl ? { display: { xs: "inline-flex", xl: "none" } } : undefined}
-              >
-                {section.label}
-              </Button>
-            ))}
-          </Stack>
-        </CardContent>
-      </Card>
-
       <Box sx={editMainLayoutSx}>
         <Box sx={{ minWidth: 0 }}>
           <Stack spacing={SECTION_GAP}>
-            <Stack id="basic-info-section" spacing={1.5} sx={sectionAnchorSx}>
-              <SectionHeader title="基本信息" />
-              <Card sx={workCardSx}>
-                <CardContent sx={sectionCardContentSx}>
+            <BlockCard
+              id="basic-info-section"
+              title="基本信息"
+              summary={<Typography variant="body2" color="text.secondary" noWrap>{basicInfoSummary}</Typography>}
+              sx={sectionAnchorSx}
+              bodySx={{ p: { xs: 2, md: 2.5 } }}
+            >
                   <Box sx={basicInfoGridSx}>
                         <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>
                           <TextField
@@ -502,25 +352,12 @@ export default function ReportEditView({
                             minRows={2}
                           />
                         </Box>
-                        <Accordion
+                        <CollapsibleRow
+                          id="advance-payment"
+                          sx={{ gridColumn: { xs: "1 / -1", sm: "span 12" } }}
                           defaultExpanded={hasAdvanceInfo}
-                          disableGutters
-                          elevation={0}
-                          sx={{
-                            ...accordionCardSx,
-                            gridColumn: { xs: "1 / -1", sm: "span 12" },
-                          }}
-                        >
-                          <AccordionSummary
-                            expandIcon={<ExpandMoreIcon />}
-                            aria-controls="advance-payment-content"
-                            id="advance-payment-header"
-                            sx={{
-                              minHeight: 48,
-                              px: 1.5,
-                              "& .MuiAccordionSummary-content": { my: 1 },
-                            }}
-                          >
+                          toggleLabel="预支信息明细"
+                          summary={
                             <Stack
                               direction={{ xs: "column", sm: "row" }}
                               spacing={{ xs: 0.25, sm: 1 }}
@@ -531,8 +368,9 @@ export default function ReportEditView({
                                 {advanceSummary}
                               </Typography>
                             </Stack>
-                          </AccordionSummary>
-                          <AccordionDetails id="advance-payment-content" sx={{ px: 1.5, pt: 0.5, pb: 1.5 }}>
+                          }
+                          drawerSx={{ px: 1.5, pt: 0.5, pb: 1.5 }}
+                        >
                             <Box sx={{ ...basicInfoGridSx, gap: { xs: 1.25, sm: 1.5 } }}>
                               <Box sx={{ gridColumn: { sm: "span 4" } }}>
                                 <TextField
@@ -574,358 +412,63 @@ export default function ReportEditView({
                                 />
                               </Box>
                             </Box>
-                          </AccordionDetails>
-                        </Accordion>
+                        </CollapsibleRow>
                   </Box>
-                </CardContent>
-              </Card>
-            </Stack>
+            </BlockCard>
 
-            <Stack id="trip-list-section" spacing={1.5} sx={sectionAnchorSx}>
-              <SectionHeader
-                title="行程列表"
-                chip={tripYearRangeLabel && <Chip size="small" color="info" variant="outlined" label={tripYearRangeLabel} />}
-                description="复制、返程和排序都会自动保存。"
-                actions={
-                  <>
-                    <Button variant="contained" onClick={handleOpenTicketImport} disabled={readonly || saveState === "saving"}>
-                      从车票导入
+            <TripTimeline
+              reportDate={form.report_date}
+              dailySubsidy={form.daily_subsidy}
+              readonly={readonly}
+              saveState={saveState}
+              uploadState={uploadState}
+              tripEditor={{
+                tripYearRangeLabel,
+                handleOpenTicketImport,
+                trips,
+                dragIndex,
+                invoicesForTrip,
+                addTrip,
+                insertTripAt,
+                updateTrip,
+                toggleTripMarker,
+                duplicateTrip,
+                swapTrip,
+                returnTrip,
+                removeTrip,
+                startTripDrag,
+                dropTrip,
+                endTripDrag,
+                moveTripByIndex,
+              }}
+              invoiceFlow={{
+                handleFilesUpload,
+                onUploadError,
+                onSelectInvoice,
+                onDeleteInvoice: handleDeleteInvoice,
+              }}
+              paperInvoice={{
+                paperInvoiceEditor,
+                openPaperInvoiceEditor,
+                updatePaperInvoiceEditor,
+                savePaperInvoiceEditor,
+                closePaperInvoiceEditor,
+                requestPaperInvoiceClear,
+              }}
+            />
+
+            <BlockCard
+              id="expense-section"
+              title="其他费用"
+              sx={sectionAnchorSx}
+              summary={<Typography component="span" variant="body2" color="text.secondary">只显示已录入或有发票的费用类别。</Typography>}
+              actions={
+                <Stack direction="row" spacing={0.5} alignItems="center">
+                  {visibleExpenseCategories.length > 0 && (
+                    <Button size="small" variant="text" onClick={toggleAllExpenseCategories}>
+                      {allExpenseCategoriesExpanded ? "全部收起" : "全部展开"}
                     </Button>
-                    <Button startIcon={<AddIcon />} variant="outlined" onClick={addTrip} disabled={readonly}>
-                      手动添加
-                    </Button>
-                  </>
-                }
-              />
-
-              {trips.length === 0 ? (
-                <Alert severity="info">暂无行程。可以批量导入铁路电子客票自动生成，也可以手动添加第一段行程。</Alert>
-              ) : (
-                <Stack spacing={SECTION_GAP}>
-                  {trips.map((trip, index) => {
-                    const tripInvoices = trip.id ? invoicesForTrip(trip.id) : [];
-                    const uploadKey = `trip-${index}`;
-                    const paperInvoiceKey = `trip:${trip.id || index}`;
-                    const paperInvoiceCount = getPaperInvoiceCount(trip);
-                    const confirmedElectronicCount = getConfirmedInvoiceCount(tripInvoices);
-                    const confirmedAmount = getConfirmedInvoiceTotal(tripInvoices) + Number(trip.paper_invoice_amount || 0);
-                    const uploading = uploadState?.key === uploadKey;
-                    const uploadDisabled = readonly || !trip.id || saveState === "saving";
-                    const isFirstTrip = index === 0;
-                    const isLastTrip = index === trips.length - 1;
-                    const effectiveStart = isFirstTrip || trip.subsidy_start;
-                    const effectiveEnd = isLastTrip || trip.subsidy_end;
-                    const markerPrefix = effectiveStart ? "起 " : "";
-                    const markerSuffix = effectiveEnd ? " 止" : "";
-                    const unconfirmedTripInvoices = tripInvoices.filter((invoice) => !invoice.amount_confirmed).length;
-                    const tripInvoiceLabel =
-                      tripInvoices.length === 0 && paperInvoiceCount === 0
-                        ? "无发票"
-                        : unconfirmedTripInvoices > 0
-                          ? `${unconfirmedTripInvoices} 张待确认`
-                          : `${confirmedElectronicCount + paperInvoiceCount} 张已确认`;
-                    const tripInvoiceColor =
-                      tripInvoices.length === 0 && paperInvoiceCount === 0 ? "default" : unconfirmedTripInvoices > 0 ? "warning" : "success";
-                    const tripTitle = `${trip.depart_place || "出发地"} -> ${trip.arrive_place || "到达地"}`;
-                    const confirmedInvoiceCount = confirmedElectronicCount + paperInvoiceCount;
-                    const invoiceAmountText = confirmedInvoiceCount > 0 ? ` · 发票 ${formatAmount(confirmedAmount)}` : "";
-                    const summaryText = `${markerPrefix}${tripTime(trip.depart_month, trip.depart_day, trip.depart_hour)} ${
-                      trip.depart_place || "出发地"
-                    } -> ${tripTime(trip.arrive_month, trip.arrive_day, trip.arrive_hour)} ${
-                      trip.arrive_place || "到达地"
-                    }${markerSuffix} · ${trip.transport || "交通工具"}${invoiceAmountText}`;
-
-                    return (
-                      <Card
-                        key={trip.id || `new-${index}`}
-                        onDragOver={(event) => event.preventDefault()}
-                        onDrop={() => dropTrip(index)}
-                        sx={{
-                          ...workCardSx,
-                          ...(dragIndex === index ? draggingCardSx : {}),
-                        }}
-                      >
-                      <CardContent sx={sectionCardContentSx}>
-                        <Stack spacing={2}>
-                          <Stack
-                            direction={{ xs: "column", sm: "row" }}
-                            alignItems={{ xs: "stretch", sm: "flex-start" }}
-                            justifyContent="space-between"
-                            spacing={1}
-                          >
-                            <Stack direction="row" alignItems="center" spacing={1} sx={{ minWidth: 0, flex: "1 1 auto" }}>
-                              <DragHandle
-                                label={`拖动排序：${tripTitle}`}
-                                disabled={readonly}
-                                active={dragIndex === index}
-                                onDragStart={() => startTripDrag(index)}
-                                onDragEnd={endTripDrag}
-                              />
-                              <Box sx={{ minWidth: 0, flex: "1 1 auto" }}>
-                                <Tooltip title={tripTitle}>
-                                  <Typography fontWeight={900} noWrap sx={tripCardTitleSx}>
-                                    {tripTitle}
-                                  </Typography>
-                                </Tooltip>
-                                <Stack direction="row" alignItems="center" spacing={0.75} sx={tripCardMetaRowSx}>
-                                  <Chip
-                                    size="small"
-                                    color={tripInvoiceColor}
-                                    variant="outlined"
-                                    label={tripInvoiceLabel}
-                                    sx={tripCardInvoiceChipSx}
-                                  />
-                                  <Tooltip title={summaryText}>
-                                    <Typography variant="body2" color="text.secondary" noWrap sx={tripCardSummarySx}>
-                                      {summaryText}
-                                    </Typography>
-                                  </Tooltip>
-                                </Stack>
-                              </Box>
-                            </Stack>
-                            <Stack direction="row" spacing={0.5} alignItems="center" sx={tripCardActionsSx}>
-                              {TRIP_CARD_ACTION_POLICY.directActions.includes("start") && (
-                                <Tooltip title={isFirstTrip ? "出差开始（默认，自动）" : "标记这段为一次出差的开始"}>
-                                  <span>
-                                    <Button
-                                      size="small"
-                                      variant={effectiveStart ? "contained" : "outlined"}
-                                      disabled={readonly || isFirstTrip}
-                                      onClick={() => toggleTripMarker(index, "subsidy_start")}
-                                      sx={{ minWidth: 32, px: 0.75 }}
-                                    >
-                                      起
-                                    </Button>
-                                  </span>
-                                </Tooltip>
-                              )}
-                              {TRIP_CARD_ACTION_POLICY.directActions.includes("end") && (
-                                <Tooltip title={isLastTrip ? "出差结束（默认，自动）" : "标记这段为一次出差的结束"}>
-                                  <span>
-                                    <Button
-                                      size="small"
-                                      variant={effectiveEnd ? "contained" : "outlined"}
-                                      disabled={readonly || isLastTrip}
-                                      onClick={() => toggleTripMarker(index, "subsidy_end")}
-                                      sx={{ minWidth: 32, px: 0.75 }}
-                                    >
-                                      止
-                                    </Button>
-                                  </span>
-                                </Tooltip>
-                              )}
-                              {TRIP_CARD_ACTION_POLICY.directActions.includes("return") && (
-                                <Tooltip title="生成返程">
-                                  <span>
-                                    <IconButton
-                                      size="small"
-                                      disabled={readonly}
-                                      onClick={() => returnTrip(index)}
-                                      aria-label={`生成返程：${tripTitle}`}
-                                    >
-                                      <KeyboardReturnIcon fontSize="small" />
-                                    </IconButton>
-                                  </span>
-                                </Tooltip>
-                              )}
-                              <CardOrderControls
-                                index={index}
-                                totalItems={trips.length}
-                                itemLabel={tripTitle}
-                                disabled={readonly}
-                                onMove={moveTripByIndex}
-                              />
-                              <Tooltip title="更多行程操作">
-                                <span>
-                                  <IconButton
-                                    size="small"
-                                    disabled={readonly}
-                                    onClick={(event) => setTripActionMenu({ anchorEl: event.currentTarget, index })}
-                                    aria-label={`更多行程操作：${tripTitle}`}
-                                    aria-haspopup="menu"
-                                    aria-expanded={tripActionMenu.index === index ? "true" : undefined}
-                                  >
-                                    <MoreVertIcon fontSize="small" />
-                                  </IconButton>
-                                </span>
-                              </Tooltip>
-                            </Stack>
-                          </Stack>
-
-                          <Box sx={tripSegmentGridSx}>
-                            <Box sx={tripSegmentPanelSx}>
-                              <Box sx={tripFieldGridSx}>
-                                <Typography variant="subtitle2" fontWeight={900} sx={tripSegmentLabelSx}>
-                                  出发
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  sx={tripDateFieldSx}
-                                  label="日期"
-                                  type="date"
-                                  value={trip.depart_date}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "depart_date", event.target.value)}
-                                  InputLabelProps={{ shrink: true }}
-                                />
-                                <TextField
-                                  size="small"
-                                  sx={tripNumberFieldSx}
-                                  label="时"
-                                  type="number"
-                                  value={trip.depart_hour}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "depart_hour", event.target.value)}
-                                  inputProps={{ min: 0, max: 23 }}
-                                />
-                                <TextField
-                                  size="small"
-                                  sx={tripPlaceFieldSx}
-                                  label="地点"
-                                  value={trip.depart_place}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "depart_place", event.target.value)}
-                                />
-                              </Box>
-                            </Box>
-                            <Box sx={tripSegmentPanelSx}>
-                              <Box sx={tripFieldGridSx}>
-                                <Typography variant="subtitle2" fontWeight={900} sx={tripSegmentLabelSx}>
-                                  到达
-                                </Typography>
-                                <TextField
-                                  size="small"
-                                  sx={tripDateFieldSx}
-                                  label="日期"
-                                  type="date"
-                                  value={trip.arrive_date}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "arrive_date", event.target.value)}
-                                  InputLabelProps={{ shrink: true }}
-                                />
-                                <TextField
-                                  size="small"
-                                  sx={tripNumberFieldSx}
-                                  label="时"
-                                  type="number"
-                                  value={trip.arrive_hour}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "arrive_hour", event.target.value)}
-                                  inputProps={{ min: 0, max: 23 }}
-                                />
-                                <TextField
-                                  size="small"
-                                  sx={tripPlaceFieldSx}
-                                  label="地点"
-                                  value={trip.arrive_place}
-                                  disabled={readonly}
-                                  onChange={(event) => updateTrip(index, "arrive_place", event.target.value)}
-                                />
-                              </Box>
-                            </Box>
-                            <Box sx={tripTransportFieldSx}>
-                              <Autocomplete
-                                freeSolo
-                                clearOnBlur={false}
-                                options={TRANSPORT_OPTIONS}
-                                value={trip.transport || ""}
-                                inputValue={trip.transport || ""}
-                                disabled={readonly}
-                                onChange={(_event, value) => updateTrip(index, "transport", value || "")}
-                                onInputChange={(_event, value) => updateTrip(index, "transport", value)}
-                                renderInput={(params) => (
-                                  <TextField
-                                    {...params}
-                                    fullWidth
-                                    size="small"
-                                    label="交通工具"
-                                  />
-                                )}
-                              />
-                            </Box>
-                          </Box>
-                              <Stack spacing={1}>
-                                <Stack direction="row" justifyContent="space-between" alignItems="center">
-                                  <Typography variant="subtitle2" fontWeight={800}>
-                                    车船费发票
-                                  </Typography>
-                                  {!trip.id && (
-                                    <Typography variant="caption" color="text.secondary">
-                                      行程自动保存后可上传
-                                    </Typography>
-                                  )}
-                                </Stack>
-                                {renderInvoiceList(
-                                  tripInvoices,
-                                  <FileDropSlot
-                                    kind="invoice"
-                                    disabled={uploadDisabled}
-                                    uploading={uploading}
-                                    onPasteError={onUploadError}
-                                    onFiles={(files) =>
-                                      handleFilesUpload({
-                                        files,
-                                        expenseCategory: "transport_fare",
-                                        tripId: trip.id,
-                                        key: uploadKey,
-                                      })
-                                    }
-                                  />,
-                                )}
-                                {(!readonly || hasPaperInvoice(trip)) && (
-                                  <Box sx={cardSubSectionDividerSx}>
-                                    <PaperInvoiceEntry
-                                      value={trip}
-                                      editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
-                                      disabled={readonly}
-                                      onOpen={() => openPaperInvoiceEditor({ key: paperInvoiceKey, kind: "trip", index }, trip)}
-                                      onChange={updatePaperInvoiceEditor}
-                                      onSave={savePaperInvoiceEditor}
-                                      onCancel={closePaperInvoiceEditor}
-                                      onClear={requestPaperInvoiceClear}
-                                    />
-                                  </Box>
-                                )}
-                              </Stack>
-                        </Stack>
-                      </CardContent>
-                      </Card>
-                    );
-                  })}
-                </Stack>
-              )}
-            </Stack>
-
-            <Menu
-              anchorEl={tripActionMenu.anchorEl}
-              open={Boolean(tripActionMenu.anchorEl)}
-              onClose={closeTripActionMenu}
-              MenuListProps={{ "aria-label": "更多行程操作" }}
-            >
-              {TRIP_CARD_ACTION_POLICY.overflowActions.map((actionId) => {
-                const action = TRIP_OVERFLOW_ACTION_META[actionId];
-                const ActionIcon = action.Icon;
-                return (
-                  <MenuItem
-                    key={actionId}
-                    disabled={readonly}
-                    onClick={() => handleTripOverflowAction(actionId)}
-                    sx={action.destructive ? { color: "error.main" } : undefined}
-                  >
-                    <ListItemIcon sx={action.destructive ? { color: "error.main" } : undefined}>
-                      <ActionIcon fontSize="small" />
-                    </ListItemIcon>
-                    {action.label}
-                  </MenuItem>
-                );
-              })}
-            </Menu>
-
-            <Stack id="expense-section" spacing={1.5} sx={sectionAnchorSx}>
-              <SectionHeader
-                title="其他费用发票"
-                description="只显示已录入或有发票的费用类别。"
-                actions={
+                  )}
                   <Button
                     size="small"
                     variant="outlined"
@@ -938,10 +481,10 @@ export default function ReportEditView({
                   >
                     添加费用
                   </Button>
-                }
-              />
-              <Card sx={workCardSx}>
-                <CardContent sx={visibleExpenseCategories.length === 0 ? sectionCardContentSx : listCardContentSx}>
+                </Stack>
+              }
+              bodySx={{ p: visibleExpenseCategories.length === 0 ? { xs: 2, md: 2.5 } : { xs: 1.5, md: 2 } }}
+            >
                   {visibleExpenseCategories.length === 0 ? (
                     <Typography variant="body2" color="text.secondary">
                       {readonly ? "暂无其他费用。" : "暂无其他费用。点击「添加费用」选择费用类别。"}
@@ -954,7 +497,8 @@ export default function ReportEditView({
                       readonly={readonly}
                       saveState={saveState}
                       uploadState={uploadState}
-                      pinnedCategories={pinnedExpenseCategories}
+                      expandedCategories={expandedExpenseCategories}
+                      onExpandedCategoriesChange={setExpandedExpenseCategories}
                       paperInvoiceEditor={paperInvoiceEditor}
                       onUpdateExpenseItem={updateExpenseItem}
                       onRemoveCategory={removeExpenseCategory}
@@ -969,9 +513,7 @@ export default function ReportEditView({
                       onClearPaperInvoice={requestPaperInvoiceClear}
                     />
                   )}
-                </CardContent>
-              </Card>
-            </Stack>
+            </BlockCard>
 
             <Menu
               anchorEl={expenseMenuAnchor}
@@ -1098,7 +640,9 @@ export default function ReportEditView({
                   ) : (
                     <Stack direction="row" justifyContent="space-between">
                       <Typography color="text.secondary">补贴天数</Typography>
-                      <Typography fontWeight={800}>{summary.subsidyDays} 天</Typography>
+                      <Typography fontWeight={800} color={hasTripMarkerIssue ? "warning.dark" : "text.primary"}>
+                        {hasTripMarkerIssue ? "起止未成对" : `${summary.subsidyDays} 天`}
+                      </Typography>
                     </Stack>
                   )}
                 </Stack>

@@ -15,8 +15,8 @@ const countBadgeSx = {
 // 小卡按可用宽度自适应列数：单列布局下展开区能一行放多张，窄屏自动降列。
 const fileGridSx = {
   display: "grid",
-  gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))",
-  gap: 0.5,
+  gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+  gap: 1,
   alignItems: "stretch",
 };
 

@@ -1,6 +1,9 @@
+import { useEffect, useState } from "react";
 import { Box, Button, CircularProgress, Stack, Typography } from "@mui/material";
 import ArrowBackIcon from "@mui/icons-material/ArrowBack";
 import SaveIcon from "@mui/icons-material/Save";
+
+import { editPageHeaderSx } from "./editPageStyles";
 
 // 填报页统一页头：标题 + 状态芯片 + 副标题，右侧为返回/手动保存/状态流转按钮。
 export default function EditPageHeader({
@@ -15,14 +18,31 @@ export default function EditPageHeader({
   onSave,
   statusActions = [],
   onStatusAction,
+  sx,
+  ...rootProps
 }) {
   const saving = saveState === "saving";
+  const [stuck, setStuck] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return undefined;
+
+    const updateStuck = () => setStuck(window.scrollY > 4);
+    updateStuck();
+    window.addEventListener("scroll", updateStuck, { passive: true });
+    return () => window.removeEventListener("scroll", updateStuck);
+  }, []);
+
   return (
     <Stack
+      {...rootProps}
+      component="header"
       direction={{ xs: "column", md: "row" }}
       justifyContent="space-between"
       alignItems={{ xs: "stretch", md: "center" }}
       spacing={2}
+      data-stuck={String(stuck)}
+      sx={Array.isArray(sx) ? [editPageHeaderSx, ...sx] : [editPageHeaderSx, sx]}
     >
       <Box>
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>

@@ -298,6 +298,7 @@ export const validateFuelSubsidyAmount = (item = {}) => {
 export const getTripPdfGate = ({
   unconfirmedCount = 0,
   fuelSubsidyShortfall = 0,
+  hasTripMarkerIssue = false,
   confirmedInvoiceCount = 0,
   canAccessPdf = true,
   canCreateOutput = true,
@@ -309,6 +310,21 @@ export const getTripPdfGate = ({
     previewBlockedLabel: "确认后预览",
     downloadBlockedLabel: "确认后下载",
   };
+
+  if (hasTripMarkerIssue) {
+    return {
+      ...base,
+      severity: "warning",
+      message: "行程的“起”“止”没有成对，暂时无法计算途中补贴。",
+      dialogTitle: "行程起止未成对",
+      previewBlocked: true,
+      downloadBlocked: true,
+      previewBlockedLabel: "补齐起止后预览",
+      downloadBlockedLabel: "补齐起止后下载",
+      unconfirmedCount,
+      hasTripMarkerIssue: true,
+    };
+  }
 
   if (unconfirmedCount > 0) {
     return {
@@ -533,42 +549,105 @@ export const getTripYearRangeLabel = (reportDate, trips = []) => {
   return firstMonth === lastMonth ? `行程按 ${firstMonth} 计算` : `行程按 ${firstMonth} - ${lastMonth} 计算`;
 };
 
-export const calculateSubsidyDays = (reportDate, trips) => {
+const subsidySpanPosition = (span) => span.startIndex ?? span.endIndex ?? Number.MAX_SAFE_INTEGER;
+
+// 返回每次出差的行程索引区间。days 是该区间对合并后日期集合的新增天数，
+// 因此即使两个区间日期重叠，逐项相加也始终与后端的合并区间算法一致。
+// 起止不成对时额外返回带 issue 的零天数项，并将整张单的所有区间天数归零。
+export const getSubsidySpans = (reportDate, trips = []) => {
   const ranges = buildTripDateRanges(reportDate, trips);
-  if (ranges.length === 0) return 0;
+  if (ranges.length === 0) return [];
 
   // 第 1 段隐含「起」、最后 1 段隐含「止」，中间叠加用户显式标记
   // （与后端 subsidy_trips_with_implicit_bounds 规则逐字对齐）
   const lastIndex = ranges.length - 1;
   const intervals = [];
+  const issues = [];
   let activeStart = null;
   for (let index = 0; index < ranges.length; index += 1) {
     const range = ranges[index];
+    const tripIndex = Number(range.trip.sort_order) - 1;
     const effectiveStart = index === 0 || range.trip.subsidy_start;
     const effectiveEnd = index === lastIndex || range.trip.subsidy_end;
     if (effectiveStart) {
-      if (activeStart) return 0;
-      activeStart = range.depart;
+      if (activeStart) {
+        issues.push({ startIndex: tripIndex, endIndex: null, days: 0, issue: "start" });
+      } else {
+        activeStart = { date: range.depart, tripIndex };
+      }
     }
     if (effectiveEnd) {
-      if (!activeStart || range.arrive.getTime() < activeStart.getTime()) return 0;
-      intervals.push({ start: activeStart, end: range.arrive });
-      activeStart = null;
+      if (!activeStart || range.arrive.getTime() < activeStart.date.getTime()) {
+        issues.push({ startIndex: null, endIndex: tripIndex, days: 0, issue: "end" });
+        activeStart = null;
+      } else {
+        intervals.push({
+          startIndex: activeStart.tripIndex,
+          endIndex: tripIndex,
+          start: activeStart.date,
+          end: range.arrive,
+          days: 0,
+        });
+        activeStart = null;
+      }
     }
   }
-  if (activeStart || intervals.length === 0) return 0;
+  if (activeStart) {
+    issues.push({ startIndex: activeStart.tripIndex, endIndex: null, days: 0, issue: "start" });
+  }
 
-  intervals.sort((a, b) => a.start.getTime() - b.start.getTime());
-  const merged = [];
-  for (const interval of intervals) {
-    const previous = merged.at(-1);
-    if (!previous || interval.start.getTime() > previous.end.getTime() + MS_PER_DAY) {
-      merged.push({ ...interval });
-    } else if (interval.end.getTime() > previous.end.getTime()) {
-      previous.end = interval.end;
+  if (issues.length === 0) {
+    let mergedEnd = null;
+    const chronologicalIntervals = [...intervals].sort(
+      (left, right) =>
+        left.start.getTime() - right.start.getTime() ||
+        left.end.getTime() - right.end.getTime() ||
+        left.startIndex - right.startIndex,
+    );
+    for (const interval of chronologicalIntervals) {
+      if (!mergedEnd || interval.start.getTime() > mergedEnd.getTime() + MS_PER_DAY) {
+        interval.days = daysBetween(interval.start, interval.end) + 1;
+      } else if (interval.end.getTime() > mergedEnd.getTime()) {
+        interval.days = daysBetween(mergedEnd, interval.end);
+      }
+      if (!mergedEnd || interval.end.getTime() > mergedEnd.getTime()) {
+        mergedEnd = interval.end;
+      }
     }
   }
-  return merged.reduce((sum, interval) => sum + daysBetween(interval.start, interval.end) + 1, 0);
+
+  return [
+    ...intervals.map(({ startIndex, endIndex, days }) => ({ startIndex, endIndex, days })),
+    ...issues,
+  ].sort((left, right) => subsidySpanPosition(left) - subsidySpanPosition(right));
+};
+
+export const getTripGapWarnings = (trips = [], spans = []) => {
+  if (!Array.isArray(trips) || !Array.isArray(spans)) return [];
+
+  const warnings = [];
+  for (let index = 1; index < trips.length; index += 1) {
+    const inSameSpan = spans.some(
+      (span) =>
+        !span.issue &&
+        Number.isInteger(span.startIndex) &&
+        Number.isInteger(span.endIndex) &&
+        index > span.startIndex &&
+        index <= span.endIndex,
+    );
+    if (!inSameSpan) continue;
+
+    const previousPlace = String(trips[index - 1]?.arrive_place ?? "").trim();
+    const currentPlace = String(trips[index]?.depart_place ?? "").trim();
+    if (!previousPlace || !currentPlace || previousPlace === currentPlace) continue;
+    warnings.push({ index, previousIndex: index - 1, previousPlace, currentPlace });
+  }
+  return warnings;
+};
+
+export const calculateSubsidyDays = (reportDate, trips) => {
+  const spans = getSubsidySpans(reportDate, trips);
+  return spans.reduce((sum, span) => sum + span.days, 0);
 };
 
 export const calculateSummary = ({

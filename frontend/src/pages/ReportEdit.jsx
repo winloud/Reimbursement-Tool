@@ -31,6 +31,7 @@ import {
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getTripPdfGate,
+  getSubsidySpans,
   getTripYearRangeLabel,
   getVisibleExpenseCategories,
   hasPaperInvoice,
@@ -300,6 +301,8 @@ export default function ReportEdit() {
     [expenseCategoryOptions, expenseItems, invoices],
   );
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
+  const subsidySpans = useMemo(() => getSubsidySpans(form.report_date, trips), [form.report_date, trips]);
+  const hasTripMarkerIssue = useMemo(() => subsidySpans.some((span) => span.issue), [subsidySpans]);
   const unconfirmedInvoiceCount = useMemo(
     () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
     [invoices],
@@ -328,6 +331,7 @@ export default function ReportEdit() {
       getTripPdfGate({
         unconfirmedCount: unconfirmedInvoiceCount,
         fuelSubsidyShortfall: fuelSubsidyInvoiceShortfall,
+        hasTripMarkerIssue,
         confirmedInvoiceCount,
         canAccessPdf,
         canCreateOutput: Boolean(activeReportId) || !emptyDraft,
@@ -338,6 +342,7 @@ export default function ReportEdit() {
       confirmedInvoiceCount,
       emptyDraft,
       fuelSubsidyInvoiceShortfall,
+      hasTripMarkerIssue,
       unconfirmedInvoiceCount,
     ],
   );
@@ -582,6 +587,35 @@ export default function ReportEdit() {
     setTrips((prev) => appendTripWithAutoStart(prev, makeBlankTrip(form.report_date)));
   };
 
+  // 衔接提示中的快捷插入：把前后地点与日期带入新段，避免用户再抄一遍边界值。
+  const insertTripAt = (index) => {
+    if (readonly) return;
+    setTrips((prev) => {
+      const previous = prev[index - 1];
+      const current = prev[index];
+      if (!previous || !current) return prev;
+      const inserted = normalizeTrip(
+        {
+          depart_date: previous.arrive_date,
+          depart_hour: previous.arrive_hour,
+          depart_place: previous.arrive_place,
+          arrive_date: current.depart_date,
+          arrive_hour: current.depart_hour,
+          arrive_place: current.depart_place,
+          transport: "",
+          subsidy_start: false,
+          subsidy_end: false,
+          paper_invoice_amount: "0.00",
+          paper_invoice_count: 0,
+        },
+        index,
+      );
+      const next = [...prev];
+      next.splice(index, 0, inserted);
+      return next.map(normalizeTrip);
+    });
+  };
+
   const handleOpenTicketImport = () => {
     if (readonly) return;
     setTicketImportOpen(true);
@@ -620,9 +654,14 @@ export default function ReportEdit() {
     setTrips((prev) => prev.map((trip, i) => (i === index ? { ...trip, [field]: !trip[field] } : trip)));
   };
 
-  const invoicesForTrip = (tripId) => invoices.filter((invoice) => invoice.trip_id === tripId);
-  const invoicesForCategory = (category) =>
-    invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id);
+  const invoicesForTrip = useCallback(
+    (tripId) => invoices.filter((invoice) => invoice.trip_id === tripId),
+    [invoices],
+  );
+  const invoicesForCategory = useCallback(
+    (category) => invoices.filter((invoice) => invoice.expense_category === category && !invoice.trip_id),
+    [invoices],
+  );
 
   const updateExpenseItem = (category, patch) => {
     setExpenseItems((prev) => {
@@ -1109,6 +1148,7 @@ export default function ReportEdit() {
     dragIndex,
     invoicesForTrip,
     addTrip,
+    insertTripAt,
     updateTrip,
     toggleTripMarker,
     duplicateTrip,
@@ -1149,6 +1189,7 @@ export default function ReportEdit() {
 
   const summaryPanelView = {
     summary,
+    hasTripMarkerIssue,
     pdfGate,
     hasManualSubsidy,
     subsidyModeToggleTooltip,

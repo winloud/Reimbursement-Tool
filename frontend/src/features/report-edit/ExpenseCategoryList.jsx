@@ -1,7 +1,5 @@
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Accordion,
-  AccordionDetails,
-  AccordionSummary,
   Box,
   IconButton,
   InputAdornment,
@@ -11,18 +9,17 @@ import {
   Typography,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
-import ExpandMoreIcon from "@mui/icons-material/ExpandMore";
 
+import CollapsibleRow from "../report-edit-shared/CollapsibleRow";
 import FileDropSlot from "../report-edit-shared/FileDropSlot";
 import InvoiceCardList from "../report-edit-shared/InvoiceCardList";
 import stopSummaryInteraction from "../report-edit-shared/stopSummaryInteraction";
-import { cardSubSectionDividerSx } from "../report-edit-shared/editPageStyles";
+import { cardSubSectionDividerSx, collapsibleRowListSx, collapsibleRowNestedSurfaceSx } from "../report-edit-shared/editPageStyles";
 import PaperInvoiceEntry from "./PaperInvoiceEntry";
 import {
   formatAmount,
   getConfirmedInvoiceCount,
   getExpenseItemAmount,
-  getExpenseItemInvoiceTotal,
   getFuelSubsidyInvoiceShortfall,
   getPaperInvoiceCount,
   hasPaperInvoice,
@@ -41,12 +38,13 @@ const EMPTY_ITEM = {
   invoice_count: 0,
 };
 
-// 折叠行：类别名 + 报销 / 发票 / 张数三列定宽，金额跨行对齐。
+const EMPTY_CATEGORY_SET = new Set();
+
 const categoryRowGridSx = {
   display: "grid",
   gridTemplateColumns: {
-    xs: "minmax(0, 1fr) minmax(0, 1fr) 64px",
-    sm: "minmax(0, 1fr) 132px 132px 72px",
+    xs: "minmax(0, 1fr) 64px",
+    sm: "minmax(0, 1fr) 132px 72px",
   },
   columnGap: { xs: 1, sm: 1.5 },
   rowGap: 0.25,
@@ -74,22 +72,6 @@ const metricValueSx = {
   whiteSpace: "nowrap",
 };
 
-// 每类别一行、行间 divider；外框由调用方的 Card 提供。
-const rowAccordionSx = {
-  borderRadius: 0,
-  boxShadow: "none",
-  bgcolor: "transparent",
-  "&:before": { display: "none" },
-  "&:not(:last-of-type)": { borderBottom: 1, borderColor: "divider" },
-};
-
-const rowSummarySx = {
-  minHeight: 40,
-  px: 0,
-  "& .MuiAccordionSummary-content": { my: 0.5, minWidth: 0 },
-  "& .MuiAccordionSummary-expandIconWrapper": { color: "action.active" },
-};
-
 function Metric({ label, value, muted }) {
   return (
     <Box sx={metricCellSx}>
@@ -105,7 +87,75 @@ function Metric({ label, value, muted }) {
   );
 }
 
-// 其他费用：容器卡内每类别一行，展开后是该类别的金额、发票与纸质发票录入。
+export function useExpenseCategoryExpansion({
+  categories = [],
+  expenseItems = [],
+  invoicesForCategory = () => [],
+  pinnedCategories = EMPTY_CATEGORY_SET,
+  ready = true,
+}) {
+  const pinned = useMemo(
+    () => (pinnedCategories instanceof Set ? pinnedCategories : new Set(pinnedCategories || [])),
+    [pinnedCategories],
+  );
+  const categoryKeys = useMemo(() => categories.map((category) => category.value), [categories]);
+  const categorySignature = categoryKeys.join("|");
+  const knownCategoriesRef = useRef(new Set());
+  const initializedRef = useRef(false);
+  // 已加载的其他费用默认收起；新增类别由下面的 key 差异检测自动展开。
+  const [expandedCategories, setExpandedCategories] = useState(() => new Set());
+
+  useEffect(() => {
+    const current = new Set(categoryKeys);
+    if (!ready) {
+      initializedRef.current = false;
+      knownCategoriesRef.current = new Set();
+      setExpandedCategories((previous) => (previous.size === 0 ? previous : new Set()));
+      return;
+    }
+    if (!initializedRef.current) {
+      initializedRef.current = true;
+      knownCategoriesRef.current = current;
+      setExpandedCategories((previous) => (previous.size === 0 ? previous : new Set()));
+      return;
+    }
+    setExpandedCategories((previous) => {
+      const next = new Set([...previous].filter((category) => current.has(category)));
+      let changed = next.size !== previous.size;
+      categories.forEach((category) => {
+        if (!knownCategoriesRef.current.has(category.value)) {
+          const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
+            ...EMPTY_ITEM,
+            category: category.value,
+          };
+          if (
+            shouldExpandExpenseItem(item, invoicesForCategory(category.value) || []) ||
+            pinned.has(category.value)
+          ) {
+            if (!next.has(category.value)) {
+              next.add(category.value);
+              changed = true;
+            }
+          }
+        }
+      });
+      return changed ? next : previous;
+    });
+    knownCategoriesRef.current = current;
+  }, [categorySignature, categories, expenseItems, invoicesForCategory, pinned, ready]);
+
+  const allExpanded = categories.length > 0 && categoryKeys.every((category) => expandedCategories.has(category));
+  const toggleAll = () => {
+    setExpandedCategories((previous) => {
+      const shouldCollapse = categories.length > 0 && categoryKeys.every((category) => previous.has(category));
+      return shouldCollapse ? new Set() : new Set(categoryKeys);
+    });
+  };
+
+  return { expandedCategories, setExpandedCategories, allExpanded, toggleAll };
+}
+
+// 其他费用：类别摘要保持浅灰，明细抽屉翻白；发票小卡和上传槽在抽屉内回到浅灰。
 export default function ExpenseCategoryList({
   categories = [],
   expenseItems = [],
@@ -113,7 +163,8 @@ export default function ExpenseCategoryList({
   readonly,
   saveState,
   uploadState,
-  pinnedCategories,
+  expandedCategories = EMPTY_CATEGORY_SET,
+  onExpandedCategoriesChange,
   paperInvoiceEditor,
   onUpdateExpenseItem,
   onRemoveCategory,
@@ -127,71 +178,79 @@ export default function ExpenseCategoryList({
   onCancelPaperInvoice,
   onClearPaperInvoice,
 }) {
-  const pinned = pinnedCategories instanceof Set ? pinnedCategories : new Set(pinnedCategories || []);
-
   return (
-    <Box>
-      {categories.map((category) => {
-        const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
-          ...EMPTY_ITEM,
-          category: category.value,
-        };
-        const uploadKey = `expense-${category.value}`;
-        const paperInvoiceKey = `expense:${category.value}`;
-        const uploading = uploadState?.key === uploadKey;
-        const isFuelSubsidy = category.value === "fuel_subsidy";
-        const categoryInvoices = invoicesForCategory(category.value);
-        const invoiceTotal = getExpenseItemInvoiceTotal(item, categoryInvoices);
-        const invoiceCount = getConfirmedInvoiceCount(categoryInvoices) + getPaperInvoiceCount(item);
-        const amount = getExpenseItemAmount(item, categoryInvoices);
-        const fuelAmountError = validateFuelSubsidyAmount(item);
-        const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
-        const hasInvoice = categoryInvoices.length > 0 || hasPaperInvoice(item);
-        const removeLabel = isCustomExpenseCategory(category.value)
-          ? `删除自定义费用：${category.label}`
-          : `移除费用：${category.label}`;
+    <Stack sx={collapsibleRowListSx}>
+        {categories.map((category) => {
+          const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
+            ...EMPTY_ITEM,
+            category: category.value,
+          };
+          const uploadKey = `expense-${category.value}`;
+          const paperInvoiceKey = `expense:${category.value}`;
+          const uploading = uploadState?.key === uploadKey;
+          const isFuelSubsidy = category.value === "fuel_subsidy";
+          const categoryInvoices = invoicesForCategory(category.value);
+          const invoiceCount = getConfirmedInvoiceCount(categoryInvoices) + getPaperInvoiceCount(item);
+          const amount = getExpenseItemAmount(item, categoryInvoices);
+          const fuelAmountError = validateFuelSubsidyAmount(item);
+          const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
+          const hasInvoice = categoryInvoices.length > 0 || hasPaperInvoice(item);
+          const removeLabel = isCustomExpenseCategory(category.value)
+            ? `删除自定义费用：${category.label}`
+            : `移除费用：${category.label}`;
 
-        return (
-          <Accordion
-            key={category.value}
-            defaultExpanded={shouldExpandExpenseItem(item, categoryInvoices) || pinned.has(category.value)}
-            disableGutters
-            elevation={0}
-            sx={rowAccordionSx}
-          >
-            <AccordionSummary expandIcon={<ExpandMoreIcon />} sx={rowSummarySx}>
-              <Stack direction="row" alignItems="center" spacing={1} sx={{ width: "100%", minWidth: 0 }}>
-                <Box sx={categoryRowGridSx}>
-                  <Box sx={categoryNameCellSx}>
-                    <Typography variant="body2" fontWeight={800} noWrap>
-                      {category.label}
-                    </Typography>
-                  </Box>
-                  <Metric label="报销" value={amount > 0 ? formatAmount(amount) : "—"} muted={amount <= 0} />
-                  <Metric label="发票" value={invoiceTotal > 0 ? formatAmount(invoiceTotal) : "—"} muted={invoiceTotal <= 0} />
-                  <Metric label="" value={invoiceCount > 0 ? `${invoiceCount} 张` : "—"} muted={invoiceCount <= 0} />
+          const summary = (
+            <Box sx={{ display: "flex", alignItems: "center", gap: 1, width: "100%", minWidth: 0 }}>
+              <Box sx={categoryRowGridSx}>
+                <Box sx={categoryNameCellSx}>
+                  <Typography variant="body2" fontWeight={800} noWrap>
+                    {category.label}
+                  </Typography>
                 </Box>
-                {!readonly && (
-                  <Tooltip title={hasInvoice ? "请先删除该类别下的发票" : removeLabel}>
-                    <span {...stopSummaryInteraction}>
-                      <IconButton
-                        size="small"
-                        color="error"
-                        disabled={hasInvoice}
-                        aria-label={removeLabel}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          onRemoveCategory(category.value);
-                        }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </span>
-                  </Tooltip>
-                )}
-              </Stack>
-            </AccordionSummary>
-            <AccordionDetails sx={{ px: 0, pt: 0.25, pb: 1.5 }}>
+                <Metric label="报销" value={amount > 0 ? formatAmount(amount) : "—"} muted={amount <= 0} />
+                <Metric label="" value={invoiceCount > 0 ? `${invoiceCount} 张` : "—"} muted={invoiceCount <= 0} />
+              </Box>
+            </Box>
+          );
+          const actions = !readonly ? (
+            <Tooltip title={hasInvoice ? "请先删除该类别下的发票" : removeLabel}>
+              <span {...stopSummaryInteraction}>
+                <IconButton
+                  size="small"
+                  color="error"
+                  disabled={hasInvoice}
+                  aria-label={removeLabel}
+                  onClick={() => onRemoveCategory(category.value)}
+                >
+                  <DeleteIcon fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
+          ) : null;
+
+          return (
+            <CollapsibleRow
+              key={category.value}
+              id={`expense-row-${category.value.replace(/[^a-zA-Z0-9_-]/g, "-")}`}
+              summary={summary}
+              actions={actions}
+              expanded={expandedCategories.has(category.value)}
+              onExpandedChange={(expanded) =>
+                onExpandedCategoriesChange((previous) => {
+                  const next = new Set(previous);
+                  if (expanded) next.add(category.value);
+                  else next.delete(category.value);
+                  return next;
+                })
+              }
+              toggleLabel={`${category.label}明细`}
+              drawerSx={{
+                px: { xs: 1.25, sm: 1.5 },
+                py: 1.5,
+                "& .MuiPaper-root": collapsibleRowNestedSurfaceSx,
+                '& [role="group"]': collapsibleRowNestedSurfaceSx,
+              }}
+            >
               <Stack spacing={1.5}>
                 {isFuelSubsidy && (
                   <TextField
@@ -208,9 +267,7 @@ export default function ExpenseCategoryList({
                         ? `发票金额不足 ${formatAmount(fuelShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
                         : "留空则按已确认发票合计报销")
                     }
-                    onChange={(event) =>
-                      onUpdateExpenseItem(category.value, { reimbursable_amount: event.target.value })
-                    }
+                    onChange={(event) => onUpdateExpenseItem(category.value, { reimbursable_amount: event.target.value })}
                     InputProps={{
                       startAdornment: <InputAdornment position="start">¥</InputAdornment>,
                       inputProps: { min: 0, step: "0.01" },
@@ -226,13 +283,7 @@ export default function ExpenseCategoryList({
                       disabled={readonly || saveState === "saving"}
                       uploading={uploading}
                       onPasteError={onUploadError}
-                      onFiles={(files) =>
-                        onFilesUpload({
-                          files,
-                          expenseCategory: category.value,
-                          key: uploadKey,
-                        })
-                      }
+                      onFiles={(files) => onFilesUpload({ files, expenseCategory: category.value, key: uploadKey })}
                     />
                   }
                   onSelect={onSelectInvoice}
@@ -244,9 +295,7 @@ export default function ExpenseCategoryList({
                       value={item}
                       editor={paperInvoiceEditor?.key === paperInvoiceKey ? paperInvoiceEditor : null}
                       disabled={readonly}
-                      onOpen={() =>
-                        onOpenPaperInvoice({ key: paperInvoiceKey, kind: "expense", category: category.value }, item)
-                      }
+                      onOpen={() => onOpenPaperInvoice({ key: paperInvoiceKey, kind: "expense", category: category.value }, item)}
                       onChange={onChangePaperInvoice}
                       onSave={onSavePaperInvoice}
                       onCancel={onCancelPaperInvoice}
@@ -255,10 +304,9 @@ export default function ExpenseCategoryList({
                   </Box>
                 )}
               </Stack>
-            </AccordionDetails>
-          </Accordion>
-        );
-      })}
-    </Box>
+            </CollapsibleRow>
+          );
+        })}
+    </Stack>
   );
 }

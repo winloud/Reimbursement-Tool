@@ -157,12 +157,12 @@ export default function FileUploadPlaceholder({
           : activeVisual
             ? "primary.main"
             : "rgba(94, 131, 201, 0.68)",
-        borderRadius: 1,
+        borderRadius: 0.75,
         bgcolor: !interactive
           ? "action.hover"
           : activeVisual
             ? "primary.50"
-            : "rgba(233, 240, 251, 0.72)",
+            : "#F8FAFC",
         px: 0.75,
         py: 0.5,
         position: "relative",
