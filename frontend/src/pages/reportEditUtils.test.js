@@ -833,13 +833,17 @@ describe("report edit utilities", () => {
     assert.doesNotMatch(expenseSummarySource, /<Metric label="发票"/);
   });
 
-  it("collapses loaded trip and expense rows while expanding newly added rows", () => {
+  it("collapses loaded trip, expense, and regular rows while expanding newly added rows", () => {
     const timelineSource = readFileSync(
       new URL("../features/report-edit/TripTimeline.jsx", import.meta.url),
       "utf8",
     );
     const expenseSource = readFileSync(
       new URL("../features/report-edit/ExpenseCategoryList.jsx", import.meta.url),
+      "utf8",
+    );
+    const regularSource = readFileSync(
+      new URL("./RegularReportEditView.jsx", import.meta.url),
       "utf8",
     );
 
@@ -852,6 +856,8 @@ describe("report edit utilities", () => {
     assert.match(expenseSource, /if \(!knownCategoriesRef\.current\.has\(category\.value\)\)/);
     assert.match(expenseSource, /next\.add\(category\.value\)/);
     assert.match(readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8"), /ready:\s*!loading/);
+    assert.match(regularSource, /defaultExpanded=\{!item\.id\}/);
+    assert.doesNotMatch(regularSource, /defaultExpanded=\{index === 0 \|\| !item\.id\}/);
   });
 
   it("defaults subsidy to first depart through last arrive when unmarked", () => {

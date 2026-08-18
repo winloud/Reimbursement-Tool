@@ -159,7 +159,7 @@ function RegularItemCard({
   return (
     <CollapsibleRow
       component="article"
-      defaultExpanded={index === 0 || !item.id}
+      defaultExpanded={!item.id}
       toggleLabel={`报销项目：${title}`}
       summary={
         <Box sx={itemSummaryGridSx}>
