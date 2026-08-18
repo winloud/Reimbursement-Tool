@@ -90,6 +90,23 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements-dev.txt
+          $fontDir = Join-Path $env:WINDIR "Fonts"
+          $fallbackNames = @("arial.ttf", "segoeui.ttf", "tahoma.ttf", "calibri.ttf")
+          $fallback = $fallbackNames |
+            ForEach-Object { Join-Path $fontDir $_ } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $fallback) {
+            throw "No fallback TrueType font was found in $fontDir."
+          }
+
+          foreach ($alias in @("simkai.ttf", "simhei.ttf")) {
+            $target = Join-Path $fontDir $alias
+            if (-not (Test-Path -LiteralPath $target)) {
+              Copy-Item -LiteralPath $fallback -Destination $target
+              Write-Host "Prepared $alias from $(Split-Path -Leaf $fallback)."
+            }
+          }
 
       - name: Run backend tests
         run: python -m pytest -q
