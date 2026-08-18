@@ -15,6 +15,7 @@
 
 - 不要未经用户确认改变核心技术路线；重要变化说明依据并记录到 `docs/decisions/`。
 - 不要上传、push、发布或部署到远端，除非用户明确要求。
+- 凡用户要求将功能分支合并到 `main`，除非明确要求仅本地操作，否则先将当前功能分支推送到远端并创建以 `main` 为目标的 PR；不要直接在本地合并或直接推送 `main`。适用检查通过后使用 Merge Commit 合并，禁止 fast-forward、squash 和 rebase；合并后同步本地 `main`，未经用户明确要求不要删除分支。
 - 不要删除用户数据、测试样本或运行态目录，除非用户明确确认；不要把 release ZIP、`data/`、`uploads/`、`logs/` 或测试样本纳入 Git。
 - Git 提交信息遵循 [Conventional Commits](docs/contributing.md)。
 
