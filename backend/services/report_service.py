@@ -1,3 +1,4 @@
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from decimal import Decimal
@@ -196,24 +197,32 @@ def confirmed_invoice_total_for_category(report: ExpenseReport, category: str) -
     return quantize_amount(electronic_total + paper_total)
 
 
-def fuel_subsidy_invoice_shortfall(report: ExpenseReport) -> Decimal:
+def supports_manual_expense_amount(category: str) -> bool:
+    return category == FUEL_SUBSIDY_CATEGORY or category.startswith(CUSTOM_CATEGORY_PREFIX)
+
+
+def reimbursable_expense_invoice_shortfall(report: ExpenseReport) -> tuple[str, Decimal] | None:
     for item in report.expense_items:
-        if item.category != FUEL_SUBSIDY_CATEGORY or item.reimbursable_amount is None:
+        if not supports_manual_expense_amount(item.category) or item.reimbursable_amount is None:
             continue
-        invoice_total = confirmed_invoice_total_for_category(report, FUEL_SUBSIDY_CATEGORY)
-        return quantize_amount(max(Decimal("0.00"), Decimal(item.reimbursable_amount) - invoice_total))
-    return Decimal("0.00")
+        invoice_total = confirmed_invoice_total_for_category(report, item.category)
+        shortfall = quantize_amount(max(Decimal("0.00"), Decimal(item.reimbursable_amount) - invoice_total))
+        if shortfall > Decimal("0.00"):
+            label = item.category.removeprefix(CUSTOM_CATEGORY_PREFIX) if item.category.startswith(CUSTOM_CATEGORY_PREFIX) else FIXED_CATEGORY_LABELS[item.category]
+            return label, shortfall
+    return None
 
 
-def ensure_fuel_subsidy_printable(report: ExpenseReport) -> None:
+def ensure_reimbursable_expenses_printable(report: ExpenseReport) -> None:
     if report.report_type == "regular":
         ensure_regular_report_complete(report, action="下载")
         return
-    shortfall = fuel_subsidy_invoice_shortfall(report)
-    if shortfall > Decimal("0.00"):
+    shortfall = reimbursable_expense_invoice_shortfall(report)
+    if shortfall is not None:
+        label, amount = shortfall
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再下载或提交",
+            detail=f"{label}发票金额不足，还差 ¥{amount:.2f}，请补充足额发票后再下载或提交",
         )
 
 
@@ -224,11 +233,12 @@ def ensure_report_ready_to_leave_draft(report: ExpenseReport) -> None:
     if not (report.purpose or "").strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="出差事由不能为空，请填写后再修改状态")
 
-    shortfall = fuel_subsidy_invoice_shortfall(report)
-    if shortfall > Decimal("0.00"):
+    shortfall = reimbursable_expense_invoice_shortfall(report)
+    if shortfall is not None:
+        label, amount = shortfall
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"燃油补助发票金额不足，还差 ¥{shortfall:.2f}，请补充足额发票后再修改状态",
+            detail=f"{label}发票金额不足，还差 ¥{amount:.2f}，请补充足额发票后再修改状态",
         )
 
 
@@ -525,9 +535,61 @@ def active_invoices_for_category(report: ExpenseReport, category: str) -> list[I
     ]
 
 
+def soft_delete_related_files(
+    invoices: Iterable[Invoice] = (),
+    attachments: Iterable[ReportAttachment] = (),
+    deleted_at: datetime | None = None,
+) -> datetime:
+    timestamp = deleted_at or datetime.utcnow()
+    for invoice in invoices:
+        if invoice.deleted_at is None:
+            invoice.deleted_at = timestamp
+    for attachment in attachments:
+        if attachment.deleted_at is None:
+            attachment.deleted_at = timestamp
+    return timestamp
+
+
+def remove_trip_with_files(report: ExpenseReport, trip: Trip, deleted_at: datetime | None = None) -> None:
+    soft_delete_related_files(trip.invoices, deleted_at=deleted_at)
+    report.trips.remove(trip)
+
+
+def remove_regular_item_with_files(
+    report: ExpenseReport,
+    item: RegularItem,
+    deleted_at: datetime | None = None,
+) -> None:
+    soft_delete_related_files(item.invoices, item.attachments, deleted_at)
+    report.regular_items.remove(item)
+
+
+def remove_expense_item_with_files(
+    report: ExpenseReport,
+    item: ExpenseItem,
+    deleted_at: datetime | None = None,
+) -> None:
+    related_invoices = (
+        invoice
+        for invoice in report.invoices
+        if invoice.trip_id is None and invoice.expense_category == item.category
+    )
+    soft_delete_related_files(related_invoices, deleted_at=deleted_at)
+    if is_custom_category(item.category):
+        report.expense_items.remove(item)
+        return
+    item.remark = None
+    item.reimbursable_amount = None
+    item.paper_invoice_amount = Decimal("0.00")
+    item.paper_invoice_count = 0
+
+
 def replace_trips(report: ExpenseReport, trip_payloads: list[TripWrite]) -> None:
     keep_ids = {item.id for item in trip_payloads if item.id is not None}
-    report.trips[:] = [trip for trip in report.trips if trip.id in keep_ids]
+    removed_at = datetime.utcnow()
+    for trip in list(report.trips):
+        if trip.id not in keep_ids:
+            remove_trip_with_files(report, trip, removed_at)
     by_id = {trip.id: trip for trip in report.trips if trip.id is not None}
 
     for index, payload in enumerate(trip_payloads, start=1):
@@ -563,12 +625,11 @@ def replace_regular_items(report: ExpenseReport, item_payloads: list[RegularItem
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销项目不存在或不属于当前报销单")
 
     keep_ids = set(payload_ids)
+    removed_at = datetime.utcnow()
     for item in list(report.regular_items):
         if item.id in keep_ids:
             continue
-        if item.active_invoices or item.active_attachments:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该报销项目已有发票或凭据，请先清空关联文件再删除项目")
-        report.regular_items.remove(item)
+        remove_regular_item_with_files(report, item, removed_at)
 
     for index, payload in enumerate(item_payloads, start=1):
         if report.regular_mode == "invoice" and payload.amount is not None:
@@ -608,7 +669,7 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
             item.remark = payload.remark
         item.reimbursable_amount = (
             quantize_amount(payload.reimbursable_amount)
-            if category == FUEL_SUBSIDY_CATEGORY and payload.reimbursable_amount is not None
+            if supports_manual_expense_amount(category) and payload.reimbursable_amount is not None
             else None
         )
         if payload.paper_invoice_amount is not None:
@@ -618,9 +679,35 @@ def update_expense_items(report: ExpenseReport, item_payloads: list[ExpenseItemW
     for item in list(report.expense_items):
         if not is_custom_category(item.category) or item.category in requested_custom_categories:
             continue
-        if active_invoices_for_category(report, item.category) or item.paper_invoice_count > 0:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="该自定义费用类别已有发票，请先清空纸质发票或删除上传发票后再删除类别")
-        report.expense_items.remove(item)
+        remove_expense_item_with_files(report, item)
+
+
+def delete_expense_item(db: Session, report_id: int, category: str) -> ExpenseReport:
+    report = get_report_or_404(db, report_id)
+    ensure_report_writable(report)
+    if report.report_type != "travel":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="只有出差报销单包含其他费用项")
+
+    normalized_category = validate_expense_category(category)
+    if normalized_category == "transport_fare":
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="车船费请通过对应行程管理")
+    ensure_expense_items(report)
+    item = next((candidate for candidate in report.expense_items if candidate.category == normalized_category), None)
+    if item is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="其他费用项不存在")
+
+    try:
+        remove_expense_item_with_files(report, item)
+        db.flush()
+        recalculate_report_totals(report)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+    db.refresh(report)
+    return report
+
+
 def get_report_or_404(db: Session, report_id: int) -> ExpenseReport:
     report = db.scalar(
         select(ExpenseReport).where(

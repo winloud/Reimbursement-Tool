@@ -6,6 +6,7 @@ import { getSaveStateMeta } from "../features/report-edit-shared/saveStateMeta";
 import {
   createReport,
   deleteReportAttachment,
+  deleteReportExpenseItem,
   deleteInvoice,
   getReport,
   getReportPdfPreview,
@@ -18,16 +19,16 @@ import {
 } from "../api/client";
 import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
-  EXPENSE_CATEGORIES,
   buildCustomExpenseCategory,
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
   createInvoiceUploadIssue,
   emptyForm,
+  getAddableExpenseCategories,
   getExpenseItemAmount,
   getExpenseCategoryOptions,
-  getFuelSubsidyInvoiceShortfall,
+  getFirstExpenseInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getTripPdfGate,
@@ -286,8 +287,7 @@ export default function ReportEdit() {
     [expenseCategoryOptions, expenseItems, invoices, pinnedExpenseCategories],
   );
   const addableExpenseCategories = useMemo(() => {
-    const visible = new Set(visibleExpenseCategories.map((category) => category.value));
-    return EXPENSE_CATEGORIES.filter((category) => !visible.has(category.value));
+    return getAddableExpenseCategories(visibleExpenseCategories);
   }, [visibleExpenseCategories]);
   const visibleOtherExpenseItems = useMemo(
     () =>
@@ -307,12 +307,11 @@ export default function ReportEdit() {
     () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
     [invoices],
   );
-  const fuelSubsidyInvoiceShortfall = useMemo(() => {
-    const fuelItem = expenseItems.find((item) => item.category === "fuel_subsidy");
-    const fuelInvoices = invoices.filter((invoice) => invoice.expense_category === "fuel_subsidy" && !invoice.trip_id);
-    return getFuelSubsidyInvoiceShortfall(fuelItem, fuelInvoices);
-  }, [expenseItems, invoices]);
-  const hasFuelSubsidyInvoiceShortfall = fuelSubsidyInvoiceShortfall > 0;
+  const expenseInvoiceShortfall = useMemo(
+    () => getFirstExpenseInvoiceShortfall(expenseItems, invoices),
+    [expenseItems, invoices],
+  );
+  const hasExpenseInvoiceShortfall = Boolean(expenseInvoiceShortfall);
   const canAccessPdf = canAccessReportPdf(status);
   const confirmedInvoiceCount = useMemo(
     () =>
@@ -330,7 +329,7 @@ export default function ReportEdit() {
     () =>
       getTripPdfGate({
         unconfirmedCount: unconfirmedInvoiceCount,
-        fuelSubsidyShortfall: fuelSubsidyInvoiceShortfall,
+        expenseInvoiceShortfall,
         hasTripMarkerIssue,
         confirmedInvoiceCount,
         canAccessPdf,
@@ -341,7 +340,7 @@ export default function ReportEdit() {
       canAccessPdf,
       confirmedInvoiceCount,
       emptyDraft,
-      fuelSubsidyInvoiceShortfall,
+      expenseInvoiceShortfall,
       hasTripMarkerIssue,
       unconfirmedInvoiceCount,
     ],
@@ -635,7 +634,15 @@ export default function ReportEdit() {
   };
 
   const removeTrip = (index) => {
+    const removedTripId = trips[index]?.id;
     setTrips((prev) => prev.filter((_trip, i) => i !== index).map(normalizeTrip));
+    if (removedTripId) {
+      const belongsToRemovedTrip = (invoice) => Number(invoice.trip_id) === Number(removedTripId);
+      setInvoices((prev) => prev.filter((invoice) => !belongsToRemovedTrip(invoice)));
+      setInvoiceQueue((prev) => prev.filter((invoice) => !belongsToRemovedTrip(invoice)));
+      setSelectedInvoice((prev) => (prev && belongsToRemovedTrip(prev) ? null : prev));
+    }
+    setToast(removedTripId ? "行程及关联发票已删除，正在自动保存" : "行程已删除，正在自动保存");
   };
 
   const duplicateTrip = (index) => {
@@ -735,7 +742,7 @@ export default function ReportEdit() {
       scrollToSection("basic-info-section");
       return;
     }
-    if (target === "checked" && hasFuelSubsidyInvoiceShortfall) {
+    if (target === "checked" && hasExpenseInvoiceShortfall) {
       setPdfBlockedOpen(true);
       return;
     }
@@ -989,17 +996,6 @@ export default function ReportEdit() {
     setToast("自定义费用类别已添加");
   };
 
-  const handleDeleteCustomCategory = (category) => {
-    const categoryInvoices = invoicesForCategory(category);
-    const item = expenseItems.find((expenseItem) => expenseItem.category === category);
-    if (categoryInvoices.length > 0 || hasPaperInvoice(item)) {
-      setError("该自定义费用类别已有发票，请先清空纸质发票或删除上传发票后再删除类别");
-      return;
-    }
-    setExpenseItems((prev) => prev.filter((item) => item.category !== category));
-    setToast("自定义费用类别已删除");
-  };
-
   const unpinExpenseCategory = (category) => {
     setPinnedExpenseCategories((prev) => {
       if (!prev.has(category)) return prev;
@@ -1013,21 +1009,56 @@ export default function ReportEdit() {
     setPinnedExpenseCategories((prev) => (prev.has(category) ? prev : new Set(prev).add(category)));
   };
 
-  // 移除一行：自定义类别真删；固定类别只清空业务字段并移出手动添加集合，
-  // 后端的空行留着，PDF 仍打印固定 7 行。
-  const handleRemoveExpenseCategory = (category) => {
-    if (isCustomExpenseCategory(category)) {
-      handleDeleteCustomCategory(category);
+  const clearExpenseCategoryFromView = (category) => {
+    const belongsToCategory = (invoice) =>
+      (invoice.trip_id === null || invoice.trip_id === undefined) && invoice.expense_category === category;
+    setInvoices((prev) => prev.filter((invoice) => !belongsToCategory(invoice)));
+    setInvoiceQueue((prev) => prev.filter((invoice) => !belongsToCategory(invoice)));
+    setSelectedInvoice((prev) => (prev && belongsToCategory(prev) ? null : prev));
+    setExpenseItems((prev) =>
+      isCustomExpenseCategory(category)
+        ? prev.filter((item) => item.category !== category)
+        : prev.map((item) =>
+            item.category === category
+              ? {
+                  ...item,
+                  remark: "",
+                  reimbursable_amount: "",
+                  paper_invoice_amount: "0.00",
+                  paper_invoice_count: 0,
+                  invoice_total: "0.00",
+                  amount: "0.00",
+                  invoice_count: 0,
+                }
+              : item,
+          ),
+    );
+    unpinExpenseCategory(category);
+  };
+
+  // 删除其他费用项时由后端在同一事务内清理电子发票；纸质票据随父项清空。
+  const handleRemoveExpenseCategory = async (category) => {
+    const item = expenseItems.find((expenseItem) => expenseItem.category === category);
+    if (!item?.id || !reportIdRef.current) {
+      clearExpenseCategoryFromView(category);
+      setToast("费用项已删除，正在自动保存");
       return;
     }
-    updateExpenseItem(category, {
-      remark: "",
-      reimbursable_amount: "",
-      paper_invoice_amount: "0.00",
-      paper_invoice_count: 0,
-    });
-    unpinExpenseCategory(category);
-    setToast("已移除该费用");
+
+    const saved = await ensureSavedBeforeAction();
+    if (!saved.ok || !saved.reportId) return;
+    setSaveState("saving");
+    setError("");
+    try {
+      const response = await deleteReportExpenseItem(saved.reportId, category);
+      if (!response.success) throw new Error(response.message || "删除费用项失败");
+      clearExpenseCategoryFromView(category);
+      await loadForEdit({ quiet: true, reportId: saved.reportId });
+      setToast("费用项及关联发票已删除");
+    } catch (deleteError) {
+      setError(getApiErrorMessage(deleteError, "删除费用项失败"));
+      setSaveState("error");
+    }
   };
 
   const handleInvoiceUpdated = async () => {

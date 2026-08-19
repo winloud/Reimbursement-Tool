@@ -29,6 +29,7 @@ from backend.services.report_service import (
     TripDateError,
     calculate_subsidy_days,
     create_report,
+    delete_expense_item,
     infer_trip_date_ranges,
     update_report,
     update_report_status,
@@ -1140,6 +1141,58 @@ def test_fuel_subsidy_reimbursable_amount_overrides_invoice_total(db):
     assert updated.total_amount == Decimal("180.00")
 
 
+def test_custom_expense_reimbursable_amount_overrides_total_and_requires_invoice_coverage(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 3),
+            purpose="客户宴请",
+            expense_items=[{"category": "custom:宴请"}],
+        ),
+    )
+    db.add(
+        Invoice(
+            report_id=report.id,
+            expense_category="custom:宴请",
+            file_path="uploads/custom.pdf",
+            file_type="pdf",
+            amount=Decimal("300.00"),
+            amount_confirmed=True,
+        )
+    )
+    db.commit()
+    db.refresh(report)
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            purpose="客户宴请",
+            expense_items=[{"category": "custom:宴请", "reimbursable_amount": Decimal("180.00")}],
+        ),
+    )
+    custom_item = next(item for item in updated.expense_items if item.category == "custom:宴请")
+
+    assert custom_item.invoice_total == Decimal("300.00")
+    assert custom_item.amount == Decimal("180.00")
+    assert updated.total_amount == Decimal("180.00")
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 6, 3),
+            purpose="客户宴请",
+            expense_items=[{"category": "custom:宴请", "reimbursable_amount": Decimal("301.00")}],
+        ),
+    )
+    with pytest.raises(HTTPException, match="宴请发票金额不足"):
+        report_service.ensure_reimbursable_expenses_printable(updated)
+    with pytest.raises(HTTPException, match="宴请发票金额不足"):
+        update_report_status(db, report.id, "checked")
+
+
 def test_fuel_subsidy_reimbursable_amount_requires_sufficient_invoices_before_checking(db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3), purpose="燃油补助"))
     db.add(
@@ -1172,7 +1225,7 @@ def test_fuel_subsidy_reimbursable_amount_requires_sufficient_invoices_before_ch
         update_report_status(db, report.id, "checked")
 
 
-def test_non_fuel_category_ignores_reimbursable_amount(db):
+def test_fixed_non_manual_category_ignores_reimbursable_amount(db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     db.add(
         Invoice(
@@ -1339,7 +1392,7 @@ def test_upload_invoice_to_missing_custom_category_is_rejected(monkeypatch, db):
     assert "自定义费用类别不存在" in exc_info.value.detail
 
 
-def test_custom_category_with_active_invoice_cannot_be_deleted(monkeypatch, db):
+def test_custom_category_with_active_invoice_is_deleted_with_its_invoice(monkeypatch, db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     update_report(
         db,
@@ -1361,13 +1414,13 @@ def test_custom_category_with_active_invoice_cannot_be_deleted(monkeypatch, db):
         upload_file=UploadFile(filename="invoice.pdf", file=BytesIO(b"%PDF-1.4 custom delete")),
     )
 
-    with pytest.raises(HTTPException) as exc_info:
-        update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
-
-    assert exc_info.value.status_code == 400
-    soft_delete_invoice(db, invoice.id)
     updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+    db.refresh(invoice)
+
     assert "custom:宴请" not in {item.category for item in updated.expense_items}
+    assert invoice.deleted_at is not None
+    assert updated.active_invoices == []
+
 
 def test_custom_category_without_invoice_can_be_deleted(db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
@@ -1382,7 +1435,7 @@ def test_custom_category_without_invoice_can_be_deleted(db):
     assert "custom:宴请" not in {item.category for item in updated.expense_items}
 
 
-def test_custom_category_with_paper_invoice_cannot_be_deleted(db):
+def test_custom_category_with_paper_invoice_can_be_deleted(db):
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     update_report(
         db,
@@ -1393,5 +1446,44 @@ def test_custom_category_with_paper_invoice_cannot_be_deleted(db):
         ),
     )
 
-    with pytest.raises(HTTPException, match="清空纸质发票"):
-        update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+    updated = update_report(db, report.id, ReportUpdate(report_date=date(2026, 6, 3), expense_items=[]))
+
+    assert "custom:宴请" not in {item.category for item in updated.expense_items}
+    assert updated.total_amount == Decimal("0.00")
+
+
+def test_delete_fixed_expense_item_clears_paper_values_and_soft_deletes_invoices(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 6, 3),
+            expense_items=[
+                {
+                    "category": "city_transport",
+                    "remark": "市内打车",
+                    "paper_invoice_amount": Decimal("20.00"),
+                    "paper_invoice_count": 1,
+                }
+            ],
+        ),
+    )
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="city_transport",
+        file_path="uploads/city-transport.pdf",
+        file_type="pdf",
+        amount=Decimal("30.00"),
+        amount_confirmed=True,
+    )
+    db.add(invoice)
+    db.commit()
+
+    updated = delete_expense_item(db, report.id, "city_transport")
+    db.refresh(invoice)
+    item = next(item for item in updated.expense_items if item.category == "city_transport")
+
+    assert invoice.deleted_at is not None
+    assert item.remark is None
+    assert item.paper_invoice_amount == Decimal("0.00")
+    assert item.paper_invoice_count == 0
+    assert updated.total_amount == Decimal("0.00")

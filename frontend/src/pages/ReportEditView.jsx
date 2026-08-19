@@ -14,7 +14,6 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
-  ListItemIcon,
   Menu,
   MenuItem,
   Snackbar,
@@ -528,9 +527,6 @@ export default function ReportEditView({
               ))}
               {addableExpenseCategories.length > 0 && <Divider />}
               <MenuItem onClick={handleOpenCustomExpense}>
-                <ListItemIcon>
-                  <AddIcon fontSize="small" />
-                </ListItemIcon>
                 自定义费用…
               </MenuItem>
             </Menu>

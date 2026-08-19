@@ -1,4 +1,4 @@
-export const SIDEBAR_EXPANDED_WIDTH = 248;
+export const SIDEBAR_EXPANDED_WIDTH = 200;
 export const SIDEBAR_COLLAPSED_WIDTH = 72;
 export const SIDEBAR_COLLAPSED_STORAGE_KEY = "reimbursement-tool:sidebar-collapsed";
 

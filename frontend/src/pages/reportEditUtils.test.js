@@ -12,6 +12,7 @@ import {
   calculateSummary,
   cloneTripAfter,
   createInvoiceUploadIssue,
+  getAddableExpenseCategories,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
   getClipboardInvoiceFilename,
@@ -19,7 +20,8 @@ import {
   getClipboardReportAttachmentFilename,
   getClipboardReportAttachmentFiles,
   getExpenseItemAmount,
-  getFuelSubsidyInvoiceShortfall,
+  getExpenseItemInvoiceShortfall,
+  getFirstExpenseInvoiceShortfall,
   getInvoiceUploadFeedback,
   getPaperInvoiceCount,
   getSubsidySpans,
@@ -34,6 +36,7 @@ import {
   isSupportedReportAttachmentFile,
   isSupportedInvoiceFile,
   shouldExpandExpenseItem,
+  supportsManualExpenseAmount,
   validateCustomExpenseName,
   makeBlankTrip,
   makeReturnTripAfter,
@@ -41,7 +44,7 @@ import {
   normalizeTrip,
   appendTripWithAutoStart,
   swapTripEndpoints,
-  validateFuelSubsidyAmount,
+  validateExpenseReimbursableAmount,
   validateManualSubsidyTotal,
   validatePaperInvoice,
   validatePurposeForStatusTransition,
@@ -173,15 +176,18 @@ describe("report edit utilities", () => {
     assert.match(gate.message, /“起”“止”没有成对/);
   });
 
-  it("blocks only download when the fuel subsidy invoice total falls short, and keeps it clickable", () => {
-    const gate = getTripPdfGate({ fuelSubsidyShortfall: 42.5, confirmedInvoiceCount: 2 });
+  it("blocks only download when a manually reimbursed expense has an invoice shortfall", () => {
+    const gate = getTripPdfGate({
+      expenseInvoiceShortfall: { category: "custom:宴请", label: "宴请", amount: 42.5 },
+      confirmedInvoiceCount: 2,
+    });
     assert.equal(gate.severity, "warning");
     assert.equal(gate.previewBlocked, false);
     assert.equal(gate.downloadBlocked, true);
     // blocked 但不 disabled：按钮仍可点，由页面弹窗解释原因。
     assert.equal(gate.downloadDisabled, false);
     assert.equal(gate.downloadBlockedLabel, "补足后下载");
-    assert.equal(gate.dialogTitle, "燃油补助发票金额不足");
+    assert.equal(gate.dialogTitle, "宴请发票金额不足");
   });
 
   it("clears the gate once invoices are confirmed and distinguishes the empty report", () => {
@@ -592,9 +598,13 @@ describe("report edit utilities", () => {
         trips: [],
         expenseItems: [
           { id: 3, category: "fuel_subsidy", remark: "", reimbursable_amount: "180.00" },
+          { id: 4, category: "custom:宴请", remark: "", reimbursable_amount: "88.00" },
         ],
       }).expense_items,
-      [{ id: 3, category: "fuel_subsidy", remark: null, reimbursable_amount: "180.00", paper_invoice_amount: "0.00", paper_invoice_count: 0 }],
+      [
+        { id: 3, category: "fuel_subsidy", remark: null, reimbursable_amount: "180.00", paper_invoice_amount: "0.00", paper_invoice_count: 0 },
+        { id: 4, category: "custom:宴请", remark: null, reimbursable_amount: "88.00", paper_invoice_amount: "0.00", paper_invoice_count: 0 },
+      ],
     );
   });
 
@@ -763,9 +773,24 @@ describe("report edit utilities", () => {
     assert.equal(summary.invoiceTotal, 230);
     assert.equal(summary.total, 230);
     const insufficientItem = { category: "fuel_subsidy", reimbursable_amount: "301.00", invoice_total: "300.00" };
-    assert.equal(validateFuelSubsidyAmount(insufficientItem), "");
-    assert.equal(getFuelSubsidyInvoiceShortfall(insufficientItem), 1);
-    assert.equal(getFuelSubsidyInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
+    assert.equal(validateExpenseReimbursableAmount(insufficientItem), "");
+    assert.equal(getExpenseItemInvoiceShortfall(insufficientItem), 1);
+    assert.equal(getExpenseItemInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
+  });
+
+  it("lets custom expenses override invoice totals and reports their first shortfall", () => {
+    const item = { category: "custom:宴请", reimbursable_amount: "180.00", invoice_total: "160.00" };
+    const invoices = [{ expense_category: "custom:宴请", amount: "160.00", amount_confirmed: true }];
+
+    assert.equal(supportsManualExpenseAmount(item.category), true);
+    assert.equal(getExpenseItemAmount(item), 180);
+    assert.equal(validateExpenseReimbursableAmount(item), "");
+    assert.equal(getExpenseItemInvoiceShortfall(item), 20);
+    assert.deepEqual(getFirstExpenseInvoiceShortfall([item], invoices), {
+      category: "custom:宴请",
+      label: "宴请",
+      amount: 20,
+    });
   });
 
   it("adds paper invoices to live summaries and validates their paired fields", () => {
@@ -785,7 +810,7 @@ describe("report edit utilities", () => {
     assert.equal(summary.otherExpenseTotal, 110);
     assert.equal(summary.total, 210);
     assert.equal(
-      getFuelSubsidyInvoiceShortfall(
+      getExpenseItemInvoiceShortfall(
         { category: "fuel_subsidy", reimbursable_amount: "81.00", paper_invoice_amount: "80.00", paper_invoice_count: 1 },
         [],
       ),
@@ -833,6 +858,26 @@ describe("report edit utilities", () => {
     assert.doesNotMatch(expenseSummarySource, /<Metric label="发票"/);
   });
 
+  it("allows parent rows to delete their related invoices without a manual cleanup step", () => {
+    const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const expenseSource = readFileSync(
+      new URL("../features/report-edit/ExpenseCategoryList.jsx", import.meta.url),
+      "utf8",
+    );
+    const tripHandlerStart = source.indexOf("const removeTrip = (index) =>");
+    const tripHandlerEnd = source.indexOf("const duplicateTrip", tripHandlerStart);
+    const expenseHandlerStart = source.indexOf("const handleRemoveExpenseCategory = async");
+    const expenseHandlerEnd = source.indexOf("const handleInvoiceUpdated", expenseHandlerStart);
+    const tripHandler = source.slice(tripHandlerStart, tripHandlerEnd);
+    const expenseHandler = source.slice(expenseHandlerStart, expenseHandlerEnd);
+
+    assert.match(tripHandler, /setInvoices/);
+    assert.match(expenseHandler, /ensureSavedBeforeAction/);
+    assert.match(expenseHandler, /deleteReportExpenseItem/);
+    assert.match(expenseHandler, /loadForEdit/);
+    assert.doesNotMatch(expenseSource, /请先删除该类别下的发票|disabled=\{hasInvoice\}/);
+  });
+
   it("collapses loaded trip, expense, and regular rows while expanding newly added rows", () => {
     const timelineSource = readFileSync(
       new URL("../features/report-edit/TripTimeline.jsx", import.meta.url),
@@ -853,7 +898,8 @@ describe("report edit utilities", () => {
     assert.match(expenseSource, /const \[expandedCategories, setExpandedCategories\] = useState\(\(\) => new Set\(\)\)/);
     assert.match(expenseSource, /if \(!ready\)[\s\S]*?initializedRef\.current = false/);
     assert.match(expenseSource, /if \(!initializedRef\.current\)[\s\S]*?knownCategoriesRef\.current = current/);
-    assert.match(expenseSource, /if \(!knownCategoriesRef\.current\.has\(category\.value\)\)/);
+    assert.match(expenseSource, /const addedCategories = categories\.filter/);
+    assert.match(expenseSource, /addedCategories\.forEach\(\(category\) =>/);
     assert.match(expenseSource, /next\.add\(category\.value\)/);
     assert.match(readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8"), /ready:\s*!loading/);
     assert.match(regularSource, /defaultExpanded=\{!item\.id\}/);
@@ -1043,6 +1089,11 @@ describe("report edit utilities", () => {
     assert.equal(options.at(-2).label, "宴请");
     assert.equal(options.at(-1).value, "custom:材料");
     assert.equal(getExpenseCategoryLabel("custom:宴请"), "宴请");
+  });
+
+  it("hides luggage and no-sleeper subsidy only from the add-expense menu", () => {
+    const addable = getAddableExpenseCategories([{ value: "toll", label: "通行费" }]);
+    assert.deepEqual(addable.map((category) => category.value), ["city_transport", "accommodation", "postal", "fuel_subsidy"]);
   });
 
   it("validates custom expense category names", () => {

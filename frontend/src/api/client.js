@@ -215,6 +215,13 @@ export const updateReport = async (id, payload) => {
   return response.data;
 };
 
+export const deleteReportExpenseItem = async (reportId, category) => {
+  const response = await apiClient.delete(
+    `/api/reports/${encodeURIComponent(reportId)}/expense-items/${encodeURIComponent(category)}`,
+  );
+  return response.data;
+};
+
 export const deleteReport = async (id) => {
   const response = await apiClient.delete(`/api/reports/${id}`);
   return response.data;

@@ -24,7 +24,7 @@ from backend.services.report_service import (
     REPORT_STATUS_LABELS,
     REPORT_STATUS_ORDER,
     apply_report_status,
-    ensure_fuel_subsidy_printable,
+    ensure_reimbursable_expenses_printable,
     ensure_report_ready_to_leave_draft,
     purge_report,
     restore_deleted_report,
@@ -76,7 +76,7 @@ def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[byte
             failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
             continue
         try:
-            ensure_fuel_subsidy_printable(report)
+            ensure_reimbursable_expenses_printable(report)
             pdf_items.append(
                 (
                     report,

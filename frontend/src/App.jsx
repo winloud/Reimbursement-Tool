@@ -165,6 +165,7 @@ function Sidebar() {
                 mr: { md: collapsed ? 0 : 1 },
               },
               "& .MuiButton-endIcon": {
+                ml: { xs: "auto", md: collapsed ? 0 : "auto" },
                 display: { md: collapsed ? "none" : "inherit" },
               },
             }}
@@ -179,6 +180,11 @@ function Sidebar() {
           open={Boolean(createMenuAnchor)}
           onClose={closeCreateMenu}
           MenuListProps={{ "aria-label": "选择报销单类型", dense: true }}
+          PaperProps={{
+            sx: {
+              minWidth: createMenuAnchor ? `${createMenuAnchor.clientWidth}px` : undefined,
+            },
+          }}
         >
           <MenuItem onClick={() => navigateToCreate("/reports/new")}>出差报销单</MenuItem>
           <Divider />

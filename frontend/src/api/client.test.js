@@ -3,6 +3,7 @@ import { describe, it } from "node:test";
 
 import {
   apiClient,
+  deleteReportExpenseItem,
   discardRailTicketPreview,
   getInvoiceFileUrl,
   getInvoiceOpenCapability,
@@ -108,6 +109,25 @@ describe("api client release defaults", () => {
         report_type: "regular",
         regular_mode: "no_invoice",
       });
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("deletes an other-expense item through the report-scoped cascade endpoint", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return { data: { success: true, data: {} }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    try {
+      const deleted = await deleteReportExpenseItem(29, "custom:宴请");
+
+      assert.equal(deleted.success, true);
+      assert.equal(requests[0].method, "delete");
+      assert.equal(requests[0].url, "/api/reports/29/expense-items/custom%3A%E5%AE%B4%E8%AF%B7");
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

@@ -50,7 +50,8 @@ from backend.services.report_batch_service import (
 from backend.services.report_service import (
     ReportFilters,
     create_report,
-    ensure_fuel_subsidy_printable,
+    delete_expense_item,
+    ensure_reimbursable_expenses_printable,
     ensure_report_previewable,
     get_report_or_404,
     list_report_category_options,
@@ -69,7 +70,7 @@ router = APIRouter(prefix="/api/reports", tags=["reports"])
 def _build_report_pdf(db: Session, report_id: int) -> tuple[bytes, str]:
     report = get_report_or_404(db, report_id)
     settings = get_or_create_settings(db)
-    ensure_fuel_subsidy_printable(report)
+    ensure_reimbursable_expenses_printable(report)
     pdf_bytes = build_merged_report_pdf(
         report,
         settings.pdf_fill_font_key,
@@ -327,6 +328,15 @@ def put_report(
     db: Session = Depends(get_db),
 ) -> ApiResponse[ReportDetailRead]:
     return ApiResponse(data=update_report(db, report_id, payload), message="报销单已更新")
+
+
+@router.delete("/{report_id}/expense-items/{category}", response_model=ApiResponse[ReportDetailRead])
+def delete_report_expense_item(
+    report_id: Annotated[int, Path(ge=1)],
+    category: Annotated[str, Path(min_length=1)],
+    db: Session = Depends(get_db),
+) -> ApiResponse[ReportDetailRead]:
+    return ApiResponse(data=delete_expense_item(db, report_id, category), message="其他费用项已删除")
 
 
 @router.delete("/{report_id}", response_model=ApiResponse[None])

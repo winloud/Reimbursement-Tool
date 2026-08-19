@@ -10,8 +10,8 @@ from pypdf import PdfWriter
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.schemas.report import ReportCreate, ReportUpdate, RegularItemWrite
 from backend.services import invoice_service, report_attachment_service
-from backend.services.invoice_service import soft_delete_invoice, update_invoice, upload_invoice
-from backend.services.report_attachment_service import soft_delete_report_attachment, upload_report_attachment
+from backend.services.invoice_service import update_invoice, upload_invoice
+from backend.services.report_attachment_service import upload_report_attachment
 from backend.services.report_batch_service import batch_restore_deleted_reports, batch_soft_delete_draft_reports
 from backend.services.report_service import (
     create_report,
@@ -70,12 +70,16 @@ def test_no_invoice_evidence_is_item_scoped_and_counts_pdf_pages(monkeypatch, tm
     assert item.document_count == 3
     assert report.document_count == 3
 
-    with pytest.raises(HTTPException, match="先清空关联文件"):
-        update_report(db, report.id, ReportUpdate(report_type="regular", regular_mode="no_invoice", regular_items=[]))
-    soft_delete_report_attachment(db, pdf.id)
-    soft_delete_report_attachment(db, image.id)
-    update_report(db, report.id, ReportUpdate(report_type="regular", regular_mode="no_invoice", regular_items=[]))
-    assert report.regular_items == []
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(report_type="regular", regular_mode="no_invoice", regular_items=[]),
+    )
+    db.refresh(pdf)
+    db.refresh(image)
+    assert updated.regular_items == []
+    assert pdf.deleted_at is not None and pdf.regular_item_id is None
+    assert image.deleted_at is not None and image.regular_item_id is None
 
 
 def test_regular_evidence_and_invoice_targets_reject_wrong_modes_and_reports(monkeypatch, tmp_path, db):
@@ -136,12 +140,17 @@ def test_invoice_upload_binds_regular_item_and_drives_confirmed_total(monkeypatc
     assert item.amount == Decimal("66.80")
     assert report.total_amount == Decimal("66.80")
 
-    with pytest.raises(HTTPException, match="先清空关联文件"):
-        update_report(db, report.id, ReportUpdate(report_type="regular", regular_mode="invoice", regular_items=[]))
-    soft_delete_invoice(db, invoice.id)
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(report_type="regular", regular_mode="invoice", regular_items=[]),
+    )
+    db.refresh(invoice)
     invoice_deleted_at = invoice.deleted_at
-    update_report(db, report.id, ReportUpdate(report_type="regular", regular_mode="invoice", regular_items=[]))
-    assert report.regular_items == []
+    assert invoice_deleted_at is not None
+    assert invoice.regular_item_id is None
+    assert updated.regular_items == []
+    assert updated.total_amount == Decimal("0.00")
 
     soft_delete_report(db, report.id)
     restore_deleted_report(db, report.id)

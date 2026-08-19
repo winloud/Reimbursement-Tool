@@ -16,7 +16,7 @@ test("sidebar layout keeps a compact icon rail and remembers the desktop prefere
     setItem: (key, value) => values.set(key, value),
   };
 
-  assert.equal(SIDEBAR_EXPANDED_WIDTH, 248);
+  assert.equal(SIDEBAR_EXPANDED_WIDTH, 200);
   assert.equal(SIDEBAR_COLLAPSED_WIDTH, 72);
   assert.equal(readSidebarCollapsed(storage), false);
   assert.equal(writeSidebarCollapsed(storage, true), true);

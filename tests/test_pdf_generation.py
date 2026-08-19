@@ -149,14 +149,19 @@ def test_other_expense_rows_skip_zero_amount_and_keep_dynamic_order(db):
     assert [row.amount for row in rows] == [Decimal("12.00"), Decimal("30.00"), Decimal("20.00")]
 
 
-def test_other_expense_rows_use_fuel_subsidy_reimbursable_amount(db):
+@pytest.mark.parametrize(
+    ("category", "label"),
+    [("fuel_subsidy", "燃油补助"), ("custom:宴请", "宴请")],
+)
+def test_other_expense_rows_use_manual_reimbursable_amount(category, label, db):
     report = create_report(
         db,
         ReportCreate(
             report_date="2026-06-04",
+            expense_items=[ExpenseItemWrite(category=category)] if category.startswith("custom:") else [],
         ),
     )
-    add_confirmed_invoice(db, report, "fuel_subsidy", "300.00", 1)
+    add_confirmed_invoice(db, report, category, "300.00", 1)
     db.commit()
     db.refresh(report)
     update_report(
@@ -164,13 +169,13 @@ def test_other_expense_rows_use_fuel_subsidy_reimbursable_amount(db):
         report.id,
         ReportUpdate(
             report_date="2026-06-04",
-            expense_items=[ExpenseItemWrite(category="fuel_subsidy", reimbursable_amount=Decimal("180.00"))],
+            expense_items=[ExpenseItemWrite(category=category, reimbursable_amount=Decimal("180.00"))],
         ),
     )
 
     rows = _other_expense_rows(report)
 
-    assert [(row.label, row.count, row.amount) for row in rows] == [("燃油补助", 1, Decimal("180.00"))]
+    assert [(row.label, row.count, row.amount) for row in rows] == [(label, 1, Decimal("180.00"))]
 
 
 def test_report_pdf_paginates_other_expenses_from_first_page(monkeypatch, tmp_path, db):

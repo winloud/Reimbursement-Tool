@@ -27,6 +27,8 @@ export const EXPENSE_CATEGORIES = [
   { value: "fuel_subsidy", label: "燃油补助" },
 ];
 
+const EXPENSE_ADD_MENU_HIDDEN = new Set(["luggage", "no_sleeper_subsidy"]);
+
 export const CUSTOM_CATEGORY_PREFIX = "custom:";
 const CUSTOM_CATEGORY_FORBIDDEN_PATTERN = /[\/\\:*?"<>|\x00-\x1f]/;
 const SUPPORTED_INVOICE_EXTENSIONS = new Set([".pdf", ".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"]);
@@ -48,6 +50,9 @@ const FIXED_CATEGORY_LABELS = new Set([
 ]);
 
 export const isCustomExpenseCategory = (category) => String(category || "").startsWith(CUSTOM_CATEGORY_PREFIX);
+
+export const supportsManualExpenseAmount = (category) =>
+  category === "fuel_subsidy" || isCustomExpenseCategory(category);
 
 export const getCustomExpenseName = (category) =>
   isCustomExpenseCategory(category) ? String(category).slice(CUSTOM_CATEGORY_PREFIX.length) : "";
@@ -150,6 +155,13 @@ export const getExpenseCategoryOptions = (expenseItems = []) => {
     return true;
   });
   return [...EXPENSE_CATEGORIES, ...uniqueCustomItems];
+};
+
+export const getAddableExpenseCategories = (visibleCategories = []) => {
+  const visible = new Set(visibleCategories.map((category) => category.value));
+  return EXPENSE_CATEGORIES.filter(
+    (category) => !EXPENSE_ADD_MENU_HIDDEN.has(category.value) && !visible.has(category.value),
+  );
 };
 
 export const formatAmount = (value) =>
@@ -270,21 +282,34 @@ export const getExpenseItemInvoiceTotal = (item = {}, invoices) =>
     : toFiniteAmount(item.invoice_total ?? item.amount);
 
 export const getExpenseItemAmount = (item = {}, invoices) => {
-  if (item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined) {
+  if (supportsManualExpenseAmount(item.category) && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined) {
     return toFiniteAmount(item.reimbursable_amount);
   }
   return Array.isArray(invoices) ? getExpenseItemInvoiceTotal(item, invoices) : toFiniteAmount(item.amount ?? item.invoice_total);
 };
 
-export const getFuelSubsidyInvoiceShortfall = (item = {}, invoices) => {
-  if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
+export const getExpenseItemInvoiceShortfall = (item = {}, invoices) => {
+  if (!supportsManualExpenseAmount(item.category) || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
     return 0;
   }
   return Math.max(0, toFiniteAmount(item.reimbursable_amount) - getExpenseItemInvoiceTotal(item, invoices));
 };
 
-export const validateFuelSubsidyAmount = (item = {}) => {
-  if (item.category !== "fuel_subsidy" || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
+export const getFirstExpenseInvoiceShortfall = (expenseItems = [], invoices = []) => {
+  for (const item of expenseItems) {
+    const categoryInvoices = invoices.filter(
+      (invoice) => invoice.expense_category === item.category && !invoice.trip_id,
+    );
+    const amount = getExpenseItemInvoiceShortfall(item, categoryInvoices);
+    if (amount > 0) {
+      return { category: item.category, label: getExpenseCategoryLabel(item.category), amount };
+    }
+  }
+  return null;
+};
+
+export const validateExpenseReimbursableAmount = (item = {}) => {
+  if (!supportsManualExpenseAmount(item.category) || item.reimbursable_amount === "" || item.reimbursable_amount === null || item.reimbursable_amount === undefined) {
     return "";
   }
   const reimbursableAmount = Number(item.reimbursable_amount);
@@ -297,7 +322,7 @@ export const validateFuelSubsidyAmount = (item = {}) => {
 // blocked 表示按钮置灰但仍可点，由页面弹窗解释原因；disabled 表示状态不允许，按钮不可点。
 export const getTripPdfGate = ({
   unconfirmedCount = 0,
-  fuelSubsidyShortfall = 0,
+  expenseInvoiceShortfall = null,
   hasTripMarkerIssue = false,
   confirmedInvoiceCount = 0,
   canAccessPdf = true,
@@ -338,12 +363,13 @@ export const getTripPdfGate = ({
     };
   }
 
-  if (fuelSubsidyShortfall > 0) {
+  if (Number(expenseInvoiceShortfall?.amount || 0) > 0) {
+    const shortfallLabel = expenseInvoiceShortfall?.label || "费用";
     return {
       ...base,
       severity: "warning",
-      message: `燃油补助发票还差 ${formatAmount(fuelSubsidyShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`,
-      dialogTitle: "燃油补助发票金额不足",
+      message: `${shortfallLabel}发票还差 ${formatAmount(expenseInvoiceShortfall.amount)}；仍可预览 PDF，补足后才能修改状态或下载。`,
+      dialogTitle: `${shortfallLabel}发票金额不足`,
       previewBlocked: false,
       downloadBlocked: true,
       downloadBlockedLabel: "补足后下载",
@@ -383,7 +409,7 @@ export const validateManualSubsidyTotal = (value) => {
 
 export const validateExpenseItems = (expenseItems = []) => {
   for (const item of expenseItems) {
-    const error = validateFuelSubsidyAmount(item);
+    const error = validateExpenseReimbursableAmount(item);
     if (error) return error;
     const paperInvoiceError = validatePaperInvoice(item);
     if (paperInvoiceError) return paperInvoiceError;
@@ -761,7 +787,7 @@ export const buildReportPayload = ({ form, trips, expenseItems }) => ({
     category: item.category,
     remark: nullableText(item.remark),
     reimbursable_amount:
-      item.category === "fuel_subsidy" && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined
+      supportsManualExpenseAmount(item.category) && item.reimbursable_amount !== "" && item.reimbursable_amount !== null && item.reimbursable_amount !== undefined
         ? item.reimbursable_amount
         : null,
       paper_invoice_amount:
