@@ -64,7 +64,7 @@ describe("dashboard utilities", () => {
         key: "trip_days",
         title: "出差天数",
         primary: "5 天",
-        secondary: "按实际行程日期统计",
+        secondary: "按日期占用统计 · 含草稿",
         target: "trip_days",
         clickable: false,
       },
@@ -89,11 +89,11 @@ describe("dashboard utilities", () => {
     );
     assert.equal(
       buildDashboardCardReportTarget({ target: "total", startMonth: "2024-02", endMonth: "2024-02" }),
-      "/reports?page=1&statuses=checked%2Cprinted%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
+      "/reports?page=1&statuses=draft%2Cchecked%2Cprinted%2Creimbursed&report_start=2024-02-01&report_end=2024-02-29",
     );
     assert.equal(
       buildDashboardCardReportTarget({ target: "pending", startMonth: "2024-02", endMonth: "2024-02" }),
-      "/reports?page=1&statuses=checked%2Cprinted&report_start=2024-02-01&report_end=2024-02-29",
+      "/reports?page=1&statuses=draft%2Cchecked%2Cprinted&report_start=2024-02-01&report_end=2024-02-29",
     );
   });
 

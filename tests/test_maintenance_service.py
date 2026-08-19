@@ -210,6 +210,62 @@ def write_regular_database_with_travel_fields(path: Path) -> None:
         connection.close()
 
 
+def write_occupancy_database_with_integrity_issues(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE expense_reports (
+                id INTEGER PRIMARY KEY,
+                report_uid TEXT,
+                report_type TEXT,
+                status TEXT,
+                report_date DATE,
+                employee_name TEXT,
+                deleted_at DATETIME
+            );
+            CREATE TABLE trips (
+                id INTEGER PRIMARY KEY,
+                report_id INTEGER,
+                sort_order INTEGER,
+                depart_date DATE,
+                depart_month INTEGER,
+                depart_day INTEGER,
+                depart_hour INTEGER,
+                arrive_date DATE,
+                arrive_month INTEGER,
+                arrive_day INTEGER,
+                arrive_hour INTEGER,
+                subsidy_start BOOLEAN,
+                subsidy_end BOOLEAN
+            );
+            CREATE TABLE report_day_occupancies (
+                id INTEGER PRIMARY KEY,
+                report_id INTEGER,
+                employee_key TEXT,
+                occupied_on DATE
+            );
+            INSERT INTO expense_reports VALUES
+                (1, 'report-1', 'travel', 'draft', '2026-07-19', '\t张三　', NULL),
+                (2, 'report-2', 'regular', 'draft', '2026-07-19', '李四', NULL),
+                (3, 'report-3', 'travel', 'draft', '2026-07-19', '王五', '2026-07-20 00:00:00');
+            INSERT INTO trips VALUES
+                (1, 1, 1, '2026-07-18', 7, 18, 8, '2026-07-19', 7, 19, 18, 0, 0);
+            INSERT INTO report_day_occupancies VALUES
+                (10, 999, '孤立人', '2026-07-18'),
+                (11, 2, '李四', '2026-07-18'),
+                (12, 3, '王五', '2026-07-18'),
+                (13, 1, '李四', '2026-07-20'),
+                (14, 1, '张三', '2026-07-18');
+            PRAGMA user_version = 7;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
 def upload_file_from_bytes(payload: bytes, filename: str = "backup.zip") -> UploadFile:
     return UploadFile(file=BytesIO(payload), filename=filename)
 
@@ -523,6 +579,29 @@ def test_database_integrity_check_reports_travel_fields_on_regular_reports(
     assert result.status == "error"
     assert issue.count == 1
     assert issue.details == ["report_id=1"]
+
+
+def test_database_integrity_check_covers_report_day_occupancy_business_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_occupancy_database_with_integrity_issues(paths["database"])
+
+    result = maintenance_service.check_database_integrity()
+
+    issues = {issue.code: issue for issue in result.issues}
+    assert result.status == "error"
+    assert {
+        "orphan_report_day_occupancy",
+        "occupancy_on_inactive_or_regular_report",
+        "occupancy_employee_mismatch",
+        "occupancy_date_outside_candidate_range",
+    }.issubset(issues)
+    assert issues["occupancy_on_inactive_or_regular_report"].count == 2
+    assert issues["occupancy_employee_mismatch"].count == 1
+    assert issues["occupancy_date_outside_candidate_range"].details == [
+        "occupancy_id=13, report_id=1, occupied_on=2026-07-20"
+    ]
 
 
 def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(

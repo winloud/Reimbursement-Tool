@@ -36,14 +36,18 @@ from backend.services.report_attachment_service import build_report_attachment_s
 from backend.services.maintenance_service import create_safety_snapshot
 from backend.services.report_service import (
     ReportFilters,
+    TripDateError,
     backfill_report_trip_dates,
+    calculate_report_candidate_dates,
     ensure_report_ready_to_leave_draft,
     list_reports,
     recalculate_report_totals,
+    release_report_day_occupancies,
+    replace_report_day_occupancies,
 )
 
-SCHEMA_VERSION = 6
-SUPPORTED_IMPORT_SCHEMA_VERSIONS = {1, 2, 3, 4, 5, SCHEMA_VERSION}
+SCHEMA_VERSION = 7
+SUPPORTED_IMPORT_SCHEMA_VERSIONS = set(range(1, SCHEMA_VERSION + 1))
 STAGING_ROOT = DATA_DIR / "import_staging"
 BACKUP_ROOT = DATA_DIR / "backups"
 
@@ -332,6 +336,7 @@ def _serialize_report(report: ExpenseReport) -> dict:
         "regular_items": regular_items,
         "invoices": invoices,
         "report_attachments": report_attachments,
+        "occupied_dates": [_date(occupied_on) for occupied_on in report.occupied_dates],
         "_attachments": attachments,
     }
 
@@ -522,7 +527,7 @@ def _report_field_payload(report_payload: dict, schema_version: int) -> dict:
     if report_status not in REPORT_STATUS_VALUES:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="导入包包含无效报销单状态")
     if schema_version >= 6 and "report_type" not in report_payload:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v6 导入包的报销单缺少 report_type")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v6-v7 导入包的报销单缺少 report_type")
     report_type = report_payload["report_type"] if "report_type" in report_payload else "travel"
     if schema_version < 6 and report_type != "travel":
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v1-v5 导入包仅支持差旅报销单")
@@ -571,6 +576,57 @@ def _regular_report_has_travel_scalar_values(data: dict) -> bool:
         or Decimal(data.get("shortfall") or 0) != Decimal("0.00")
         or Decimal(data.get("surplus") or 0) != Decimal("0.00")
     )
+
+
+def _parse_v7_occupied_dates(report_item: dict, report: ExpenseReport) -> list[date_type]:
+    if "occupied_dates" not in report_item:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="v7 导入包的报销单缺少 occupied_dates")
+    raw_dates = report_item["occupied_dates"]
+    if not isinstance(raw_dates, list):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="occupied_dates 必须是日期列表")
+
+    occupied_dates: list[date_type] = []
+    seen: set[date_type] = set()
+    for value in raw_dates:
+        if not isinstance(value, str):
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="occupied_dates 包含无效日期")
+        try:
+            occupied_on = date_type.fromisoformat(value)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"occupied_dates 包含无效日期：{value}",
+            ) from exc
+        if occupied_on in seen:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="occupied_dates 不能包含重复日期")
+        seen.add(occupied_on)
+        occupied_dates.append(occupied_on)
+
+    if report.report_type != "travel":
+        if occupied_dates:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销单不能包含出差日期占用")
+        return []
+
+    try:
+        candidate_dates = set(calculate_report_candidate_dates(report))
+    except TripDateError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    invalid_dates = set(occupied_dates) - candidate_dates
+    if invalid_dates:
+        invalid_text = "、".join(item.isoformat() for item in sorted(invalid_dates))
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"占用日期不属于该报销单的补贴日期区间：{invalid_text}",
+        )
+    return sorted(occupied_dates)
+
+
+def _source_report_sort_key(report_item: dict, manifest_index: int) -> tuple[int, int]:
+    original_id = report_item.get("report", {}).get("original_id")
+    try:
+        return 0, int(original_id)
+    except (TypeError, ValueError):
+        return 1, manifest_index
 
 
 def _create_or_overwrite_report(
@@ -693,9 +749,11 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
     result = ImportExecuteRead(backup_path=snapshot_backup.path if snapshot_backup else backup_dir.as_posix())
 
     manifest_reports = manifest.get("reports", [])
+    schema_version = int(manifest["schema_version"])
+    imported_reports: list[tuple[tuple[int, int], dict, ExpenseReport]] = []
     archive = zipfile.ZipFile(package_path)
     try:
-        for report_item in manifest_reports:
+        for manifest_index, report_item in enumerate(manifest_reports):
             report_uid = report_item.get("report", {}).get("report_uid")
             local_report = (
                 db.scalar(select(ExpenseReport).where(ExpenseReport.report_uid == report_uid, ExpenseReport.deleted_at.is_(None)))
@@ -707,12 +765,15 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 result.reports_skipped += 1
                 continue
             target = local_report if payload.strategy == "overwrite" and has_conflict else None
+            if target is not None:
+                # 覆盖导入先在当前事务释放目标单旧占用；若导入失败，回滚会恢复原状。
+                release_report_day_occupancies(db, target)
             report, trip_id_map, regular_item_id_map = _create_or_overwrite_report(
                 db,
                 report_item,
                 target_report=target,
                 preserve_uid=target is not None,
-                schema_version=int(manifest["schema_version"]),
+                schema_version=schema_version,
             )
             if target is None:
                 result.reports_created += 1
@@ -801,6 +862,16 @@ def execute_import(db: Session, payload: ImportExecuteRequest) -> ImportExecuteR
                 result.attachments_written += 1
             # 旧导入包只带月日，按报销单日期补出年份，导入后即与新数据同构。
             backfill_report_trip_dates(report)
+            imported_reports.append((_source_report_sort_key(report_item, manifest_index), report_item, report))
+
+        # 先完成全部报销单和行程的落库，再按源报销单 ID 取得日期。
+        # v7 只恢复包内明确记录的日期；v1-v6 则申请当前候选日期。
+        for _sort_key, report_item, report in sorted(imported_reports, key=lambda item: item[0]):
+            requested_dates = _parse_v7_occupied_dates(report_item, report) if schema_version >= 7 else None
+            try:
+                replace_report_day_occupancies(db, report, requested_dates=requested_dates)
+            except TripDateError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
             recalculate_report_totals(report)
             if report.report_type == "regular" and report.status != "draft":
                 ensure_report_ready_to_leave_draft(report)

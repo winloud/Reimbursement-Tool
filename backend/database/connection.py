@@ -1,7 +1,7 @@
 from uuid import uuid4
 
-from sqlalchemy import create_engine, text
-from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy import create_engine, event, text
+from sqlalchemy.orm import DeclarativeBase, Session
 
 from backend.data_schema import DATA_SCHEMA_VERSION
 from backend.runtime_paths import DATA_DIR, DATABASE_PATH, PROJECT_ROOT
@@ -20,19 +20,56 @@ engine = create_engine(
 )
 
 
+@event.listens_for(engine, "connect")
+def enable_sqlite_foreign_keys(dbapi_connection, _connection_record) -> None:
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA foreign_keys = ON")
+    cursor.close()
+
+
 def create_db_and_tables() -> None:
     DATA_DIR.mkdir(parents=True, exist_ok=True)
 
-    from backend.models import expense_item, invoice, regular_item, report, report_attachment, settings, trip  # noqa: F401
+    previous_schema_version = sqlite_schema_version()
+    needs_day_occupancy_initialization = 1 <= previous_schema_version < DATA_SCHEMA_VERSION
+    if needs_day_occupancy_initialization:
+        from backend.services.maintenance_service import create_safety_snapshot
+
+        with Session(engine) as session:
+            create_safety_snapshot(session, reason="pre_schema_v7")
+
+    from backend.models import (  # noqa: F401
+        expense_item,
+        invoice,
+        regular_item,
+        report,
+        report_attachment,
+        report_day_occupancy,
+        settings,
+        trip,
+    )
 
     Base.metadata.create_all(bind=engine)
-    migrate_sqlite_schema()
+    migrate_sqlite_schema(update_schema_version=not needs_day_occupancy_initialization)
     normalize_subsidy_markers()
     backfill_trip_dates()
+    if needs_day_occupancy_initialization:
+        initialize_report_day_occupancies()
+        set_sqlite_schema_version(DATA_SCHEMA_VERSION)
     recalculate_existing_reports()
 
 
-def migrate_sqlite_schema() -> None:
+def sqlite_schema_version() -> int:
+    with engine.connect() as connection:
+        return int(connection.execute(text("PRAGMA user_version")).scalar_one())
+
+
+def set_sqlite_schema_version(version: int) -> None:
+    with engine.begin() as connection:
+        connection.execute(text(f"PRAGMA user_version = {int(version)}"))
+
+
+def migrate_sqlite_schema(*, update_schema_version: bool = True) -> None:
     with engine.begin() as connection:
         tables = {row[0] for row in connection.execute(text("SELECT name FROM sqlite_master WHERE type='table'")).fetchall()}
         trip_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(trips)")).fetchall()}
@@ -67,9 +104,35 @@ def migrate_sqlite_schema() -> None:
                 connection.execute(text("ALTER TABLE expense_reports ADD COLUMN report_type VARCHAR NOT NULL DEFAULT 'travel'"))
             if "regular_mode" not in report_columns:
                 connection.execute(text("ALTER TABLE expense_reports ADD COLUMN regular_mode VARCHAR"))
+            if "day_occupancy_refresh_pending" not in report_columns:
+                connection.execute(
+                    text(
+                        "ALTER TABLE expense_reports ADD COLUMN "
+                        "day_occupancy_refresh_pending BOOLEAN NOT NULL DEFAULT 0"
+                    )
+                )
             connection.execute(text("UPDATE expense_reports SET report_type = 'travel' WHERE report_type IS NULL OR TRIM(report_type) = ''"))
             backfill_unique_uid(connection, "expense_reports", "report_uid")
             connection.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_expense_reports_report_uid ON expense_reports(report_uid)"))
+            if "report_day_occupancies" not in tables:
+                connection.execute(
+                    text(
+                        "CREATE TABLE report_day_occupancies ("
+                        "id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT, "
+                        "report_id INTEGER NOT NULL REFERENCES expense_reports(id) ON DELETE CASCADE, "
+                        "employee_key VARCHAR NOT NULL, "
+                        "occupied_on DATE NOT NULL, "
+                        "CONSTRAINT uq_report_day_occupancies_employee_date UNIQUE (employee_key, occupied_on), "
+                        "CONSTRAINT uq_report_day_occupancies_report_date UNIQUE (report_id, occupied_on)"
+                        ")"
+                    )
+                )
+            connection.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_report_day_occupancies_report_id ON report_day_occupancies(report_id)")
+            )
+            connection.execute(
+                text("CREATE INDEX IF NOT EXISTS ix_report_day_occupancies_occupied_on ON report_day_occupancies(occupied_on)")
+            )
         if "invoices" in tables:
             invoice_columns = {row[1] for row in connection.execute(text("PRAGMA table_info(invoices)")).fetchall()}
             if "invoice_uid" not in invoice_columns:
@@ -96,7 +159,8 @@ def migrate_sqlite_schema() -> None:
             if "page_count" not in attachment_columns:
                 connection.execute(text("ALTER TABLE report_attachments ADD COLUMN page_count INTEGER NOT NULL DEFAULT 1"))
             connection.execute(text("CREATE INDEX IF NOT EXISTS ix_report_attachments_regular_item_id ON report_attachments(regular_item_id)"))
-        connection.execute(text(f"PRAGMA user_version = {DATA_SCHEMA_VERSION}"))
+        if update_schema_version:
+            connection.execute(text(f"PRAGMA user_version = {DATA_SCHEMA_VERSION}"))
 
 
 def backfill_unique_uid(connection, table_name: str, column_name: str) -> None:
@@ -177,4 +241,12 @@ def recalculate_existing_reports() -> None:
                 recalculate_report_totals(report)
             except HTTPException:
                 continue
+        session.commit()
+
+
+def initialize_report_day_occupancies() -> None:
+    from backend.services.report_service import initialize_report_day_occupancies as initialize
+
+    with Session(engine) as session:
+        initialize(session)
         session.commit()

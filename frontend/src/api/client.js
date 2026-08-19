@@ -205,6 +205,15 @@ export const getReport = async (id) => {
   return response.data;
 };
 
+export const getReportDayOccupancies = async ({ employeeName = "", excludeReportId } = {}) => {
+  const params = { employee_name: String(employeeName ?? "").trim() };
+  if (excludeReportId !== null && excludeReportId !== undefined && String(excludeReportId).trim()) {
+    params.exclude_report_id = excludeReportId;
+  }
+  const response = await apiClient.get("/api/reports/day-occupancies", { params });
+  return response.data;
+};
+
 export const createReport = async (payload) => {
   const response = await apiClient.post("/api/reports", payload);
   return response.data;

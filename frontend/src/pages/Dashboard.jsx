@@ -322,7 +322,7 @@ export default function Dashboard() {
                   月份范围趋势
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
-                  金额按报销日期统计，出差天数按实际行程日期统计
+                  金额按报销日期统计，出差天数按日期占用统计，均包含已保存草稿
                 </Typography>
               </Box>
               <Box sx={{ height: 300 }}>

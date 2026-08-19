@@ -9,6 +9,7 @@ import {
   deleteReportExpenseItem,
   deleteInvoice,
   getReport,
+  getReportDayOccupancies,
   getReportPdfPreview,
   getSettings,
   prepareReportPdfDownload,
@@ -20,6 +21,7 @@ import {
 import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   buildCustomExpenseCategory,
+  buildReportOccupancySemanticKey,
   buildReportPayload,
   calculateSummary,
   cloneTripAfter,
@@ -45,6 +47,7 @@ import {
   appendTripWithAutoStart,
   normalizeExpenseItem,
   normalizeTrip,
+  shouldUsePersistedOccupancyDates,
   swapTripEndpoints,
   toMoney,
   todayStr,
@@ -61,6 +64,18 @@ import {
   normalizeAutosaveDelaySeconds,
 } from "./settingsPageUtils";
 import ReportEditView from "./ReportEditView";
+
+const EMPTY_DATE_KEYS = Object.freeze([]);
+
+const getOccupancyContextKey = (employeeName, reportId) =>
+  `${String(employeeName ?? "").trim()}\u0000${reportId === null || reportId === undefined ? "" : String(reportId)}`;
+
+const getReportOccupiedDates = (report) =>
+  Array.isArray(report?.occupied_dates)
+    ? report.occupied_dates
+        .map((value) => String(value?.date ?? value ?? "").trim())
+        .filter(Boolean)
+    : [];
 
 export default function ReportEdit() {
   const { id: routeId } = useParams();
@@ -102,12 +117,17 @@ export default function ReportEdit() {
   const [pdfBlockedOpen, setPdfBlockedOpen] = useState(false);
   const [ticketImportOpen, setTicketImportOpen] = useState(false);
   const [autosaveDelaySeconds, setAutosaveDelaySeconds] = useState(DEFAULT_AUTOSAVE_DELAY_SECONDS);
+  const [dayOccupancies, setDayOccupancies] = useState([]);
+  const [ownedOccupiedDates, setOwnedOccupiedDates] = useState([]);
+  const [occupancySemanticBaseline, setOccupancySemanticBaseline] = useState(null);
 
   const loadedRef = useRef(false);
   const reportIdRef = useRef(routeId || null);
   const createRequestRef = useRef(null);
   const skipRouteLoadRef = useRef(null);
   const autosaveRequestRef = useRef(0);
+  const occupancyRequestRef = useRef(0);
+  const occupancyContextRef = useRef({ key: null, loaded: false, items: [] });
   const lastSavedPayloadRef = useRef("");
   const readonly = status !== "draft";
 
@@ -121,6 +141,37 @@ export default function ReportEdit() {
   const currentPayloadKey = useMemo(() => JSON.stringify(currentPayload), [currentPayload]);
   const hasUnsavedChanges = loadedRef.current && currentPayloadKey !== lastSavedPayloadRef.current;
   const expenseItemsError = useMemo(() => validateExpenseItems(expenseItems) || validateTrips(trips), [expenseItems, trips]);
+
+  const refreshDayOccupancies = useCallback(async ({ employeeName = "", reportId = reportIdRef.current, force = false } = {}) => {
+    const key = getOccupancyContextKey(employeeName, reportId);
+    const currentContext = occupancyContextRef.current;
+    if (!force && currentContext.key === key && currentContext.loaded) {
+      return currentContext.items;
+    }
+
+    const requestId = occupancyRequestRef.current + 1;
+    occupancyRequestRef.current = requestId;
+    const retainedItems = currentContext.key === key ? currentContext.items : [];
+    occupancyContextRef.current = { key, loaded: false, items: retainedItems };
+    if (currentContext.key !== key) setDayOccupancies([]);
+
+    try {
+      const res = await getReportDayOccupancies({ employeeName, excludeReportId: reportId });
+      if (occupancyRequestRef.current !== requestId) return [];
+      const responseItems = Array.isArray(res.data) ? res.data : res.data?.items;
+      const items = res.success && Array.isArray(responseItems)
+        ? responseItems.filter((item) => item && item.date)
+        : [];
+      occupancyContextRef.current = { key, loaded: true, items };
+      setDayOccupancies(items);
+      return items;
+    } catch {
+      if (occupancyRequestRef.current !== requestId) return [];
+      occupancyContextRef.current = { key, loaded: true, items: [] };
+      setDayOccupancies([]);
+      return [];
+    }
+  }, []);
 
   const loadForEdit = useCallback(
     async ({ quiet = false, reportId = reportIdRef.current } = {}) => {
@@ -174,6 +225,12 @@ export default function ReportEdit() {
           advance_amount: "0.00",
         };
 
+        await refreshDayOccupancies({
+          employeeName: nextForm.employee_name,
+          reportId: report.id,
+          force: true,
+        });
+
         setForm(nextForm);
         setDefaults(nextDefaults);
         reportIdRef.current = String(report.id);
@@ -183,6 +240,8 @@ export default function ReportEdit() {
         setExpenseItems(nextItems);
         setInvoices(nextInvoices);
         setAttachments(nextAttachments);
+        setOwnedOccupiedDates(getReportOccupiedDates(report));
+        setOccupancySemanticBaseline(buildReportOccupancySemanticKey({ form: nextForm, trips: nextTrips }));
         lastSavedPayloadRef.current = JSON.stringify(
           buildReportPayload({ form: nextForm, trips: nextTrips, expenseItems: nextItems }),
         );
@@ -195,7 +254,7 @@ export default function ReportEdit() {
         if (!quiet) setLoading(false);
       }
     },
-    [navigate],
+    [navigate, refreshDayOccupancies],
   );
 
   const initializeNewReport = useCallback(async () => {
@@ -213,6 +272,7 @@ export default function ReportEdit() {
         employee_name: settings.employee_name || "",
         daily_subsidy: toMoney(settings.daily_subsidy),
       };
+      await refreshDayOccupancies({ employeeName: draftForm.employee_name, reportId: null, force: true });
       reportIdRef.current = null;
       setActiveReportId(null);
       setForm(draftForm);
@@ -222,6 +282,8 @@ export default function ReportEdit() {
       setExpenseItems([]);
       setInvoices([]);
       setAttachments([]);
+      setOwnedOccupiedDates([]);
+      setOccupancySemanticBaseline(null);
       lastSavedPayloadRef.current = JSON.stringify(
         buildReportPayload({ form: draftForm, trips: [], expenseItems: [] }),
       );
@@ -233,7 +295,7 @@ export default function ReportEdit() {
       setCreatingDraft(false);
       setLoading(false);
     }
-  }, []);
+  }, [refreshDayOccupancies]);
 
   useEffect(() => {
     autosaveRequestRef.current += 1;
@@ -252,6 +314,35 @@ export default function ReportEdit() {
     initializeNewReport();
   }, [initializeNewReport, loadForEdit, routeId]);
 
+  useEffect(() => {
+    if (loading || !loadedRef.current) return undefined;
+    const timer = window.setTimeout(() => {
+      refreshDayOccupancies({
+        employeeName: form.employee_name,
+        reportId: reportIdRef.current,
+      });
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [activeReportId, form.employee_name, loading, refreshDayOccupancies]);
+
+  const otherOccupiedDateKeys = useMemo(() => {
+    const currentKey = getOccupancyContextKey(form.employee_name, activeReportId);
+    if (occupancyContextRef.current.key !== currentKey) return new Set();
+    return new Set(dayOccupancies.map((item) => String(item.date ?? "").trim()).filter(Boolean));
+  }, [activeReportId, dayOccupancies, form.employee_name]);
+  const currentOccupancySemanticKey = useMemo(
+    () => buildReportOccupancySemanticKey({ form, trips }),
+    [form, trips],
+  );
+  const usesPersistedOccupiedDates = shouldUsePersistedOccupancyDates({
+    readonly,
+    reportId: activeReportId,
+    baselineKey: occupancySemanticBaseline,
+    currentKey: currentOccupancySemanticKey,
+  });
+  const subsidyOccupiedDateKeys = usesPersistedOccupiedDates ? EMPTY_DATE_KEYS : otherOccupiedDateKeys;
+  const subsidyIncludedDateKeys = usesPersistedOccupiedDates ? ownedOccupiedDates : null;
+
   const summary = useMemo(
     () =>
       calculateSummary({
@@ -262,8 +353,20 @@ export default function ReportEdit() {
         trips,
         invoices,
         expenseItems,
+        occupiedDateKeys: subsidyOccupiedDateKeys,
+        includedDateKeys: subsidyIncludedDateKeys,
       }),
-    [expenseItems, form.advance_amount, form.daily_subsidy, form.manual_subsidy_total, form.report_date, invoices, trips],
+    [
+      expenseItems,
+      form.advance_amount,
+      form.daily_subsidy,
+      form.manual_subsidy_total,
+      form.report_date,
+      invoices,
+      subsidyIncludedDateKeys,
+      subsidyOccupiedDateKeys,
+      trips,
+    ],
   );
   const hasManualSubsidy = form.manual_subsidy_total !== null && form.manual_subsidy_total !== undefined;
   const subsidyModeLabel = hasManualSubsidy ? "人工核定" : "自动计算";
@@ -301,7 +404,10 @@ export default function ReportEdit() {
     [expenseCategoryOptions, expenseItems, invoices],
   );
   const tripYearRangeLabel = useMemo(() => getTripYearRangeLabel(form.report_date, trips), [form.report_date, trips]);
-  const subsidySpans = useMemo(() => getSubsidySpans(form.report_date, trips), [form.report_date, trips]);
+  const subsidySpans = useMemo(
+    () => getSubsidySpans(form.report_date, trips, subsidyOccupiedDateKeys, subsidyIncludedDateKeys),
+    [form.report_date, subsidyIncludedDateKeys, subsidyOccupiedDateKeys, trips],
+  );
   const hasTripMarkerIssue = useMemo(() => subsidySpans.some((span) => span.issue), [subsidySpans]);
   const unconfirmedInvoiceCount = useMemo(
     () => invoices.filter((invoice) => !invoice.amount_confirmed).length,
@@ -424,6 +530,15 @@ export default function ReportEdit() {
           setExpenseItems(nextItems);
           setInvoices(savedReport.invoices || []);
           setAttachments(savedReport.attachments || []);
+          setOwnedOccupiedDates(getReportOccupiedDates(savedReport));
+          setOccupancySemanticBaseline(
+            buildReportOccupancySemanticKey({ form: savedForm, trips: nextTrips }),
+          );
+          await refreshDayOccupancies({
+            employeeName: savedReport.employee_name ?? savedForm.employee_name,
+            reportId: createdReportId,
+            force: true,
+          });
           lastSavedPayloadRef.current = JSON.stringify(
             buildReportPayload({
               form: savedForm,
@@ -463,13 +578,22 @@ export default function ReportEdit() {
           return { ok: false, reportId: existingReportId };
         }
         if (res.data?.status) setStatus(res.data.status);
+        if (Array.isArray(res.data?.occupied_dates)) {
+          setOwnedOccupiedDates(getReportOccupiedDates(res.data));
+        }
+        setOccupancySemanticBaseline(currentOccupancySemanticKey);
         lastSavedPayloadRef.current = payloadKey;
         setError("");
         setSaveState("saved");
         if (currentPayload.trips.some((trip) => !trip.id)) {
           await loadForEdit({ quiet: true, reportId: existingReportId });
-        } else if (!quiet) {
-          setToast("已保存");
+        } else {
+          await refreshDayOccupancies({
+            employeeName: res.data?.employee_name ?? form.employee_name,
+            reportId: existingReportId,
+            force: true,
+          });
+          if (!quiet) setToast("已保存");
         }
         return { ok: true, reportId: existingReportId };
       } catch (err) {
@@ -483,7 +607,19 @@ export default function ReportEdit() {
         return { ok: false, reportId: existingReportId };
       }
     },
-    [currentPayload, currentPayloadKey, emptyDraft, expenseItemsError, form, loadForEdit, loading, navigate, readonly],
+    [
+      currentPayload,
+      currentPayloadKey,
+      currentOccupancySemanticKey,
+      emptyDraft,
+      expenseItemsError,
+      form,
+      loadForEdit,
+      loading,
+      navigate,
+      readonly,
+      refreshDayOccupancies,
+    ],
   );
 
   const ensureSavedBeforeAction = useCallback(
@@ -753,10 +889,19 @@ export default function ReportEdit() {
       const res = await updateReportStatus(saved.reportId, target);
       if (res.success) {
         setStatus(res.data.status);
+        if (Array.isArray(res.data?.occupied_dates)) {
+          setOwnedOccupiedDates(getReportOccupiedDates(res.data));
+        }
         if (res.data.report_date) {
           setForm((current) => ({ ...current, report_date: res.data.report_date }));
           setDefaults((current) => ({ ...current, report_date: res.data.report_date }));
         }
+        setOccupancySemanticBaseline(
+          buildReportOccupancySemanticKey({
+            form: { ...form, report_date: res.data.report_date || form.report_date },
+            trips,
+          }),
+        );
         setToast("状态已更新");
         setSaveState("saved");
       } else {
@@ -1174,6 +1319,8 @@ export default function ReportEdit() {
 
   const tripEditorView = {
     tripYearRangeLabel,
+    subsidyOccupiedDateKeys,
+    subsidyIncludedDateKeys,
     handleOpenTicketImport,
     trips,
     dragIndex,

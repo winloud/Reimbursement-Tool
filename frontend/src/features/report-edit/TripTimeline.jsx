@@ -718,6 +718,8 @@ function TripTimelineRow({
 export default function TripTimeline({
   reportDate,
   dailySubsidy,
+  occupiedDateKeys = [],
+  includedDateKeys = null,
   readonly,
   saveState,
   uploadState,
@@ -769,7 +771,10 @@ export default function TripTimeline({
     knownKeysRef.current = currentKeys;
   }, [keySignature]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const spans = useMemo(() => getSubsidySpans(reportDate, trips), [reportDate, trips]);
+  const spans = useMemo(
+    () => getSubsidySpans(reportDate, trips, occupiedDateKeys, includedDateKeys),
+    [includedDateKeys, occupiedDateKeys, reportDate, trips],
+  );
   const validSpans = useMemo(() => spans.filter((span) => !span.issue), [spans]);
   const issues = useMemo(() => spans.filter((span) => span.issue), [spans]);
   const gapWarnings = useMemo(() => getTripGapWarnings(trips, spans), [trips, spans]);

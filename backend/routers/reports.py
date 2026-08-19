@@ -19,6 +19,7 @@ from backend.schemas.report import (
     ReportBatchStatusResult,
     ReportCreate,
     ReportDetailRead,
+    ReportDayOccupancyRead,
     ReportFilterOptionsRead,
     ReportInvoiceState,
     RegularMode,
@@ -56,6 +57,7 @@ from backend.services.report_service import (
     get_report_or_404,
     list_report_category_options,
     list_deleted_reports,
+    list_report_day_occupancies,
     list_reports,
     purge_report,
     restore_deleted_report,
@@ -198,6 +200,17 @@ def validate_report_kind_filters(report_type: ReportType, regular_mode: RegularM
 @router.get("/filter-options", response_model=ApiResponse[ReportFilterOptionsRead])
 def get_report_filter_options(db: Session = Depends(get_db)) -> ApiResponse[ReportFilterOptionsRead]:
     return ApiResponse(data=ReportFilterOptionsRead(categories=list_report_category_options(db)))
+
+
+@router.get("/day-occupancies", response_model=ApiResponse[list[ReportDayOccupancyRead]])
+def get_report_day_occupancies(
+    employee_name: Annotated[str, Query(max_length=100)],
+    exclude_report_id: Annotated[int | None, Query(ge=1)] = None,
+    db: Session = Depends(get_db),
+) -> ApiResponse[list[ReportDayOccupancyRead]]:
+    return ApiResponse(
+        data=list_report_day_occupancies(db, employee_name, exclude_report_id),
+    )
 
 
 @router.post("", response_model=ApiResponse[ReportDetailRead])

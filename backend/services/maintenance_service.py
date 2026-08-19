@@ -8,11 +8,12 @@ import sqlite3
 import sys
 import tempfile
 import zipfile
-from datetime import datetime
+from datetime import date, datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
 from time import perf_counter
+from types import SimpleNamespace
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -662,6 +663,136 @@ def _rows_issue(
     )
 
 
+def _sqlite_date(value: object) -> date | None:
+    if isinstance(value, date):
+        return value
+    if value is None:
+        return None
+    try:
+        return date.fromisoformat(str(value)[:10])
+    except ValueError:
+        return None
+
+
+def _append_occupancy_candidate_checks(
+    connection: sqlite3.Connection,
+    tables: set[str],
+    issues: list[DatabaseIntegrityIssueRead],
+) -> None:
+    if not {"expense_reports", "report_day_occupancies", "trips"}.issubset(tables):
+        return
+
+    report_columns = _table_columns(connection, "expense_reports")
+    occupancy_columns = _table_columns(connection, "report_day_occupancies")
+    trip_columns = _table_columns(connection, "trips")
+    required_report_columns = {"id", "report_type", "report_date", "deleted_at"}
+    required_occupancy_columns = {"id", "report_id", "occupied_on"}
+    required_trip_columns = {
+        "report_id",
+        "sort_order",
+        "depart_date",
+        "depart_month",
+        "depart_day",
+        "depart_hour",
+        "arrive_date",
+        "arrive_month",
+        "arrive_day",
+        "arrive_hour",
+        "subsidy_start",
+        "subsidy_end",
+    }
+    if not (
+        required_report_columns.issubset(report_columns)
+        and required_occupancy_columns.issubset(occupancy_columns)
+        and required_trip_columns.issubset(trip_columns)
+    ):
+        return
+
+    occupancy_rows = connection.execute(
+        """
+        SELECT report_day_occupancies.id, report_day_occupancies.report_id,
+               report_day_occupancies.occupied_on, expense_reports.report_date
+        FROM report_day_occupancies
+        JOIN expense_reports ON expense_reports.id = report_day_occupancies.report_id
+        WHERE expense_reports.report_type = 'travel'
+          AND expense_reports.deleted_at IS NULL
+        ORDER BY report_day_occupancies.report_id, report_day_occupancies.occupied_on
+        """
+    ).fetchall()
+    if not occupancy_rows:
+        return
+
+    report_ids = sorted({int(row["report_id"]) for row in occupancy_rows})
+    placeholders = ", ".join("?" for _report_id in report_ids)
+    trip_rows = connection.execute(
+        f"""
+        SELECT report_id, sort_order,
+               depart_date, depart_month, depart_day, depart_hour,
+               arrive_date, arrive_month, arrive_day, arrive_hour,
+               subsidy_start, subsidy_end
+        FROM trips
+        WHERE report_id IN ({placeholders})
+        ORDER BY report_id, sort_order
+        """,
+        report_ids,
+    ).fetchall()
+    trips_by_report: dict[int, list[SimpleNamespace]] = {report_id: [] for report_id in report_ids}
+    for row in trip_rows:
+        trips_by_report[int(row["report_id"])].append(
+            SimpleNamespace(
+                sort_order=row["sort_order"],
+                depart_date=_sqlite_date(row["depart_date"]),
+                depart_month=row["depart_month"],
+                depart_day=row["depart_day"],
+                depart_hour=row["depart_hour"],
+                arrive_date=_sqlite_date(row["arrive_date"]),
+                arrive_month=row["arrive_month"],
+                arrive_day=row["arrive_day"],
+                arrive_hour=row["arrive_hour"],
+                subsidy_start=bool(row["subsidy_start"]),
+                subsidy_end=bool(row["subsidy_end"]),
+            )
+        )
+
+    # 延迟导入避免 maintenance_service 与 report_service 的模块级循环依赖。
+    from backend.services.report_service import TripDateError, calculate_report_candidate_dates
+
+    candidate_dates_by_report: dict[int, set[date] | None] = {}
+    invalid_details: list[str] = []
+    for row in occupancy_rows:
+        report_id = int(row["report_id"])
+        if report_id not in candidate_dates_by_report:
+            report = SimpleNamespace(
+                report_type="travel",
+                report_date=_sqlite_date(row["report_date"]),
+                trips=trips_by_report.get(report_id, []),
+            )
+            try:
+                candidate_dates_by_report[report_id] = set(calculate_report_candidate_dates(report))
+            except (TripDateError, TypeError, ValueError):
+                # 无效历史行程无法可靠推导候选日期，这里不产生额外误报。
+                candidate_dates_by_report[report_id] = None
+
+        candidate_dates = candidate_dates_by_report[report_id]
+        occupied_on = _sqlite_date(row["occupied_on"])
+        if candidate_dates is not None and (occupied_on is None or occupied_on not in candidate_dates):
+            invalid_details.append(
+                f"occupancy_id={row['id']}, report_id={report_id}, occupied_on={row['occupied_on']}"
+            )
+
+    if invalid_details:
+        issues.append(
+            _database_issue(
+                "error",
+                "business",
+                "occupancy_date_outside_candidate_range",
+                "日期占用不属于所属报销单的候选补贴日期",
+                count=len(invalid_details),
+                details=invalid_details[:20],
+            )
+        )
+
+
 def _append_duplicate_uid_checks(
     connection: sqlite3.Connection,
     tables: set[str],
@@ -808,6 +939,84 @@ def _append_business_integrity_checks(
                     message="常规报销单包含部门、出差事由、补贴、预支或补领归还等差旅字段",
                     detail_builder=lambda row: f"report_id={row['id']}",
                 )
+
+    if {"report_day_occupancies", "expense_reports"}.issubset(tables):
+        rows = connection.execute(
+            """
+            SELECT report_day_occupancies.id, report_day_occupancies.report_id
+            FROM report_day_occupancies
+            LEFT JOIN expense_reports ON expense_reports.id = report_day_occupancies.report_id
+            WHERE expense_reports.id IS NULL
+            """
+        ).fetchall()
+        _rows_issue(
+            issues,
+            rows,
+            severity="error",
+            category="business",
+            code="orphan_report_day_occupancy",
+            message="存在无所属报销单的日期占用",
+            detail_builder=lambda row: f"occupancy_id={row['id']}, report_id={row['report_id']}",
+        )
+
+        report_columns = _table_columns(connection, "expense_reports")
+        if {"report_type", "deleted_at", "employee_name"}.issubset(report_columns):
+            rows = connection.execute(
+                """
+                SELECT report_day_occupancies.id, report_day_occupancies.report_id,
+                       expense_reports.report_type, expense_reports.deleted_at
+                FROM report_day_occupancies
+                JOIN expense_reports ON expense_reports.id = report_day_occupancies.report_id
+                WHERE expense_reports.report_type IS NULL
+                   OR expense_reports.report_type != 'travel'
+                   OR expense_reports.deleted_at IS NOT NULL
+                """
+            ).fetchall()
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="occupancy_on_inactive_or_regular_report",
+                message="已删除或常规报销单下存在日期占用",
+                detail_builder=lambda row: (
+                    f"occupancy_id={row['id']}, report_id={row['report_id']}, "
+                    f"report_type={row['report_type']}, deleted_at={row['deleted_at']}"
+                ),
+            )
+
+            employee_rows = connection.execute(
+                """
+                SELECT report_day_occupancies.id, report_day_occupancies.report_id,
+                       report_day_occupancies.employee_key, expense_reports.employee_name
+                FROM report_day_occupancies
+                JOIN expense_reports ON expense_reports.id = report_day_occupancies.report_id
+                """
+            ).fetchall()
+            # SQLite TRIM 只处理 ASCII 空格；复用业务层的 Python str.strip 规则，
+            # 才能与制表符、全角空白等姓名规范化结果保持一致。
+            from backend.services.report_service import normalize_employee_key
+
+            rows = [
+                row
+                for row in employee_rows
+                if row["employee_key"] is None
+                or row["employee_key"] != normalize_employee_key(row["employee_name"])
+            ]
+            _rows_issue(
+                issues,
+                rows,
+                severity="error",
+                category="business",
+                code="occupancy_employee_mismatch",
+                message="日期占用的报销人与所属报销单不一致",
+                detail_builder=lambda row: (
+                    f"occupancy_id={row['id']}, report_id={row['report_id']}, "
+                    f"employee_key={row['employee_key']}, employee_name={row['employee_name']}"
+                ),
+            )
+
+        _append_occupancy_candidate_checks(connection, tables, issues)
 
     if {"trips", "expense_reports"}.issubset(tables):
         rows = connection.execute(

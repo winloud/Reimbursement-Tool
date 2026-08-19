@@ -7,6 +7,7 @@ import {
   buildTripDateRanges,
   buildDraftPayload,
   buildCustomExpenseCategory,
+  buildReportOccupancySemanticKey,
   buildReportPayload,
   calculateSubsidyDays,
   calculateSummary,
@@ -36,6 +37,7 @@ import {
   isSupportedReportAttachmentFile,
   isSupportedInvoiceFile,
   shouldExpandExpenseItem,
+  shouldUsePersistedOccupancyDates,
   supportsManualExpenseAmount,
   validateCustomExpenseName,
   makeBlankTrip,
@@ -661,6 +663,7 @@ describe("report edit utilities", () => {
 
     assert.deepEqual(summary, {
       subsidyDays: 3,
+      subsidyOverlapDays: 0,
       subsidyTotal: 240,
       transportTotal: 50.5,
       otherExpenseTotal: 20,
@@ -776,6 +779,89 @@ describe("report edit utilities", () => {
     assert.equal(validateExpenseReimbursableAmount(insufficientItem), "");
     assert.equal(getExpenseItemInvoiceShortfall(insufficientItem), 1);
     assert.equal(getExpenseItemInvoiceShortfall({ category: "fuel_subsidy", reimbursable_amount: "", invoice_total: "300.00" }), 0);
+  });
+
+  it("tracks only saved occupancy semantics and ignores pure amount or persistence changes", () => {
+    const form = {
+      report_date: "2026-07-18",
+      employee_name: "张三",
+      daily_subsidy: "80.00",
+      manual_subsidy_total: null,
+      advance_amount: "0.00",
+    };
+    const trip = normalizeTrip(
+      {
+        id: 1,
+        depart_date: "2026-07-18",
+        depart_place: "上海",
+        arrive_date: "2026-07-19",
+        arrive_place: "杭州",
+        transport: "高铁",
+        subsidy_start: true,
+        subsidy_end: true,
+        paper_invoice_amount: "20.00",
+        paper_invoice_count: 1,
+      },
+      0,
+    );
+    const baseline = buildReportOccupancySemanticKey({ form, trips: [trip] });
+
+    assert.equal(
+      buildReportOccupancySemanticKey({
+        form: { ...form, employee_name: "  张三  ", daily_subsidy: "120.00", advance_amount: "300.00" },
+        trips: [{ ...trip, id: 99, paper_invoice_amount: "88.00", paper_invoice_count: 3 }],
+      }),
+      baseline,
+    );
+    assert.equal(
+      buildReportOccupancySemanticKey({ form: { ...form, report_date: "2026-08-01" }, trips: [trip] }),
+      baseline,
+    );
+    assert.notEqual(
+      buildReportOccupancySemanticKey({ form: { ...form, manual_subsidy_total: "0.00" }, trips: [trip] }),
+      baseline,
+    );
+    assert.equal(
+      buildReportOccupancySemanticKey({ form: { ...form, manual_subsidy_total: "0.00" }, trips: [trip] }),
+      buildReportOccupancySemanticKey({ form: { ...form, manual_subsidy_total: "360.00" }, trips: [trip] }),
+    );
+    assert.notEqual(
+      buildReportOccupancySemanticKey({ form, trips: [{ ...trip, arrive_date: "2026-07-20" }] }),
+      baseline,
+    );
+    assert.notEqual(
+      buildReportOccupancySemanticKey({ form, trips: [{ ...trip, subsidy_end: false }] }),
+      baseline,
+    );
+    assert.notEqual(
+      buildReportOccupancySemanticKey({ form: { ...form, employee_name: "李四" }, trips: [trip] }),
+      baseline,
+    );
+
+    const legacyTrip = normalizeTrip(
+      { depart_month: 7, depart_day: 18, arrive_month: 7, arrive_day: 19 },
+      0,
+    );
+    assert.notEqual(
+      buildReportOccupancySemanticKey({ form, trips: [legacyTrip] }),
+      buildReportOccupancySemanticKey({ form: { ...form, report_date: "2027-07-18" }, trips: [legacyTrip] }),
+    );
+    assert.equal(
+      shouldUsePersistedOccupancyDates({ readonly: false, reportId: "2", baselineKey: baseline, currentKey: baseline }),
+      true,
+    );
+    assert.equal(
+      shouldUsePersistedOccupancyDates({ readonly: false, reportId: "2", baselineKey: baseline, currentKey: "changed" }),
+      false,
+    );
+    assert.equal(
+      shouldUsePersistedOccupancyDates({ readonly: false, reportId: null, baselineKey: baseline, currentKey: baseline }),
+      false,
+    );
+    assert.equal(
+      shouldUsePersistedOccupancyDates({ readonly: true, reportId: "2", baselineKey: null, currentKey: "changed" }),
+      true,
+    );
   });
 
   it("lets custom expenses override invoice totals and reports their first shortfall", () => {
@@ -973,6 +1059,55 @@ describe("report edit utilities", () => {
       spans.reduce((sum, span) => sum + span.days, 0),
       calculateSubsidyDays("2026-06-01", trips),
     );
+  });
+
+  it("excludes dates occupied by another report from spans and the automatic summary", () => {
+    const trips = [normalizeTrip({ depart_date: "2026-07-18", arrive_date: "2026-07-20" }, 0)];
+    const occupiedDateKeys = new Set(["2026-07-19"]);
+
+    assert.deepEqual(getSubsidySpans("2026-07-18", trips, occupiedDateKeys), [
+      { startIndex: 0, endIndex: 0, days: 2 },
+    ]);
+    assert.equal(calculateSubsidyDays("2026-07-18", trips, occupiedDateKeys), 2);
+
+    const summary = calculateSummary({
+      reportDate: "2026-07-18",
+      dailySubsidy: "80.00",
+      advanceAmount: "0.00",
+      trips,
+      invoices: [],
+      occupiedDateKeys,
+    });
+    assert.equal(summary.subsidyDays, 2);
+    assert.equal(summary.subsidyOverlapDays, 1);
+    assert.equal(summary.subsidyTotal, 160);
+    assert.equal(summary.total, 160);
+  });
+
+  it("keeps within-report union semantics while filtering overlaps and can display persisted owned dates", () => {
+    const trips = [
+      normalizeTrip({ depart_date: "2026-06-01", arrive_date: "2026-06-03", subsidy_end: true }, 0),
+      normalizeTrip({ depart_date: "2026-06-03", arrive_date: "2026-06-05", subsidy_start: true }, 1),
+    ];
+
+    assert.deepEqual(getSubsidySpans("2026-06-01", trips, ["2026-06-03"]), [
+      { startIndex: 0, endIndex: 0, days: 2 },
+      { startIndex: 1, endIndex: 1, days: 2 },
+    ]);
+    assert.equal(calculateSubsidyDays("2026-06-01", trips, [], ["2026-06-01", "2026-06-05"]), 2);
+  });
+
+  it("loads employee occupancies around report editing and shows the compact overlap hint", () => {
+    const source = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const viewSource = readFileSync(new URL("./ReportEditView.jsx", import.meta.url), "utf8");
+
+    assert.match(source, /getReportDayOccupancies/);
+    assert.match(source, /excludeReportId:\s*reportId/);
+    assert.match(source, /setOwnedOccupiedDates\(getReportOccupiedDates/);
+    assert.match(source, /shouldUsePersistedOccupancyDates/);
+    assert.match(source, /usesPersistedOccupiedDates \? ownedOccupiedDates : null/);
+    assert.match(source, /await refreshDayOccupancies\([\s\S]*?force:\s*true/);
+    assert.match(viewSource, /有 \{summary\.subsidyOverlapDays\} 个重叠日期未计入/);
   });
 
   it("builds a cross-year subsidy span with the same day total", () => {

@@ -10,6 +10,7 @@ import zipfile
 
 import pytest
 from fastapi import HTTPException
+from sqlalchemy import select
 
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
@@ -279,6 +280,8 @@ def test_export_import_preserves_zero_manual_subsidy_and_accepts_v2_without_it(d
 
     manifest["schema_version"] = 2
     exported_report.pop("manual_subsidy_total")
+    # 旧版兼容性只验证人工补贴字段缺省；换一个报销人，避免被当前本地单据的日期占用拦截。
+    exported_report["employee_name"] = "v2 兼容报销人"
     v2_buffer = BytesIO()
     with zipfile.ZipFile(v2_buffer, "w") as archive:
         archive.writestr("manifest.json", json.dumps(manifest))
@@ -482,7 +485,7 @@ def test_import_preview_ignores_soft_deleted_uid_conflicts(db, monkeypatch, tmp_
     assert preview.summary.reports_new == 1
 
 
-def test_schema_v6_export_import_preserves_regular_items_and_evidence_associations(db, monkeypatch, tmp_path):
+def test_schema_v7_export_import_preserves_regular_items_and_evidence_associations(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(
         db,
@@ -522,7 +525,8 @@ def test_schema_v6_export_import_preserves_regular_items_and_evidence_associatio
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
         exported = manifest["reports"][0]
-        assert manifest["schema_version"] == 6
+        assert manifest["schema_version"] == 7
+        assert exported["occupied_dates"] == []
         assert exported["report"]["report_type"] == "regular"
         assert exported["report"]["regular_mode"] == "no_invoice"
         assert exported["regular_items"][0]["description"] == "培训费"
@@ -547,7 +551,7 @@ def test_schema_v6_export_import_preserves_regular_items_and_evidence_associatio
     assert (project_root / "backend" / imported_attachment.file_path).read_bytes() == b"regular-evidence"
 
 
-def test_schema_v6_export_import_preserves_regular_invoice_item_association(db, monkeypatch, tmp_path):
+def test_schema_v7_export_import_preserves_regular_invoice_item_association(db, monkeypatch, tmp_path):
     project_root = configure_transfer_paths(monkeypatch, tmp_path)
     report = create_report(
         db,
@@ -599,14 +603,14 @@ def test_schema_v6_export_import_preserves_regular_invoice_item_association(db, 
     assert imported.total_amount == Decimal("66.00")
 
 
-def test_schema_v6_explicitly_supports_v1_through_v5_and_v5_defaults_to_travel(db, monkeypatch, tmp_path):
+def test_schema_v7_explicitly_supports_v1_through_v6_and_v5_defaults_to_travel(db, monkeypatch, tmp_path):
     configure_transfer_paths(monkeypatch, tmp_path)
     create_report(db, ReportCreate(report_date=date(2026, 5, 12), purpose="v5 兼容"))
     zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_type="travel"))
     with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
         manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
 
-    assert data_transfer_service.SUPPORTED_IMPORT_SCHEMA_VERSIONS == {1, 2, 3, 4, 5, 6}
+    assert data_transfer_service.SUPPORTED_IMPORT_SCHEMA_VERSIONS == {1, 2, 3, 4, 5, 6, 7}
     manifest["schema_version"] = 5
     legacy_report = manifest["reports"][0]
     legacy_report["report"].pop("report_type")
@@ -623,7 +627,7 @@ def test_schema_v6_explicitly_supports_v1_through_v5_and_v5_defaults_to_travel(d
     assert imported.regular_mode is None
 
 
-def test_schema_v6_requires_explicit_report_type(db, monkeypatch, tmp_path):
+def test_schema_v7_requires_explicit_report_type(db, monkeypatch, tmp_path):
     configure_transfer_paths(monkeypatch, tmp_path)
     create_report(
         db,
@@ -645,6 +649,173 @@ def test_schema_v6_requires_explicit_report_type(db, monkeypatch, tmp_path):
         execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
 
     assert db.query(ExpenseReport).count() == 1
+
+
+def test_schema_v7_restores_only_packaged_dates_and_keeps_local_occupancy_priority(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    source = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 18),
+            employee_name="张三",
+            purpose="v7 日期所有权",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=18, arrive_month=7, arrive_day=20)],
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_ids=[source.id]))
+    with zipfile.ZipFile(BytesIO(zip_bytes)) as archive:
+        manifest = json.loads(archive.read("manifest.json").decode("utf-8"))
+    assert manifest["schema_version"] == 7
+    assert manifest["reports"][0]["occupied_dates"] == ["2026-07-18", "2026-07-19", "2026-07-20"]
+
+    # 包内只要 19、20 日；本地新单先占 19 日，所以导入单最终只能恢复 20 日。
+    exact_subset_zip = rewrite_export_manifest(
+        zip_bytes,
+        lambda payload: payload["reports"][0].__setitem__("occupied_dates", ["2026-07-19", "2026-07-20"]),
+    )
+    soft_delete_report(db, source.id)
+    create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 19),
+            employee_name="张三",
+            purpose="本地先占",
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=19, arrive_month=7, arrive_day=19)],
+        ),
+    )
+
+    preview = create_import_preview(db, upload_from_bytes(exact_subset_zip))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    imported = db.scalar(
+        select(ExpenseReport).where(
+            ExpenseReport.purpose == "v7 日期所有权",
+            ExpenseReport.deleted_at.is_(None),
+        )
+    )
+    assert imported is not None
+    assert imported.occupied_dates == [date(2026, 7, 20)]
+    assert imported.subsidy_days == 1
+    assert imported.subsidy_total == Decimal("100.00")
+
+
+def test_schema_v7_rejects_occupied_date_outside_candidate_range_and_rolls_back(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    source = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 8, 1),
+            employee_name="校验报销人",
+            purpose="v7 占用校验",
+            trips=[TripWrite(sort_order=1, depart_month=8, depart_day=1, arrive_month=8, arrive_day=2)],
+        ),
+    )
+    original_dates = source.occupied_dates
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_ids=[source.id]))
+    invalid_zip = rewrite_export_manifest(
+        zip_bytes,
+        lambda payload: payload["reports"][0].__setitem__("occupied_dates", ["2026-08-03"]),
+    )
+
+    preview = create_import_preview(db, upload_from_bytes(invalid_zip))
+    with pytest.raises(HTTPException, match="不属于"):
+        execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    db.refresh(source)
+    assert db.query(ExpenseReport).count() == 1
+    assert source.occupied_dates == original_dates
+
+
+def test_schema_v7_overwrite_releases_old_dates_before_restoring_packaged_ownership(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 9, 1),
+            employee_name="覆盖报销人",
+            purpose="v7 覆盖恢复",
+            daily_subsidy=Decimal("80.00"),
+            trips=[TripWrite(sort_order=1, depart_month=9, depart_day=1, arrive_month=9, arrive_day=3)],
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_ids=[report.id]))
+    subset_zip = rewrite_export_manifest(
+        zip_bytes,
+        lambda payload: payload["reports"][0].__setitem__("occupied_dates", ["2026-09-02"]),
+    )
+    snapshot_path = tmp_path / "v7-overwrite-snapshot.zip"
+    snapshot_path.write_bytes(b"snapshot")
+    monkeypatch.setattr(
+        data_transfer_service,
+        "create_safety_snapshot",
+        lambda _db, reason: SimpleNamespace(path=snapshot_path.as_posix()),
+    )
+
+    preview = create_import_preview(db, upload_from_bytes(subset_zip))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="overwrite"))
+
+    db.refresh(report)
+    assert report.occupied_dates == [date(2026, 9, 2)]
+    assert report.subsidy_days == 1
+    assert report.subsidy_total == Decimal("80.00")
+
+
+def test_v6_import_claims_dates_after_all_reports_in_original_id_order(db, monkeypatch, tmp_path):
+    configure_transfer_paths(monkeypatch, tmp_path)
+    first = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 18),
+            employee_name="李四",
+            purpose="源 ID 较小",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=18, arrive_month=7, arrive_day=19)],
+        ),
+    )
+    second = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 19),
+            employee_name="李四",
+            purpose="源 ID 较大",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_month=7, depart_day=19, arrive_month=7, arrive_day=20)],
+        ),
+    )
+    zip_bytes, _filename = build_export_zip(db, DataExportRequest(report_ids=[first.id, second.id]))
+
+    def downgrade_and_reverse(payload):
+        payload["schema_version"] = 6
+        for report_item in payload["reports"]:
+            report_item.pop("occupied_dates")
+        payload["reports"].sort(key=lambda item: item["report"]["original_id"], reverse=True)
+
+    v6_zip = rewrite_export_manifest(zip_bytes, downgrade_and_reverse)
+    soft_delete_report(db, first.id)
+    soft_delete_report(db, second.id)
+
+    preview = create_import_preview(db, upload_from_bytes(v6_zip))
+    execute_import(db, ImportExecuteRequest(preview_id=preview.preview_id, strategy="import_as_new"))
+
+    imported_first = db.scalar(
+        select(ExpenseReport).where(
+            ExpenseReport.purpose == "源 ID 较小",
+            ExpenseReport.deleted_at.is_(None),
+        )
+    )
+    imported_second = db.scalar(
+        select(ExpenseReport).where(
+            ExpenseReport.purpose == "源 ID 较大",
+            ExpenseReport.deleted_at.is_(None),
+        )
+    )
+    assert imported_first is not None
+    assert imported_second is not None
+    assert imported_first.occupied_dates == [date(2026, 7, 18), date(2026, 7, 19)]
+    assert imported_second.occupied_dates == [date(2026, 7, 20)]
+    assert imported_first.subsidy_days == 2
+    assert imported_second.subsidy_days == 1
 
 
 @pytest.mark.parametrize(

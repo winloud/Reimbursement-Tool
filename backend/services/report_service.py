@@ -6,13 +6,15 @@ from pathlib import Path
 import re
 
 from fastapi import HTTPException, status
-from sqlalchemy import Select, select
+from sqlalchemy import Select, delete, select
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.orm import Session
 
 from backend.models.expense_item import ExpenseItem
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
 from backend.models.report_attachment import ReportAttachment
+from backend.models.report_day_occupancy import ReportDayOccupancy
 from backend.models.regular_item import RegularItem
 from backend.models.trip import Trip
 from backend.schemas.report import (
@@ -378,6 +380,124 @@ def calculate_subsidy_days(report_reference: date | int, trips: list[Trip]) -> i
     return count_merged_interval_days(intervals)
 
 
+def normalize_employee_key(value: str | None) -> str:
+    return (value or "").strip()
+
+
+def report_occupancy_trip_signature(report: ExpenseReport) -> tuple[tuple[object, ...], ...]:
+    return tuple(
+        (
+            trip.sort_order,
+            trip.depart_date,
+            trip.depart_month,
+            trip.depart_day,
+            trip.depart_hour,
+            trip.depart_place,
+            trip.arrive_date,
+            trip.arrive_month,
+            trip.arrive_day,
+            trip.arrive_hour,
+            trip.arrive_place,
+            trip.transport,
+            bool(trip.subsidy_start),
+            bool(trip.subsidy_end),
+        )
+        for trip in sorted(report.trips, key=lambda item: item.sort_order)
+    )
+
+
+def calculate_report_candidate_dates(report: ExpenseReport) -> list[date]:
+    if report.report_type != "travel" or not report.trips:
+        return []
+
+    report_reference = report.report_date or date.today()
+    trip_ranges = infer_trip_date_ranges(report_reference, list(report.trips))
+    intervals = build_subsidy_intervals(subsidy_trips_with_implicit_bounds(trip_ranges))
+    occupied_dates: set[date] = set()
+    for start, end in intervals:
+        current = start
+        while current <= end:
+            occupied_dates.add(current)
+            current += timedelta(days=1)
+    return sorted(occupied_dates)
+
+
+def replace_report_day_occupancies(
+    db: Session,
+    report: ExpenseReport,
+    requested_dates: Iterable[date] | None = None,
+) -> list[ReportDayOccupancy]:
+    if report.id is None:
+        raise ValueError("报销单必须先保存后才能占用出差日期")
+
+    candidate_dates = set(calculate_report_candidate_dates(report))
+    if requested_dates is None:
+        dates_to_claim = sorted(candidate_dates)
+    else:
+        requested = set(requested_dates)
+        invalid_dates = requested - candidate_dates
+        if invalid_dates:
+            raise TripDateError("占用日期必须属于当前报销单的补贴日期区间")
+        dates_to_claim = sorted(requested)
+
+    db.execute(delete(ReportDayOccupancy).where(ReportDayOccupancy.report_id == report.id))
+    db.flush()
+
+    if report.report_type == "travel" and report.deleted_at is None and dates_to_claim:
+        values = [
+            {
+                "report_id": report.id,
+                "employee_key": normalize_employee_key(report.employee_name),
+                "occupied_on": occupied_on,
+            }
+            for occupied_on in dates_to_claim
+        ]
+        statement = sqlite_insert(ReportDayOccupancy).values(values).on_conflict_do_nothing(
+            index_elements=["employee_key", "occupied_on"]
+        )
+        db.execute(statement)
+        db.flush()
+
+    report.day_occupancy_refresh_pending = False
+    db.expire(report, ["day_occupancies"])
+    return list(report.day_occupancies)
+
+
+def release_report_day_occupancies(db: Session, report: ExpenseReport) -> None:
+    if report.id is None:
+        return
+    db.execute(delete(ReportDayOccupancy).where(ReportDayOccupancy.report_id == report.id))
+    db.flush()
+    db.expire(report, ["day_occupancies"])
+
+
+def list_report_day_occupancies(
+    db: Session,
+    employee_name: str | None,
+    exclude_report_id: int | None = None,
+) -> list[ReportDayOccupancy]:
+    statement = (
+        select(ReportDayOccupancy)
+        .join(ExpenseReport, ReportDayOccupancy.report_id == ExpenseReport.id)
+        .where(
+            ReportDayOccupancy.employee_key == normalize_employee_key(employee_name),
+            ExpenseReport.report_type == "travel",
+            ExpenseReport.deleted_at.is_(None),
+        )
+        .order_by(ReportDayOccupancy.occupied_on.asc(), ReportDayOccupancy.report_id.asc())
+    )
+    if exclude_report_id is not None:
+        statement = statement.where(ReportDayOccupancy.report_id != exclude_report_id)
+    return list(db.scalars(statement).all())
+
+
+def _replace_report_day_occupancies_or_400(db: Session, report: ExpenseReport) -> None:
+    try:
+        replace_report_day_occupancies(db, report)
+    except TripDateError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+
 def subsidy_trips_with_implicit_bounds(trip_ranges: list[TripDateRange]) -> list[SubsidyTrip]:
     """将行程日期区间转为带 effective 起止的 SubsidyTrip。
 
@@ -446,7 +566,7 @@ def validate_trip_chronology(trip: Trip, depart: date, arrive: date, is_cross_ye
         raise TripDateError("同日行程到达时间不能早于出发时间")
 
 
-def recalculate_report_totals(report: ExpenseReport) -> None:
+def _recalculate_report_totals(report: ExpenseReport, calculated_subsidy_days: int) -> None:
     if report.report_type == "regular":
         report.daily_subsidy = Decimal("0.00")
         report.subsidy_days = 0
@@ -466,12 +586,6 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
     report.daily_subsidy = quantize_amount(report.daily_subsidy or Decimal("0.00"))
     report.advance_amount = quantize_amount(report.advance_amount or Decimal("0.00"))
 
-    report_reference = report.report_date or date.today()
-    try:
-        calculated_subsidy_days = calculate_subsidy_days(report_reference, list(report.trips))
-    except TripDateError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
-
     if report.manual_subsidy_total is not None:
         report.manual_subsidy_total = quantize_amount(report.manual_subsidy_total)
         report.subsidy_days = 0
@@ -484,6 +598,50 @@ def recalculate_report_totals(report: ExpenseReport) -> None:
     report.total_amount = quantize_amount(transport_total + other_expense_total + report.subsidy_total)
     report.shortfall = quantize_amount(max(Decimal("0.00"), report.total_amount - report.advance_amount))
     report.surplus = quantize_amount(max(Decimal("0.00"), report.advance_amount - report.total_amount))
+
+
+def recalculate_report_totals_from_occupancies(report: ExpenseReport) -> None:
+    if report.report_type == "travel":
+        try:
+            calculate_report_candidate_dates(report)
+        except TripDateError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    _recalculate_report_totals(report, len(report.day_occupancies))
+
+
+def recalculate_report_totals(report: ExpenseReport) -> None:
+    """重算金额，但不重新分配日期；补贴天数以持久化占用为准。"""
+
+    recalculate_report_totals_from_occupancies(report)
+
+
+def initialize_report_day_occupancies(db: Session) -> int:
+    # v1-v6 没有正式日期所有权；若升级曾中断并留下部分 v7 表数据，也必须先清空，
+    # 才能保证本次始终严格按报销单 ID 从小到大初始化。
+    db.execute(delete(ReportDayOccupancy))
+    db.flush()
+    db.expire_all()
+    reports = list(
+        db.scalars(
+            select(ExpenseReport)
+            .where(
+                ExpenseReport.report_type == "travel",
+                ExpenseReport.deleted_at.is_(None),
+            )
+            .order_by(ExpenseReport.id.asc())
+        ).all()
+    )
+    initialized_count = 0
+    for report in reports:
+        try:
+            replace_report_day_occupancies(db, report)
+        except TripDateError:
+            # 历史无效行程保留旧金额，等待用户在草稿中修正。
+            continue
+        recalculate_report_totals_from_occupancies(report)
+        initialized_count += 1
+    db.flush()
+    return initialized_count
 
 
 def ensure_expense_items(report: ExpenseReport) -> None:
@@ -1049,6 +1207,8 @@ def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:
             if payload.expense_items:
                 update_expense_items(report, payload.expense_items)
         db.flush()
+        if report.report_type == "travel":
+            _replace_report_day_occupancies_or_400(db, report)
         recalculate_report_totals(report)
         db.commit()
     except Exception:
@@ -1061,6 +1221,14 @@ def create_report(db: Session, payload: ReportCreate) -> ExpenseReport:
 def update_report(db: Session, report_id: int, payload: ReportUpdate) -> ExpenseReport:
     report = get_report_or_404(db, report_id)
     ensure_report_writable(report)
+
+    previous_employee_key = normalize_employee_key(report.employee_name)
+    previous_manual_mode = report.manual_subsidy_total is not None
+    previous_trip_signature = report_occupancy_trip_signature(report)
+    try:
+        previous_candidate_dates: tuple[date, ...] | None = tuple(calculate_report_candidate_dates(report))
+    except TripDateError:
+        previous_candidate_dates = None
 
     try:
         fields_set = payload.model_fields_set
@@ -1088,6 +1256,20 @@ def update_report(db: Session, report_id: int, payload: ReportUpdate) -> Expense
             if payload.expense_items is not None:
                 update_expense_items(report, payload.expense_items)
         db.flush()
+        if report.report_type == "travel":
+            try:
+                current_candidate_dates = tuple(calculate_report_candidate_dates(report))
+            except TripDateError as exc:
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+            occupancy_semantics_changed = (
+                normalize_employee_key(report.employee_name) != previous_employee_key
+                or current_candidate_dates != previous_candidate_dates
+                or report_occupancy_trip_signature(report) != previous_trip_signature
+                or (report.manual_subsidy_total is not None) != previous_manual_mode
+                or report.day_occupancy_refresh_pending
+            )
+            if occupancy_semantics_changed:
+                _replace_report_day_occupancies_or_400(db, report)
         recalculate_report_totals(report)
         db.commit()
     except Exception:
@@ -1107,6 +1289,7 @@ def soft_delete_report(db: Session, report_id: int) -> None:
     for attachment in report.attachments:
         if attachment.deleted_at is None:
             attachment.deleted_at = report.deleted_at
+    release_report_day_occupancies(db, report)
     db.commit()
 
 
@@ -1121,6 +1304,13 @@ def restore_deleted_report(db: Session, report_id: int) -> ExpenseReport:
     for attachment in report.attachments:
         if attachment.deleted_at == report_deleted_at:
             attachment.deleted_at = None
+    if report.report_type == "travel":
+        try:
+            replace_report_day_occupancies(db, report)
+            recalculate_report_totals_from_occupancies(report)
+        except TripDateError:
+            # 兼容历史无效行程：恢复记录，但保留原补贴金额，等待草稿修正。
+            release_report_day_occupancies(db, report)
     db.commit()
     db.refresh(report)
     return report
@@ -1167,6 +1357,8 @@ def apply_report_status(
     *,
     submitted_on: date | None = None,
 ) -> None:
+    if report.report_type == "travel" and target_status == "draft" and report.status != "draft":
+        report.day_occupancy_refresh_pending = True
     report.status = target_status
     if target_status == "printed":
         report.report_date = submitted_on or date.today()

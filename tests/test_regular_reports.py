@@ -228,7 +228,7 @@ def test_report_filters_default_to_travel_and_can_select_regular_mode(db):
     assert all_total == 2
 
 
-def test_schema_v6_migration_backfills_travel_and_adds_regular_link_columns(monkeypatch):
+def test_current_schema_migration_backfills_travel_and_adds_regular_link_columns(monkeypatch):
     engine = create_engine("sqlite://")
     with engine.begin() as database:
         database.execute(text("CREATE TABLE trips (id INTEGER PRIMARY KEY)"))
@@ -254,4 +254,4 @@ def test_schema_v6_migration_backfills_travel_and_adds_regular_link_columns(monk
     assert "regular_item_id" in invoice_columns
     assert {"regular_item_id", "page_count"}.issubset(attachment_columns)
     assert legacy_type == "travel"
-    assert schema_version == 6
+    assert schema_version == 7

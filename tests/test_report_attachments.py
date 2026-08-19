@@ -351,7 +351,7 @@ def test_integrity_check_covers_report_attachment_uid_lifecycle_and_file(monkeyp
 
 
 def test_schema_version_and_app_routes_include_report_attachments(tmp_path):
-    assert DATA_SCHEMA_VERSION == 6
+    assert DATA_SCHEMA_VERSION == 7
     assert "report_attachments" in ReportAttachment.metadata.tables
     routes = {route.path for route in create_app(frontend_dist_dir=tmp_path, enable_startup=False).routes}
     assert "/api/report-attachments/upload" in routes

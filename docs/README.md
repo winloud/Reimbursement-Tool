@@ -24,6 +24,7 @@
 - 桌面端视口支持边界：[decisions/0005-desktop-viewport-support.md](decisions/0005-desktop-viewport-support.md)
 - 常规报销数据模型：[decisions/0006-regular-reimbursement-model.md](decisions/0006-regular-reimbursement-model.md)
 - 行程完整日期存储：[decisions/0007-trip-full-date-storage.md](decisions/0007-trip-full-date-storage.md)
+- 跨报销单日期占用：[decisions/0008-report-day-occupancy.md](decisions/0008-report-day-occupancy.md)
 
 ## 测试依据
 - testing/

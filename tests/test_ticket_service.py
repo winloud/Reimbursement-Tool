@@ -15,7 +15,7 @@ from sqlalchemy import select
 from backend.models.invoice import Invoice
 from backend.models.trip import Trip
 from backend.schemas.invoice import InvoiceParsedData
-from backend.schemas.report import ReportCreate
+from backend.schemas.report import ReportCreate, TripWrite
 from backend.schemas.ticket import (
     RailTicketCandidate,
     RailTicketImportCandidate,
@@ -770,6 +770,57 @@ def test_import_merged_transfer_creates_one_trip_with_two_invoices(db, monkeypat
     assert all(invoice.amount_confirmed is False for invoice in invoices)
     assert all((upload_root / Path(invoice.file_path).relative_to("uploads")).is_file() for invoice in invoices)
     assert not token_dir.exists()
+
+
+def test_ticket_import_reassigns_day_occupancies_and_skips_another_report_claim(db, monkeypatch, tmp_path):
+    _upload_root, temp_root = configure_ticket_paths(monkeypatch, tmp_path)
+    blocker = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 10),
+            employee_name="张三",
+            purpose="先占用重叠日期",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_date=date(2026, 7, 10), arrive_date=date(2026, 7, 10))],
+        ),
+    )
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 11),
+            employee_name="张三",
+            purpose="车票导入占用",
+            daily_subsidy=Decimal("100.00"),
+        ),
+    )
+    token, _token_dir = write_preview_token(temp_root, report.id, [("a", b"ticket-a"), ("b", b"ticket-b")])
+    payload = RailTicketImportRequest(
+        token=token,
+        tickets=[
+            import_candidate(
+                "a",
+                travel_date=date(2026, 7, 10),
+                depart_station="杭州",
+                arrive_station="南京南",
+            ),
+            import_candidate(
+                "b",
+                travel_date=date(2026, 7, 11),
+                depart_station="南京南",
+                arrive_station="芜湖",
+            ),
+        ],
+        groups=[RailTicketImportGroup(ticket_ids=["a", "b"], merge=True)],
+    )
+
+    ticket_service.import_ticket_preview(db, report.id, payload)
+
+    db.refresh(blocker)
+    db.refresh(report)
+    assert blocker.occupied_dates == [date(2026, 7, 10)]
+    assert report.occupied_dates == [date(2026, 7, 11)]
+    assert report.subsidy_days == 1
+    assert report.subsidy_total == Decimal("100.00")
 
 
 def test_import_without_merge_creates_one_trip_per_ticket(db, monkeypatch, tmp_path):

@@ -579,8 +579,18 @@ const subsidySpanPosition = (span) => span.startIndex ?? span.endIndex ?? Number
 
 // 返回每次出差的行程索引区间。days 是该区间对合并后日期集合的新增天数，
 // 因此即使两个区间日期重叠，逐项相加也始终与后端的合并区间算法一致。
+// occupiedDateKeys 扣除他单已占日期；includedDateKeys 用于非草稿只展示后端已确认的本单占用。
 // 起止不成对时额外返回带 issue 的零天数项，并将整张单的所有区间天数归零。
-export const getSubsidySpans = (reportDate, trips = []) => {
+const normalizeSubsidyDateKeys = (dateKeys) => {
+  if (!dateKeys || typeof dateKeys[Symbol.iterator] !== "function") return new Set();
+  return new Set(
+    Array.from(dateKeys)
+      .map((value) => String(value ?? "").trim())
+      .filter((value) => /^\d{4}-\d{2}-\d{2}$/.test(value)),
+  );
+};
+
+export const getSubsidySpans = (reportDate, trips = [], occupiedDateKeys = [], includedDateKeys = null) => {
   const ranges = buildTripDateRanges(reportDate, trips);
   if (ranges.length === 0) return [];
 
@@ -623,7 +633,9 @@ export const getSubsidySpans = (reportDate, trips = []) => {
   }
 
   if (issues.length === 0) {
-    let mergedEnd = null;
+    const occupiedDates = normalizeSubsidyDateKeys(occupiedDateKeys);
+    const includedDates = includedDateKeys === null ? null : normalizeSubsidyDateKeys(includedDateKeys);
+    const countedDates = new Set();
     const chronologicalIntervals = [...intervals].sort(
       (left, right) =>
         left.start.getTime() - right.start.getTime() ||
@@ -631,13 +643,17 @@ export const getSubsidySpans = (reportDate, trips = []) => {
         left.startIndex - right.startIndex,
     );
     for (const interval of chronologicalIntervals) {
-      if (!mergedEnd || interval.start.getTime() > mergedEnd.getTime() + MS_PER_DAY) {
-        interval.days = daysBetween(interval.start, interval.end) + 1;
-      } else if (interval.end.getTime() > mergedEnd.getTime()) {
-        interval.days = daysBetween(mergedEnd, interval.end);
-      }
-      if (!mergedEnd || interval.end.getTime() > mergedEnd.getTime()) {
-        mergedEnd = interval.end;
+      for (
+        let cursor = new Date(interval.start.getTime());
+        cursor.getTime() <= interval.end.getTime();
+        cursor = new Date(cursor.getFullYear(), cursor.getMonth(), cursor.getDate() + 1)
+      ) {
+        const dateKey = formatDateInput(cursor);
+        if (countedDates.has(dateKey)) continue;
+        countedDates.add(dateKey);
+        if (!occupiedDates.has(dateKey) && (!includedDates || includedDates.has(dateKey))) {
+          interval.days += 1;
+        }
       }
     }
   }
@@ -671,8 +687,8 @@ export const getTripGapWarnings = (trips = [], spans = []) => {
   return warnings;
 };
 
-export const calculateSubsidyDays = (reportDate, trips) => {
-  const spans = getSubsidySpans(reportDate, trips);
+export const calculateSubsidyDays = (reportDate, trips, occupiedDateKeys = [], includedDateKeys = null) => {
+  const spans = getSubsidySpans(reportDate, trips, occupiedDateKeys, includedDateKeys);
   return spans.reduce((sum, span) => sum + span.days, 0);
 };
 
@@ -684,8 +700,12 @@ export const calculateSummary = ({
   trips,
   invoices,
   expenseItems = [],
+  occupiedDateKeys = [],
+  includedDateKeys = null,
 }) => {
-  const subsidyDays = calculateSubsidyDays(reportDate, trips);
+  const candidateSubsidyDays = calculateSubsidyDays(reportDate, trips);
+  const subsidyDays = calculateSubsidyDays(reportDate, trips, occupiedDateKeys, includedDateKeys);
+  const subsidyOverlapDays = Math.max(0, candidateSubsidyDays - subsidyDays);
   const hasManualSubsidy = manualSubsidyTotal !== null && manualSubsidyTotal !== undefined;
   const subsidyTotal = hasManualSubsidy ? toFiniteAmount(manualSubsidyTotal) : subsidyDays * Number(dailySubsidy || 0);
   const transportElectronicTotal = invoices
@@ -720,6 +740,7 @@ export const calculateSummary = ({
   const advance = Number(advanceAmount || 0);
   return {
     subsidyDays,
+    subsidyOverlapDays,
     subsidyTotal,
     transportTotal,
     otherExpenseTotal,
@@ -778,6 +799,22 @@ export const buildTripPayload = (trips) =>
         : trip.paper_invoice_amount,
     paper_invoice_count: Number(trip.paper_invoice_count || 0),
   }));
+
+export const buildReportOccupancySemanticKey = ({ form = {}, trips = [] } = {}) => {
+  const reportDateAffectsInference = trips.some(
+    (trip) => !toDateInputValue(trip.depart_date) || !toDateInputValue(trip.arrive_date),
+  );
+  return JSON.stringify({
+    report_date: reportDateAffectsInference ? form.report_date || null : null,
+    employee_name: nullableText(form.employee_name) || "",
+    subsidy_mode:
+      form.manual_subsidy_total === null || form.manual_subsidy_total === undefined ? "automatic" : "manual",
+    trips: buildTripPayload(trips).map(({ id, paper_invoice_amount, paper_invoice_count, ...trip }) => trip),
+  });
+};
+
+export const shouldUsePersistedOccupancyDates = ({ readonly, reportId, baselineKey, currentKey }) =>
+  Boolean(readonly || (reportId && baselineKey !== null && currentKey === baselineKey));
 
 export const buildReportPayload = ({ form, trips, expenseItems }) => ({
   ...buildBasePayload(form),
