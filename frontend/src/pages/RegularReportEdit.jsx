@@ -32,7 +32,6 @@ import RegularReportEditView from "./RegularReportEditView";
 import {
   buildRegularReportPayload,
   calculateRegularSummary,
-  canDeleteRegularItem,
   getRegularPdfGate,
   isRegularDraftEmpty,
   isRegularMode,
@@ -371,12 +370,16 @@ export default function RegularReportEdit() {
   const handleItemDragEnd = () => setDragIndex(null);
 
   const handleDeleteItem = (item) => {
-    if (!canDeleteRegularItem({ item, mode, invoices, attachments })) {
-      setError(mode === "invoice" ? "该项目已有发票，请先删除发票后再删除项目" : "该项目已有报销凭据，请先删除凭据后再删除项目");
-      return;
-    }
     setItems((current) => current.filter((candidate) => candidate.clientKey !== item.clientKey).map((candidate, index) => ({ ...candidate, sort_order: index + 1 })));
-    setToast("项目已删除，正在自动保存");
+    if (item.id) {
+      const belongsToRemovedItem = (file) => Number(file.regular_item_id) === Number(item.id);
+      setInvoices((current) => current.filter((invoice) => !belongsToRemovedItem(invoice)));
+      setAttachments((current) => current.filter((attachment) => !belongsToRemovedItem(attachment)));
+      setInvoiceQueue((current) => current.filter((invoice) => !belongsToRemovedItem(invoice)));
+      setSelectedInvoice((current) => (current && belongsToRemovedItem(current) ? null : current));
+    }
+    setError("");
+    setToast(item.id ? "项目及关联文件已删除，正在自动保存" : "项目已删除，正在自动保存");
   };
 
   const refreshInvoiceQueue = (uploaded, report) => {

@@ -40,6 +40,6 @@ class ExpenseItem(Base):
 
     @property
     def amount(self) -> Decimal:
-        if self.category == "fuel_subsidy" and self.reimbursable_amount is not None:
+        if (self.category == "fuel_subsidy" or self.category.startswith("custom:")) and self.reimbursable_amount is not None:
             return Decimal(self.reimbursable_amount).quantize(Decimal("0.01"))
         return self.invoice_total

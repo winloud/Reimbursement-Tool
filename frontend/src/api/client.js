@@ -163,6 +163,15 @@ export const executeMaintenanceUpdate = async (payload) => {
   return response.data;
 };
 
+export const cleanupMaintenanceUpdateStaging = async (previewIds) => {
+  const response = await apiClient.post(
+    "/api/maintenance/updates/staging/cleanup",
+    { preview_ids: previewIds, confirm_cleanup: true },
+    { timeout: 120000 },
+  );
+  return response.data;
+};
+
 export const switchMaintenanceVersion = async (payload) => {
   const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
   return response.data;
@@ -205,6 +214,15 @@ export const getReport = async (id) => {
   return response.data;
 };
 
+export const getReportDayOccupancies = async ({ employeeName = "", excludeReportId } = {}) => {
+  const params = { employee_name: String(employeeName ?? "").trim() };
+  if (excludeReportId !== null && excludeReportId !== undefined && String(excludeReportId).trim()) {
+    params.exclude_report_id = excludeReportId;
+  }
+  const response = await apiClient.get("/api/reports/day-occupancies", { params });
+  return response.data;
+};
+
 export const createReport = async (payload) => {
   const response = await apiClient.post("/api/reports", payload);
   return response.data;
@@ -212,6 +230,13 @@ export const createReport = async (payload) => {
 
 export const updateReport = async (id, payload) => {
   const response = await apiClient.put(`/api/reports/${id}`, payload);
+  return response.data;
+};
+
+export const deleteReportExpenseItem = async (reportId, category) => {
+  const response = await apiClient.delete(
+    `/api/reports/${encodeURIComponent(reportId)}/expense-items/${encodeURIComponent(category)}`,
+  );
   return response.data;
 };
 

@@ -2,7 +2,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from uuid import uuid4
 
-from sqlalchemy import Date, DateTime, Integer, Numeric, String
+from sqlalchemy import Boolean, Date, DateTime, Integer, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.connection import Base
@@ -30,6 +30,7 @@ class ExpenseReport(Base):
     total_amount: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     shortfall: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
     surplus: Mapped[Decimal] = mapped_column(Numeric(18, 2), default=Decimal("0.00"), nullable=False)
+    day_occupancy_refresh_pending: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
@@ -44,6 +45,12 @@ class ExpenseReport(Base):
     )
     invoices = relationship("Invoice", back_populates="report", cascade="all, delete-orphan")
     attachments = relationship("ReportAttachment", back_populates="report", cascade="all, delete-orphan")
+    day_occupancies = relationship(
+        "ReportDayOccupancy",
+        back_populates="report",
+        cascade="all, delete-orphan",
+        order_by="ReportDayOccupancy.occupied_on",
+    )
 
     @property
     def active_invoices(self):
@@ -93,3 +100,7 @@ class ExpenseReport(Base):
         from backend.services.report_service import report_trip_date_bounds
 
         return report_trip_date_bounds(self)[1]
+
+    @property
+    def occupied_dates(self) -> list[date]:
+        return sorted({occupancy.occupied_on for occupancy in self.day_occupancies})

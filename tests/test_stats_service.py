@@ -7,6 +7,7 @@ import pytest
 from fastapi import HTTPException
 
 from backend.models.invoice import Invoice
+from backend.models.report_day_occupancy import ReportDayOccupancy
 from backend.schemas.report import RegularItemWrite, ReportCreate, TripWrite
 from backend.services.report_service import create_report, recalculate_report_totals
 from backend.services.stats_service import get_stats_calendar, get_stats_category, get_stats_summary
@@ -30,17 +31,25 @@ def make_report(
     *,
     report_date: date,
     status: str,
+    employee_name: str | None = None,
     amount: str = "0.00",
     category: str = "luggage",
     daily_subsidy: str = "0.00",
+    manual_subsidy_total: str | None = None,
     trips: list[TripWrite] | None = None,
 ):
     report = create_report(
         db,
         ReportCreate(
             report_date=report_date,
+            employee_name=employee_name,
             purpose=f"{status}-{report_date}",
             daily_subsidy=Decimal(daily_subsidy),
+            manual_subsidy_total=(
+                Decimal(manual_subsidy_total)
+                if manual_subsidy_total is not None
+                else None
+            ),
             trips=trips or [],
         ),
     )
@@ -55,7 +64,7 @@ def make_report(
     return report
 
 
-def test_stats_summary_excludes_drafts_and_splits_checked_submitted_pending_amounts(db):
+def test_stats_summary_includes_drafts_in_pending_and_splits_reimbursed_amounts(db):
     make_report(db, report_date=date(2026, 6, 1), status="draft", amount="999.00")
     make_report(db, report_date=date(2026, 6, 2), status="printed", amount="120.00")
     make_report(db, report_date=date(2026, 6, 3), status="reimbursed", amount="300.00")
@@ -66,27 +75,27 @@ def test_stats_summary_excludes_drafts_and_splits_checked_submitted_pending_amou
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-01", end_month="2026-06")
 
-    assert summary.selected_period.pending_amount == Decimal("360.00")
-    assert summary.selected_period.pending_count == 4
+    assert summary.selected_period.pending_amount == Decimal("1359.00")
+    assert summary.selected_period.pending_count == 5
     assert summary.selected_period.reimbursed_amount == Decimal("350.00")
     assert summary.selected_period.reimbursed_count == 2
-    assert summary.selected_period.total_amount == Decimal("710.00")
-    assert summary.selected_period.total_count == 6
-    assert summary.current_month.pending_amount == Decimal("190.00")
-    assert summary.current_month.pending_count == 2
+    assert summary.selected_period.total_amount == Decimal("1709.00")
+    assert summary.selected_period.total_count == 7
+    assert summary.current_month.pending_amount == Decimal("1189.00")
+    assert summary.current_month.pending_count == 3
     assert summary.current_month.reimbursed_amount == Decimal("300.00")
     assert summary.current_month.reimbursed_count == 1
-    assert summary.current_month.total_amount == Decimal("490.00")
-    assert summary.current_month.total_count == 3
-    assert summary.current_year.pending_amount == Decimal("360.00")
-    assert summary.current_year.pending_count == 4
+    assert summary.current_month.total_amount == Decimal("1489.00")
+    assert summary.current_month.total_count == 4
+    assert summary.current_year.pending_amount == Decimal("1359.00")
+    assert summary.current_year.pending_count == 5
     assert summary.current_year.reimbursed_amount == Decimal("350.00")
     assert summary.current_year.reimbursed_count == 2
-    assert summary.current_year.total_amount == Decimal("710.00")
-    assert summary.current_year.total_count == 6
+    assert summary.current_year.total_amount == Decimal("1709.00")
+    assert summary.current_year.total_count == 7
 
 
-def test_stats_summary_counts_trip_days_for_all_non_draft_reports(db):
+def test_stats_summary_counts_occupied_person_days_for_active_reports_including_drafts(db):
     make_report(
         db,
         report_date=date(2026, 6, 1),
@@ -122,10 +131,10 @@ def test_stats_summary_counts_trip_days_for_all_non_draft_reports(db):
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-06", end_month="2026-06")
 
-    assert summary.selected_period.trip_days == 7
+    assert summary.selected_period.trip_days == 11
 
 
-def test_stats_trend_includes_all_non_draft_reports(db):
+def test_stats_trend_includes_draft_financials_and_occupancies(db):
     make_report(
         db,
         report_date=date(2026, 5, 4),
@@ -147,19 +156,26 @@ def test_stats_trend_includes_all_non_draft_reports(db):
         amount="200.00",
         trips=[TripWrite(sort_order=1, depart_month=5, depart_day=15, arrive_month=5, arrive_day=16)],
     )
+    make_report(
+        db,
+        report_date=date(2026, 5, 20),
+        status="draft",
+        amount="888.00",
+        trips=[TripWrite(sort_order=1, depart_month=5, depart_day=20, arrive_month=5, arrive_day=21)],
+    )
 
     summary = get_stats_summary(db, reference_date=date(2026, 6, 15), start_month="2026-05", end_month="2026-06")
 
     assert [item.month for item in summary.monthly_trend] == ["2026-05", "2026-06"]
     may = next(item for item in summary.monthly_trend if item.month == "2026-05")
-    assert may.pending_amount == Decimal("1199.00")
+    assert may.pending_amount == Decimal("2087.00")
     assert may.reimbursed_amount == Decimal("180.00")
-    assert may.total_amount == Decimal("1379.00")
-    assert may.total_count == 3
-    assert may.trip_days == 10
+    assert may.total_amount == Decimal("2267.00")
+    assert may.total_count == 4
+    assert may.trip_days == 12
 
 
-def test_stats_category_excludes_only_drafts_and_keeps_confirmed_invoice_rules(db):
+def test_stats_category_includes_drafts_and_keeps_confirmed_invoice_rules(db):
     reimbursed = make_report(
         db,
         report_date=date(2026, 6, 3),
@@ -186,10 +202,11 @@ def test_stats_category_excludes_only_drafts_and_keeps_confirmed_invoice_rules(d
         "accommodation": Decimal("300.00"),
         "subsidy": Decimal("100.00"),
         "postal": Decimal("80.00"),
+        "city_transport": Decimal("900.00"),
     }
 
 
-def test_stats_calendar_excludes_only_draft_trip_days_with_month_detail(db):
+def test_stats_calendar_uses_unique_occupied_dates_including_drafts(db):
     make_report(
         db,
         report_date=date(2026, 5, 31),
@@ -222,7 +239,7 @@ def test_stats_calendar_excludes_only_draft_trip_days_with_month_detail(db):
 
     assert calendar.year == 2026
     assert calendar.month == 6
-    assert calendar.total_days == 8
+    assert calendar.total_days == 11
     assert calendar.year_dates == [
         date(2026, 6, 1),
         date(2026, 6, 2),
@@ -232,6 +249,9 @@ def test_stats_calendar_excludes_only_draft_trip_days_with_month_detail(db):
         date(2026, 6, 13),
         date(2026, 6, 20),
         date(2026, 6, 21),
+        date(2026, 6, 22),
+        date(2026, 6, 23),
+        date(2026, 6, 24),
     ]
     assert calendar.month_dates == [
         date(2026, 6, 1),
@@ -242,8 +262,86 @@ def test_stats_calendar_excludes_only_draft_trip_days_with_month_detail(db):
         date(2026, 6, 13),
         date(2026, 6, 20),
         date(2026, 6, 21),
+        date(2026, 6, 22),
+        date(2026, 6, 23),
+        date(2026, 6, 24),
     ]
-    assert [(item.month, item.days) for item in calendar.months] == [("2026-06", 8)]
+    assert [(item.month, item.days) for item in calendar.months] == [("2026-06", 11)]
+
+
+def test_stats_reads_persisted_occupancies_without_traversing_trips(db):
+    report = make_report(
+        db,
+        report_date=date(2026, 6, 8),
+        status="draft",
+        employee_name="员工甲",
+    )
+    db.add(
+        ReportDayOccupancy(
+            report_id=report.id,
+            employee_key="员工甲",
+            occupied_on=date(2026, 6, 9),
+        )
+    )
+    db.commit()
+
+    summary = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        start_month="2026-06",
+        end_month="2026-06",
+    )
+    calendar = get_stats_calendar(
+        db,
+        year=2026,
+        month=6,
+        start_month="2026-06",
+        end_month="2026-06",
+    )
+
+    assert summary.selected_period.trip_days == 1
+    assert calendar.month_dates == [date(2026, 6, 9)]
+
+
+def test_stats_counts_same_date_for_different_employees_as_two_person_days_but_one_calendar_day(db):
+    make_report(
+        db,
+        report_date=date(2026, 6, 10),
+        status="draft",
+        employee_name="员工甲",
+        trips=[TripWrite(sort_order=1, depart_date=date(2026, 6, 10), arrive_date=date(2026, 6, 10))],
+    )
+    make_report(
+        db,
+        report_date=date(2026, 6, 10),
+        status="printed",
+        employee_name="员工乙",
+        manual_subsidy_total="80.00",
+        trips=[TripWrite(sort_order=1, depart_date=date(2026, 6, 10), arrive_date=date(2026, 6, 10))],
+    )
+
+    summary = get_stats_summary(
+        db,
+        reference_date=date(2026, 6, 15),
+        start_month="2026-06",
+        end_month="2026-06",
+    )
+    calendar = get_stats_calendar(
+        db,
+        year=2026,
+        month=6,
+        start_month="2026-06",
+        end_month="2026-06",
+    )
+
+    assert summary.selected_period.trip_days == 2
+    assert summary.selected_period.total_count == 2
+    assert summary.selected_period.total_amount == Decimal("80.00")
+    assert summary.selected_period.pending_count == 2
+    assert summary.selected_period.pending_amount == Decimal("80.00")
+    assert summary.monthly_trend[0].trip_days == 2
+    assert calendar.total_days == 1
+    assert calendar.month_dates == [date(2026, 6, 10)]
 
 
 def test_stats_month_range_supports_cross_year_trend_and_trip_days(db):
@@ -263,6 +361,7 @@ def test_stats_month_range_supports_cross_year_trend_and_trip_days(db):
     assert summary.selected_period.total_amount == Decimal("700.00")
     assert summary.selected_period.trip_days == 3
     assert [item.month for item in summary.monthly_trend] == ["2025-12", "2026-01"]
+    assert [item.trip_days for item in summary.monthly_trend] == [1, 2]
 
 
 def test_stats_calendar_places_january_report_december_trip_in_previous_year(db):
@@ -405,13 +504,13 @@ def test_stats_summary_defaults_to_travel_and_regular_uses_exact_date_and_mode_f
 
     assert travel.selected_period.total_amount == Decimal("50.00")
     assert travel.selected_period.total_count == 1
-    assert regular.selected_period.total_amount == Decimal("200.00")
-    assert regular.selected_period.pending_amount == Decimal("200.00")
-    assert regular.selected_period.total_count == 2
+    assert regular.selected_period.total_amount == Decimal("1199.00")
+    assert regular.selected_period.pending_amount == Decimal("1199.00")
+    assert regular.selected_period.total_count == 3
     assert regular.selected_period.trip_days == 0
-    assert regular.monthly_trend[0].total_amount == Decimal("200.00")
-    assert invoice_only.selected_period.total_amount == Decimal("80.00")
-    assert invoice_only.selected_period.total_count == 1
+    assert regular.monthly_trend[0].total_amount == Decimal("1199.00")
+    assert invoice_only.selected_period.total_amount == Decimal("1079.00")
+    assert invoice_only.selected_period.total_count == 2
 
 
 def test_stats_summary_rejects_regular_mode_for_travel(db):

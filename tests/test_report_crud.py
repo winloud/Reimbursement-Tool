@@ -110,6 +110,68 @@ def test_report_read_invoice_count_includes_electronic_and_paper_invoices(db):
     assert ReportRead.model_validate(report).invoice_count == 2
 
 
+def test_removing_trip_soft_deletes_its_invoices_and_keeps_other_trip_files(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 8, 19),
+            daily_subsidy=Decimal("0.00"),
+            trips=[
+                TripWrite(sort_order=1, depart_date=date(2026, 8, 17), arrive_date=date(2026, 8, 17)),
+                TripWrite(sort_order=2, depart_date=date(2026, 8, 18), arrive_date=date(2026, 8, 18)),
+            ],
+        ),
+    )
+    removed_trip, kept_trip = sorted(report.trips, key=lambda trip: trip.sort_order)
+    removed_invoice = Invoice(
+        report_id=report.id,
+        trip_id=removed_trip.id,
+        expense_category="transport_fare",
+        file_path="uploads/removed-trip.pdf",
+        file_type="pdf",
+        amount=Decimal("34.50"),
+        amount_confirmed=True,
+    )
+    kept_invoice = Invoice(
+        report_id=report.id,
+        trip_id=kept_trip.id,
+        expense_category="transport_fare",
+        file_path="uploads/kept-trip.pdf",
+        file_type="pdf",
+        amount=Decimal("184.00"),
+        amount_confirmed=True,
+    )
+    db.add_all([removed_invoice, kept_invoice])
+    db.commit()
+
+    updated = update_report(
+        db,
+        report.id,
+        ReportUpdate(
+            report_date=date(2026, 8, 19),
+            daily_subsidy=Decimal("0.00"),
+            trips=[
+                TripWrite(
+                    id=kept_trip.id,
+                    sort_order=1,
+                    depart_date=kept_trip.depart_date,
+                    arrive_date=kept_trip.arrive_date,
+                )
+            ],
+        ),
+    )
+    db.refresh(removed_invoice)
+    db.refresh(kept_invoice)
+
+    assert [trip.id for trip in updated.trips] == [kept_trip.id]
+    assert removed_invoice.deleted_at is not None
+    assert removed_invoice.trip_id is None
+    assert kept_invoice.deleted_at is None
+    assert kept_invoice.trip_id == kept_trip.id
+    assert [invoice.id for invoice in updated.active_invoices] == [kept_invoice.id]
+    assert updated.total_amount == Decimal("184.00")
+
+
 def test_trip_write_derives_month_and_day_from_dates():
     trip = TripWrite(sort_order=1, depart_date=date(2025, 12, 30), arrive_date=date(2026, 1, 2))
 

@@ -81,6 +81,22 @@ class DatabaseIntegrityCheckRead(BaseModel):
     issues: list[DatabaseIntegrityIssueRead] = Field(default_factory=list)
 
 
+class UpdateStagingPackageRead(BaseModel):
+    preview_id: str
+    app_version: str | None = None
+    size_bytes: int = 0
+    modified_at: str | None = None
+    valid: bool = False
+    expired: bool = False
+
+
+class UpdateStagingInfoRead(BaseModel):
+    retention_days: int = 7
+    total_count: int = 0
+    total_size_bytes: int = 0
+    packages: list[UpdateStagingPackageRead] = Field(default_factory=list)
+
+
 class MaintenanceInfoRead(BaseModel):
     app_version: str
     app_root: str
@@ -97,6 +113,7 @@ class MaintenanceInfoRead(BaseModel):
     database_exists: bool
     uploads_exists: bool
     backups: list[BackupRead] = Field(default_factory=list)
+    update_staging: UpdateStagingInfoRead = Field(default_factory=UpdateStagingInfoRead)
     qr_engine: DiagnosticQrEngineRead | None = None
     browser_runtime: DiagnosticBrowserRuntimeRead | None = None
     log_file: DiagnosticLogFileRead | None = None
@@ -192,6 +209,27 @@ class VersionCleanupRequest(BaseModel):
 
 class VersionCleanupRead(BaseModel):
     deleted_versions: list[VersionDeleteRead] = Field(default_factory=list)
+
+
+class UpdateStagingCleanupRequest(BaseModel):
+    preview_ids: list[str] = Field(default_factory=list)
+    confirm_cleanup: bool = False
+
+
+class UpdateStagingDeleteRead(BaseModel):
+    deleted: bool
+    preview_id: str
+    deleted_path: str
+
+
+class UpdateStagingCleanupFailureRead(BaseModel):
+    preview_id: str
+    message: str
+
+
+class UpdateStagingCleanupRead(BaseModel):
+    deleted_packages: list[UpdateStagingDeleteRead] = Field(default_factory=list)
+    failed_packages: list[UpdateStagingCleanupFailureRead] = Field(default_factory=list)
 
 
 class UpdatePreviewRead(BaseModel):

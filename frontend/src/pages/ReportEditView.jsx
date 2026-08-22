@@ -14,7 +14,6 @@ import {
   FormControlLabel,
   IconButton,
   InputAdornment,
-  ListItemIcon,
   Menu,
   MenuItem,
   Snackbar,
@@ -124,6 +123,8 @@ export default function ReportEditView({
   const { form, handleChange } = basicInfo;
   const {
     tripYearRangeLabel,
+    subsidyOccupiedDateKeys,
+    subsidyIncludedDateKeys,
     handleOpenTicketImport,
     trips,
     dragIndex,
@@ -419,6 +420,8 @@ export default function ReportEditView({
             <TripTimeline
               reportDate={form.report_date}
               dailySubsidy={form.daily_subsidy}
+              occupiedDateKeys={subsidyOccupiedDateKeys}
+              includedDateKeys={subsidyIncludedDateKeys}
               readonly={readonly}
               saveState={saveState}
               uploadState={uploadState}
@@ -528,9 +531,6 @@ export default function ReportEditView({
               ))}
               {addableExpenseCategories.length > 0 && <Divider />}
               <MenuItem onClick={handleOpenCustomExpense}>
-                <ListItemIcon>
-                  <AddIcon fontSize="small" />
-                </ListItemIcon>
                 自定义费用…
               </MenuItem>
             </Menu>
@@ -644,6 +644,11 @@ export default function ReportEditView({
                         {hasTripMarkerIssue ? "起止未成对" : `${summary.subsidyDays} 天`}
                       </Typography>
                     </Stack>
+                  )}
+                  {summary.subsidyOverlapDays > 0 && (
+                    <Typography variant="caption" color="warning.dark">
+                      有 {summary.subsidyOverlapDays} 个重叠日期未计入
+                    </Typography>
                   )}
                 </Stack>
 

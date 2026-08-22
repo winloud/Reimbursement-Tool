@@ -3,9 +3,11 @@ import { describe, it } from "node:test";
 
 import {
   apiClient,
+  deleteReportExpenseItem,
   discardRailTicketPreview,
   getInvoiceFileUrl,
   getInvoiceOpenCapability,
+  getReportDayOccupancies,
   importRailTickets,
   openInvoiceLocally,
   prepareDataExport,
@@ -108,6 +110,51 @@ describe("api client release defaults", () => {
         report_type: "regular",
         regular_mode: "no_invoice",
       });
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("deletes an other-expense item through the report-scoped cascade endpoint", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return { data: { success: true, data: {} }, status: 200, statusText: "OK", headers: {}, config };
+    };
+
+    try {
+      const deleted = await deleteReportExpenseItem(29, "custom:宴请");
+
+      assert.equal(deleted.success, true);
+      assert.equal(requests[0].method, "delete");
+      assert.equal(requests[0].url, "/api/reports/29/expense-items/custom%3A%E5%AE%B4%E8%AF%B7");
+    } finally {
+      apiClient.defaults.adapter = originalAdapter;
+    }
+  });
+
+  it("queries occupied travel dates for one employee and excludes the current report", async () => {
+    const originalAdapter = apiClient.defaults.adapter;
+    const requests = [];
+    apiClient.defaults.adapter = async (config) => {
+      requests.push(config);
+      return {
+        data: { success: true, data: [{ date: "2026-07-19", report_id: 1 }] },
+        status: 200,
+        statusText: "OK",
+        headers: {},
+        config,
+      };
+    };
+
+    try {
+      const result = await getReportDayOccupancies({ employeeName: "  张三  ", excludeReportId: 2 });
+
+      assert.deepEqual(result.data, [{ date: "2026-07-19", report_id: 1 }]);
+      assert.equal(requests[0].method, "get");
+      assert.equal(requests[0].url, "/api/reports/day-occupancies");
+      assert.deepEqual(requests[0].params, { employee_name: "张三", exclude_report_id: 2 });
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }

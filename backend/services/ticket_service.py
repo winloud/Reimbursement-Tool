@@ -30,7 +30,13 @@ from backend.services.invoice_duplicate_service import (
 )
 from backend.services.invoice_service import build_invoice_storage_path
 from backend.services.pdf_text_decoder import PdfTextExtraction, PdfTextRun, extract_pdf_text_runs
-from backend.services.report_service import ensure_report_writable, get_report_or_404, recalculate_report_totals
+from backend.services.report_service import (
+    TripDateError,
+    ensure_report_writable,
+    get_report_or_404,
+    recalculate_report_totals,
+    replace_report_day_occupancies,
+)
 from backend.services.settings_service import get_or_create_settings
 
 TEMP_ROOT = UPLOAD_ROOT / ".ticket-import"
@@ -698,6 +704,10 @@ def import_ticket_preview(db: Session, report_id: int, payload: RailTicketImport
                     invoice.file_path = final_relative.as_posix()
                     created_invoices.append(invoice)
 
+        try:
+            replace_report_day_occupancies(db, report)
+        except TripDateError as exc:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
         recalculate_report_totals(report)
         db.commit()
         result = RailTicketImportResult(

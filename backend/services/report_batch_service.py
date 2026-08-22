@@ -24,9 +24,10 @@ from backend.services.report_service import (
     REPORT_STATUS_LABELS,
     REPORT_STATUS_ORDER,
     apply_report_status,
-    ensure_fuel_subsidy_printable,
+    ensure_reimbursable_expenses_printable,
     ensure_report_ready_to_leave_draft,
     purge_report,
+    release_report_day_occupancies,
     restore_deleted_report,
 )
 from backend.services.settings_service import get_or_create_settings
@@ -76,7 +77,7 @@ def build_batch_report_pdf_zip(db: Session, report_ids: list[int]) -> tuple[byte
             failures.append({"report_id": report_id, "reason": "报销单不存在或已删除"})
             continue
         try:
-            ensure_fuel_subsidy_printable(report)
+            ensure_reimbursable_expenses_printable(report)
             pdf_items.append(
                 (
                     report,
@@ -133,6 +134,7 @@ def batch_soft_delete_draft_reports(db: Session, report_ids: list[int]) -> Repor
             for attachment in report.attachments:
                 if attachment.deleted_at is None:
                     attachment.deleted_at = deleted_at
+            release_report_day_occupancies(db, report)
         db.commit()
 
     return ReportBatchDeleteResult(deleted_count=len(candidates), skipped_count=len(skipped), skipped=skipped)
@@ -221,7 +223,7 @@ def batch_restore_deleted_reports(db: Session, report_ids: list[int]) -> ReportB
     restored_count = 0
     skipped: list[ReportBatchDeleteSkipped] = []
 
-    for report_id in unique_report_ids(report_ids):
+    for report_id in sorted(unique_report_ids(report_ids)):
         try:
             restore_deleted_report(db, report_id)
             restored_count += 1

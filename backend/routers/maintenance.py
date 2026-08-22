@@ -20,6 +20,8 @@ from backend.schemas.maintenance import (
     RestoreExecuteRead,
     RestoreExecuteRequest,
     RestorePreviewRead,
+    UpdateStagingCleanupRead,
+    UpdateStagingCleanupRequest,
     UpdateExecuteRead,
     UpdateExecuteRequest,
     UpdatePreviewRead,
@@ -33,6 +35,7 @@ from backend.schemas.maintenance import (
 from backend.services.maintenance_service import (
     build_diagnostics_package,
     check_database_integrity,
+    cleanup_selected_update_staging,
     cleanup_old_backups,
     cleanup_old_installed_versions,
     create_backup,
@@ -114,6 +117,13 @@ def post_update_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[Upda
 @router.post("/updates/execute", response_model=ApiResponse[UpdateExecuteRead])
 def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExecuteRead]:
     return ApiResponse(data=execute_update(payload.preview_id, payload.confirm_update), message="更新已安装，重启后生效")
+
+
+@router.post("/updates/staging/cleanup", response_model=ApiResponse[UpdateStagingCleanupRead])
+def post_update_staging_cleanup(payload: UpdateStagingCleanupRequest) -> ApiResponse[UpdateStagingCleanupRead]:
+    result = cleanup_selected_update_staging(payload.preview_ids, payload.confirm_cleanup)
+    message = "更新暂存包已清理" if not result.failed_packages else "部分更新暂存包清理失败"
+    return ApiResponse(data=result, message=message)
 
 
 @router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])

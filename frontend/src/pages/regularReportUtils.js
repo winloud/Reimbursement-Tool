@@ -180,12 +180,6 @@ export const validateRegularReport = ({ form, mode, items = [], invoices = [] })
   return "";
 };
 
-export const canDeleteRegularItem = ({ item, mode, invoices = [], attachments = [] }) => {
-  if (!item?.id) return true;
-  const derived = getRegularItemDerived({ item, mode, invoices, attachments });
-  return derived.invoices.length === 0 && derived.attachments.length === 0;
-};
-
 // 汇总卡的 PDF 门槛：先看未确认发票，再看必填信息；预览只受未确认发票限制。
 // 返回结构与 getTripPdfGate 保持一致，两页共用同一段消费代码。
 export const getRegularPdfGate = ({ form, mode, items = [], invoices = [] }) => {

@@ -6,6 +6,8 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from backend.schemas.report_attachment import ReportAttachmentRead
 
+DateValue = date
+
 REPORT_STATUS_VALUES = ("draft", "checked", "printed", "reimbursed")
 ReportStatus = Literal["draft", "checked", "printed", "reimbursed"]
 ReportInvoiceState = Literal["all", "has_unconfirmed", "all_confirmed", "no_invoice"]
@@ -236,6 +238,13 @@ class ReportFilterOptionsRead(BaseModel):
     categories: list[ReportCategoryOption] = Field(default_factory=list)
 
 
+class ReportDayOccupancyRead(BaseModel):
+    date: DateValue = Field(validation_alias="occupied_on")
+    report_id: int
+
+    model_config = ConfigDict(from_attributes=True)
+
+
 class TripRead(BaseModel):
     id: int
     sort_order: int
@@ -320,6 +329,7 @@ class ReportRead(ReportBase):
 
 
 class ReportDetailRead(ReportRead):
+    occupied_dates: list[date] = Field(default_factory=list)
     trips: list[TripRead] = Field(default_factory=list)
     expense_items: list[ExpenseItemRead] = Field(default_factory=list)
     regular_items: list[RegularItemRead] = Field(default_factory=list)

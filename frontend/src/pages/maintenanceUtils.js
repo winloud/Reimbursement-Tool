@@ -43,6 +43,20 @@ export const updatePreviewSummary = (preview) => {
   return `版本 ${preview.app_version}，${preview.files_total || 0} 个文件，${formatFileSize(preview.size_bytes)}`;
 };
 
+export const defaultUpdateStagingSelection = (packages = []) =>
+  packages.filter((item) => item.expired).map((item) => item.preview_id);
+
+export const selectedUpdateStagingSummary = (packages = [], selectedIds = []) => {
+  const selectedIdSet = new Set(selectedIds);
+  const selected = packages.filter((item) => selectedIdSet.has(item.preview_id));
+  return {
+    count: selected.length,
+    size_bytes: selected.reduce((total, item) => total + Number(item.size_bytes || 0), 0),
+  };
+};
+
+export const formatUpdateStagingTime = (value) => (value ? value.replace("T", " ").slice(0, 19) : "-");
+
 export const yesNo = (value) => (value ? "可用" : "不可用");
 
 export const browserRuntimeSummary = (runtime) => {

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import zipfile
 from io import BytesIO
@@ -203,6 +204,62 @@ def write_regular_database_with_travel_fields(path: Path) -> None:
                 (3, 'travel-fields-allowed', 'travel', NULL, 'draft', NULL,
                  '财务部', '出差', 10, 1, 10, NULL, NULL, NULL, 0, 10, 0);
             PRAGMA user_version = 6;
+            """
+        )
+        connection.commit()
+    finally:
+        connection.close()
+
+
+def write_occupancy_database_with_integrity_issues(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    connection = sqlite3.connect(path)
+    try:
+        connection.executescript(
+            """
+            CREATE TABLE expense_reports (
+                id INTEGER PRIMARY KEY,
+                report_uid TEXT,
+                report_type TEXT,
+                status TEXT,
+                report_date DATE,
+                employee_name TEXT,
+                deleted_at DATETIME
+            );
+            CREATE TABLE trips (
+                id INTEGER PRIMARY KEY,
+                report_id INTEGER,
+                sort_order INTEGER,
+                depart_date DATE,
+                depart_month INTEGER,
+                depart_day INTEGER,
+                depart_hour INTEGER,
+                arrive_date DATE,
+                arrive_month INTEGER,
+                arrive_day INTEGER,
+                arrive_hour INTEGER,
+                subsidy_start BOOLEAN,
+                subsidy_end BOOLEAN
+            );
+            CREATE TABLE report_day_occupancies (
+                id INTEGER PRIMARY KEY,
+                report_id INTEGER,
+                employee_key TEXT,
+                occupied_on DATE
+            );
+            INSERT INTO expense_reports VALUES
+                (1, 'report-1', 'travel', 'draft', '2026-07-19', '\t张三　', NULL),
+                (2, 'report-2', 'regular', 'draft', '2026-07-19', '李四', NULL),
+                (3, 'report-3', 'travel', 'draft', '2026-07-19', '王五', '2026-07-20 00:00:00');
+            INSERT INTO trips VALUES
+                (1, 1, 1, '2026-07-18', 7, 18, 8, '2026-07-19', 7, 19, 18, 0, 0);
+            INSERT INTO report_day_occupancies VALUES
+                (10, 999, '孤立人', '2026-07-18'),
+                (11, 2, '李四', '2026-07-18'),
+                (12, 3, '王五', '2026-07-18'),
+                (13, 1, '李四', '2026-07-20'),
+                (14, 1, '张三', '2026-07-18');
+            PRAGMA user_version = 7;
             """
         )
         connection.commit()
@@ -472,6 +529,7 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.browser_runtime.webview2_available is True
     assert info.browser_runtime.chromium_name == "Google Chrome"
     assert all(version.data_compatibility is not None for version in info.installed_versions)
+    assert info.update_staging.total_count == 0
 
 
 def test_database_integrity_check_reports_business_and_attachment_issues(
@@ -523,6 +581,29 @@ def test_database_integrity_check_reports_travel_fields_on_regular_reports(
     assert result.status == "error"
     assert issue.count == 1
     assert issue.details == ["report_id=1"]
+
+
+def test_database_integrity_check_covers_report_day_occupancy_business_rules(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    write_occupancy_database_with_integrity_issues(paths["database"])
+
+    result = maintenance_service.check_database_integrity()
+
+    issues = {issue.code: issue for issue in result.issues}
+    assert result.status == "error"
+    assert {
+        "orphan_report_day_occupancy",
+        "occupancy_on_inactive_or_regular_report",
+        "occupancy_employee_mismatch",
+        "occupancy_date_outside_candidate_range",
+    }.issubset(issues)
+    assert issues["occupancy_on_inactive_or_regular_report"].count == 2
+    assert issues["occupancy_employee_mismatch"].count == 1
+    assert issues["occupancy_date_outside_candidate_range"].details == [
+        "occupancy_id=13, report_id=1, occupied_on=2026-07-20"
+    ]
 
 
 def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
@@ -629,6 +710,87 @@ def test_update_preview_rejects_malicious_zip_path(monkeypatch: pytest.MonkeyPat
     assert exc_info.value.status_code == 400
 
 
+def test_update_staging_info_reports_valid_invalid_and_expired_packages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    valid_preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+    old_preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.1"), "release.zip")
+    )
+    old_package = paths["update_staging"] / old_preview.preview_id / "release.zip"
+    old_timestamp = old_package.stat().st_mtime - (maintenance_service.UPDATE_STAGING_RETENTION_DAYS + 1) * 24 * 60 * 60
+    os.utime(old_package, (old_timestamp, old_timestamp))
+
+    invalid_preview_id = "a" * 32
+    invalid_dir = paths["update_staging"] / invalid_preview_id
+    invalid_dir.mkdir(parents=True)
+    (invalid_dir / "release.zip").write_bytes(b"not a zip")
+
+    info = maintenance_service.get_update_staging_info()
+
+    assert info.total_count == 3
+    assert info.total_size_bytes > 0
+    packages = {item.preview_id: item for item in info.packages}
+    assert packages[valid_preview.preview_id].valid is True
+    assert packages[valid_preview.preview_id].app_version == "1.2.0"
+    assert packages[old_preview.preview_id].expired is True
+    assert packages[invalid_preview_id].valid is False
+    assert packages[invalid_preview_id].app_version is None
+
+
+def test_cleanup_selected_update_staging_only_deletes_selected_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    selected = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+    kept = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.1"), "release.zip")
+    )
+
+    result = maintenance_service.cleanup_selected_update_staging([selected.preview_id], confirm_cleanup=True)
+
+    assert [item.preview_id for item in result.deleted_packages] == [selected.preview_id]
+    assert result.failed_packages == []
+    assert not (paths["update_staging"] / selected.preview_id).exists()
+    assert (paths["update_staging"] / kept.preview_id / "release.zip").is_file()
+
+
+def test_cleanup_selected_update_staging_requires_confirmation_and_reports_missing_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    configure_runtime(monkeypatch, tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.cleanup_selected_update_staging(["a" * 32], confirm_cleanup=False)
+    assert exc_info.value.status_code == 400
+
+    result = maintenance_service.cleanup_selected_update_staging(["b" * 32], confirm_cleanup=True)
+
+    assert result.deleted_packages == []
+    assert result.failed_packages[0].preview_id == "b" * 32
+    assert "不存在" in result.failed_packages[0].message
+
+
+def test_cleanup_selected_update_staging_rejects_path_traversal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.cleanup_selected_update_staging([f"../{preview.preview_id}"], confirm_cleanup=True)
+
+    assert exc_info.value.status_code == 400
+    assert (paths["update_staging"] / preview.preview_id / "release.zip").is_file()
+
+
 def test_execute_update_installs_new_version_and_creates_pre_update_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
     write_database(paths["database"], "current")
@@ -650,6 +812,7 @@ def test_execute_update_installs_new_version_and_creates_pre_update_backup(monke
     current = json.loads((paths["app_root"] / "current-version.json").read_text(encoding="utf-8"))
     assert current["current_version"] == "1.2.0"
     assert current["data_schema_version"] == maintenance_service.DATA_SCHEMA_VERSION
+    assert not (paths["update_staging"] / preview.preview_id).exists()
 
 
 def test_execute_update_refuses_unknown_data_compatibility(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -700,6 +863,7 @@ def test_execute_update_refuses_existing_version_directory(monkeypatch: pytest.M
         maintenance_service.execute_update(preview.preview_id, confirm_update=True)
 
     assert exc_info.value.status_code == 409
+    assert (paths["update_staging"] / preview.preview_id / "release.zip").is_file()
 
 
 def test_switch_installed_version_updates_current_version_and_creates_backup(

@@ -8,10 +8,14 @@ from sqlalchemy import select
 
 from backend.models.invoice import Invoice
 from backend.models.report import ExpenseReport
-from backend.schemas.report import ReportCreate
+from backend.schemas.report import ReportCreate, TripWrite
 from backend.services import report_batch_service
 from backend.services import report_service
-from backend.services.report_batch_service import batch_purge_reports, batch_restore_deleted_reports
+from backend.services.report_batch_service import (
+    batch_purge_reports,
+    batch_restore_deleted_reports,
+    batch_soft_delete_draft_reports,
+)
 from backend.services.report_service import (
     create_report,
     list_deleted_reports,
@@ -172,6 +176,47 @@ def test_batch_restore_and_purge_return_counts(monkeypatch, tmp_path, db):
     assert db.get(ExpenseReport, restore_target.id).deleted_at is None
     assert db.get(ExpenseReport, purge_target.id) is None
     assert snapshot_reasons == ["pre_batch_purge"]
+
+
+def test_batch_delete_releases_occupancies_and_restore_claims_in_report_id_order(monkeypatch, db):
+    monkeypatch.setattr(report_batch_service, "create_safety_snapshot", lambda _db, reason: None)
+    first = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 19),
+            employee_name="张三",
+            purpose="先占用",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_date=date(2026, 7, 18), arrive_date=date(2026, 7, 19))],
+        ),
+    )
+    second = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 7, 20),
+            employee_name="张三",
+            purpose="后占用",
+            daily_subsidy=Decimal("100.00"),
+            trips=[TripWrite(sort_order=1, depart_date=date(2026, 7, 19), arrive_date=date(2026, 7, 20))],
+        ),
+    )
+    assert first.occupied_dates == [date(2026, 7, 18), date(2026, 7, 19)]
+    assert second.occupied_dates == [date(2026, 7, 20)]
+
+    result = batch_soft_delete_draft_reports(db, [first.id, second.id])
+
+    assert result.deleted_count == 2
+    assert first.occupied_dates == []
+    assert second.occupied_dates == []
+
+    restore_result = batch_restore_deleted_reports(db, [second.id, first.id])
+
+    assert restore_result.restored_count == 2
+    db.refresh(first)
+    db.refresh(second)
+    assert first.occupied_dates == [date(2026, 7, 18), date(2026, 7, 19)]
+    assert second.occupied_dates == [date(2026, 7, 20)]
+    assert (first.subsidy_days, second.subsidy_days) == (2, 1)
 
 
 def test_batch_purge_aborts_when_snapshot_fails(monkeypatch, tmp_path, db):

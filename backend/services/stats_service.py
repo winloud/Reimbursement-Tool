@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.models.report import ExpenseReport
+from backend.models.report_day_occupancy import ReportDayOccupancy
 from backend.schemas.stats import (
     MonthlyTrendItem,
     StatsCalendarMonth,
@@ -18,18 +19,15 @@ from backend.schemas.stats import (
 )
 from backend.services.report_service import (
     FIXED_CATEGORY_LABELS,
-    build_subsidy_intervals,
     custom_category_name,
-    infer_trip_date_ranges,
     is_custom_category,
     quantize_amount,
-    subsidy_trips_with_implicit_bounds,
 )
 
 DRAFT_STATUS = "draft"
 CHECKED_STATUS = "checked"
 SUBMITTED_STATUS = "printed"
-PENDING_STATUSES = {CHECKED_STATUS, SUBMITTED_STATUS}
+PENDING_STATUSES = {DRAFT_STATUS, CHECKED_STATUS, SUBMITTED_STATUS}
 REIMBURSED_STATUS = "reimbursed"
 SUBSIDY_CATEGORY = "subsidy"
 SUBSIDY_LABEL = "途中补贴"
@@ -60,13 +58,19 @@ def get_stats_summary(
         today,
     )
     reports = list_stats_reports(db, report_type=report_type, regular_mode=regular_mode)
+    occupancy_dates = (
+        list_active_travel_occupancy_dates(db)
+        if report_type in {None, "travel"}
+        else []
+    )
 
     return StatsSummaryRead(
-        selected_period=summarize_period(reports, period_start, period_end),
-        current_month=summarize_period(reports, month_start, next_month),
-        current_year=summarize_period(reports, year_start, next_year),
+        selected_period=summarize_period(reports, occupancy_dates, period_start, period_end),
+        current_month=summarize_period(reports, occupancy_dates, month_start, next_month),
+        current_year=summarize_period(reports, occupancy_dates, year_start, next_year),
         monthly_trend=build_monthly_trend(
             reports,
+            occupancy_dates,
             period_start if report_start is not None and report_end is not None else month_period_start,
             period_end if report_start is not None and report_end is not None else month_period_end,
         ),
@@ -121,10 +125,7 @@ def get_stats_calendar(
     today = reference_date or date.today()
     period_start, period_end = parse_month_range(start_month, end_month, today)
     selected_month = month or date.today().month
-    reports = list_stats_reports(db)
-    dates: set[date] = set()
-    for report in reports:
-        dates.update(report_trip_dates_for_period(report, period_start, period_end))
+    dates = set(list_active_travel_occupancy_dates(db, period_start, period_end))
 
     months = build_calendar_months(period_start, period_end, dates)
     year_dates = [item for item in sorted(dates) if item.year == year]
@@ -136,6 +137,28 @@ def get_stats_calendar(
         year_dates=year_dates,
         month_dates=month_dates,
         months=months,
+    )
+
+
+def list_active_travel_occupancy_dates(
+    db: Session,
+    start: date | None = None,
+    end: date | None = None,
+) -> list[date]:
+    conditions = [
+        ExpenseReport.deleted_at.is_(None),
+        ExpenseReport.report_type == "travel",
+    ]
+    if start is not None:
+        conditions.append(ReportDayOccupancy.occupied_on >= start)
+    if end is not None:
+        conditions.append(ReportDayOccupancy.occupied_on < end)
+    return list(
+        db.scalars(
+            select(ReportDayOccupancy.occupied_on)
+            .join(ExpenseReport, ReportDayOccupancy.report_id == ExpenseReport.id)
+            .where(*conditions)
+        ).all()
     )
 
 
@@ -152,7 +175,6 @@ def list_stats_reports(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="常规报销模式筛选仅适用于常规报销单")
     conditions = [
         ExpenseReport.deleted_at.is_(None),
-        ExpenseReport.status != DRAFT_STATUS,
     ]
     if report_type is not None:
         conditions.append(ExpenseReport.report_type == report_type)
@@ -165,8 +187,15 @@ def list_stats_reports(
     )
 
 
-def summarize_period(reports: list[ExpenseReport], start: date, end: date) -> StatsPeriodSummary:
-    summary = StatsPeriodSummary()
+def summarize_period(
+    reports: list[ExpenseReport],
+    occupancy_dates: list[date],
+    start: date,
+    end: date,
+) -> StatsPeriodSummary:
+    summary = StatsPeriodSummary(
+        trip_days=sum(1 for occupied_on in occupancy_dates if start <= occupied_on < end)
+    )
     for report in reports:
         if report.deleted_at is not None or report.report_date is None:
             continue
@@ -180,11 +209,15 @@ def summarize_period(reports: list[ExpenseReport], start: date, end: date) -> St
         elif report.status == REIMBURSED_STATUS:
             summary.reimbursed_amount = quantize_amount(summary.reimbursed_amount + report.total_amount)
             summary.reimbursed_count += 1
-        summary.trip_days += count_report_trip_days_in_period(report, start, end)
     return summary
 
 
-def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) -> list[MonthlyTrendItem]:
+def build_monthly_trend(
+    reports: list[ExpenseReport],
+    occupancy_dates: list[date],
+    start: date,
+    end: date,
+) -> list[MonthlyTrendItem]:
     items: list[MonthlyTrendItem] = []
     month_start = start
     while month_start < end:
@@ -195,7 +228,7 @@ def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) ->
         reimbursed_count = 0
         total_amount = Decimal("0.00")
         total_count = 0
-        trip_days = 0
+        trip_days = sum(1 for occupied_on in occupancy_dates if month_start <= occupied_on < month_end)
         for report in reports:
             if report.report_date is None:
                 continue
@@ -208,7 +241,6 @@ def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) ->
                 elif report.status == REIMBURSED_STATUS:
                     reimbursed_amount += report.total_amount
                     reimbursed_count += 1
-            trip_days += count_report_trip_days_in_period(report, month_start, month_end)
         items.append(
             MonthlyTrendItem(
                 month=month_start.strftime("%Y-%m"),
@@ -223,43 +255,6 @@ def build_monthly_trend(reports: list[ExpenseReport], start: date, end: date) ->
         )
         month_start = month_end
     return items
-
-
-def count_report_trip_days_in_period(report: ExpenseReport, start: date, end: date) -> int:
-    days: set[date] = set()
-    for interval_start, interval_end in report_trip_intervals(report):
-        current = max(interval_start, start)
-        last = min(interval_end, end - timedelta(days=1))
-        while current <= last:
-            days.add(current)
-            current += timedelta(days=1)
-    return len(days)
-
-
-def report_trip_dates_for_year(report: ExpenseReport, year: int) -> set[date]:
-    start = date(year, 1, 1)
-    end = date(year + 1, 1, 1)
-    return report_trip_dates_for_period(report, start, end)
-
-
-def report_trip_dates_for_period(report: ExpenseReport, start: date, end: date) -> set[date]:
-    dates: set[date] = set()
-    for interval_start, interval_end in report_trip_intervals(report):
-        current = max(interval_start, start)
-        last = min(interval_end, end - timedelta(days=1))
-        while current <= last:
-            dates.add(current)
-            current += timedelta(days=1)
-    return dates
-
-
-def report_trip_intervals(report: ExpenseReport) -> list[tuple[date, date]]:
-    if report.report_date is None or not report.trips:
-        return []
-
-    sorted_trips = sorted(report.trips, key=lambda trip: trip.sort_order)
-    trip_ranges = infer_trip_date_ranges(report.report_date, sorted_trips)
-    return build_subsidy_intervals(subsidy_trips_with_implicit_bounds(trip_ranges))
 
 
 def add_months(value: date, months: int) -> date:

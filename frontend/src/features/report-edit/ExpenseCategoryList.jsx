@@ -20,12 +20,13 @@ import {
   formatAmount,
   getConfirmedInvoiceCount,
   getExpenseItemAmount,
-  getFuelSubsidyInvoiceShortfall,
+  getExpenseItemInvoiceShortfall,
   getPaperInvoiceCount,
   hasPaperInvoice,
   isCustomExpenseCategory,
   shouldExpandExpenseItem,
-  validateFuelSubsidyAmount,
+  supportsManualExpenseAmount,
+  validateExpenseReimbursableAmount,
 } from "../../pages/reportEditUtils";
 
 const EMPTY_ITEM = {
@@ -119,29 +120,30 @@ export function useExpenseCategoryExpansion({
       setExpandedCategories((previous) => (previous.size === 0 ? previous : new Set()));
       return;
     }
+    const addedCategories = categories.filter(
+      (category) => !knownCategoriesRef.current.has(category.value),
+    );
+    knownCategoriesRef.current = current;
     setExpandedCategories((previous) => {
       const next = new Set([...previous].filter((category) => current.has(category)));
       let changed = next.size !== previous.size;
-      categories.forEach((category) => {
-        if (!knownCategoriesRef.current.has(category.value)) {
-          const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
-            ...EMPTY_ITEM,
-            category: category.value,
-          };
-          if (
-            shouldExpandExpenseItem(item, invoicesForCategory(category.value) || []) ||
-            pinned.has(category.value)
-          ) {
-            if (!next.has(category.value)) {
-              next.add(category.value);
-              changed = true;
-            }
+      addedCategories.forEach((category) => {
+        const item = expenseItems.find((expenseItem) => expenseItem.category === category.value) || {
+          ...EMPTY_ITEM,
+          category: category.value,
+        };
+        if (
+          shouldExpandExpenseItem(item, invoicesForCategory(category.value) || []) ||
+          pinned.has(category.value)
+        ) {
+          if (!next.has(category.value)) {
+            next.add(category.value);
+            changed = true;
           }
         }
       });
       return changed ? next : previous;
     });
-    knownCategoriesRef.current = current;
   }, [categorySignature, categories, expenseItems, invoicesForCategory, pinned, ready]);
 
   const allExpanded = categories.length > 0 && categoryKeys.every((category) => expandedCategories.has(category));
@@ -188,13 +190,12 @@ export default function ExpenseCategoryList({
           const uploadKey = `expense-${category.value}`;
           const paperInvoiceKey = `expense:${category.value}`;
           const uploading = uploadState?.key === uploadKey;
-          const isFuelSubsidy = category.value === "fuel_subsidy";
+          const hasManualExpenseAmount = supportsManualExpenseAmount(category.value);
           const categoryInvoices = invoicesForCategory(category.value);
           const invoiceCount = getConfirmedInvoiceCount(categoryInvoices) + getPaperInvoiceCount(item);
           const amount = getExpenseItemAmount(item, categoryInvoices);
-          const fuelAmountError = validateFuelSubsidyAmount(item);
-          const fuelShortfall = getFuelSubsidyInvoiceShortfall(item, categoryInvoices);
-          const hasInvoice = categoryInvoices.length > 0 || hasPaperInvoice(item);
+          const manualAmountError = validateExpenseReimbursableAmount(item);
+          const invoiceShortfall = getExpenseItemInvoiceShortfall(item, categoryInvoices);
           const removeLabel = isCustomExpenseCategory(category.value)
             ? `删除自定义费用：${category.label}`
             : `移除费用：${category.label}`;
@@ -213,12 +214,12 @@ export default function ExpenseCategoryList({
             </Box>
           );
           const actions = !readonly ? (
-            <Tooltip title={hasInvoice ? "请先删除该类别下的发票" : removeLabel}>
+            <Tooltip title={removeLabel}>
               <span {...stopSummaryInteraction}>
                 <IconButton
                   size="small"
                   color="error"
-                  disabled={hasInvoice}
+                  disabled={saveState === "saving"}
                   aria-label={removeLabel}
                   onClick={() => onRemoveCategory(category.value)}
                 >
@@ -252,19 +253,19 @@ export default function ExpenseCategoryList({
               }}
             >
               <Stack spacing={1.5}>
-                {isFuelSubsidy && (
+                {hasManualExpenseAmount && (
                   <TextField
                     fullWidth
                     size="small"
-                    label="燃油补助报销金额"
+                    label={`${category.label}报销金额`}
                     type="number"
                     value={item.reimbursable_amount ?? ""}
                     disabled={readonly}
-                    error={Boolean(fuelAmountError)}
+                    error={Boolean(manualAmountError)}
                     helperText={
-                      fuelAmountError ||
-                      (fuelShortfall > 0
-                        ? `发票金额不足 ${formatAmount(fuelShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
+                      manualAmountError ||
+                      (invoiceShortfall > 0
+                        ? `发票金额不足 ${formatAmount(invoiceShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
                         : "留空则按已确认发票合计报销")
                     }
                     onChange={(event) => onUpdateExpenseItem(category.value, { reimbursable_amount: event.target.value })}

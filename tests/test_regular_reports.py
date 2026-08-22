@@ -12,7 +12,7 @@ from backend.schemas.report import ReportCreate, ReportDetailRead, ReportUpdate,
 from backend.services.report_service import (
     ReportFilters,
     create_report,
-    ensure_fuel_subsidy_printable,
+    ensure_reimbursable_expenses_printable,
     ensure_report_previewable,
     list_reports,
     recalculate_report_totals,
@@ -133,7 +133,7 @@ def test_regular_status_validation_is_mode_specific(db):
     with pytest.raises(HTTPException, match="金额必须大于 0"):
         update_report_status(db, no_invoice.id, "checked")
     with pytest.raises(HTTPException, match="金额必须大于 0"):
-        ensure_fuel_subsidy_printable(no_invoice)
+        ensure_reimbursable_expenses_printable(no_invoice)
 
     invoice = create_report(
         db,
@@ -162,7 +162,7 @@ def test_regular_status_validation_is_mode_specific(db):
     with pytest.raises(HTTPException, match="未确认发票"):
         ensure_report_previewable(invoice)
     with pytest.raises(HTTPException, match="未确认发票"):
-        ensure_fuel_subsidy_printable(invoice)
+        ensure_reimbursable_expenses_printable(invoice)
 
 
 def test_regular_formal_actions_require_report_date_and_claimant_but_draft_preview_does_not(db):
@@ -182,7 +182,7 @@ def test_regular_formal_actions_require_report_date_and_claimant_but_draft_previ
     report.report_date = date(2026, 8, 11)
     db.commit()
     with pytest.raises(HTTPException, match="请填写报销人"):
-        ensure_fuel_subsidy_printable(report)
+        ensure_reimbursable_expenses_printable(report)
 
 
 def test_regular_kind_is_immutable_and_cross_kind_payloads_are_rejected(db):
@@ -228,7 +228,7 @@ def test_report_filters_default_to_travel_and_can_select_regular_mode(db):
     assert all_total == 2
 
 
-def test_schema_v6_migration_backfills_travel_and_adds_regular_link_columns(monkeypatch):
+def test_current_schema_migration_backfills_travel_and_adds_regular_link_columns(monkeypatch):
     engine = create_engine("sqlite://")
     with engine.begin() as database:
         database.execute(text("CREATE TABLE trips (id INTEGER PRIMARY KEY)"))
@@ -254,4 +254,4 @@ def test_schema_v6_migration_backfills_travel_and_adds_regular_link_columns(monk
     assert "regular_item_id" in invoice_columns
     assert {"regular_item_id", "page_count"}.issubset(attachment_columns)
     assert legacy_type == "travel"
-    assert schema_version == 6
+    assert schema_version == 7

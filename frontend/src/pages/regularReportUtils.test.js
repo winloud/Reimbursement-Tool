@@ -6,7 +6,6 @@ import {
   buildRegularReportPayload,
   buildRegularSummaryCards,
   calculateRegularSummary,
-  canDeleteRegularItem,
   getRegularItemDerived,
   getRegularPdfGate,
   makeBlankRegularItem,
@@ -74,11 +73,16 @@ test("regular validation allows optional evidence but requires complete invoice 
   );
 });
 
-test("items with related files cannot be removed implicitly", () => {
-  const item = { id: 7 };
-  assert.equal(canDeleteRegularItem({ item, mode: "no_invoice", attachments: [{ regular_item_id: 7 }] }), false);
-  assert.equal(canDeleteRegularItem({ item, mode: "invoice", invoices: [{ regular_item_id: 7 }] }), false);
-  assert.equal(canDeleteRegularItem({ item: { id: null }, mode: "invoice" }), true);
+test("regular item deletion drops its related files from local state before autosave", () => {
+  const source = readFileSync(new URL("./RegularReportEdit.jsx", import.meta.url), "utf8");
+  const handlerStart = source.indexOf("const handleDeleteItem = (item) =>");
+  const handlerEnd = source.indexOf("const refreshInvoiceQueue", handlerStart);
+  const handler = source.slice(handlerStart, handlerEnd);
+
+  assert.match(handler, /setItems/);
+  assert.match(handler, /setInvoices/);
+  assert.match(handler, /setAttachments/);
+  assert.doesNotMatch(handler, /请先删除|canDeleteRegularItem/);
 });
 
 test("pdf gate blocks on unconfirmed invoices first, then on completeness", () => {
@@ -187,6 +191,8 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   const invoiceViewerSource = readFileSync(new URL("../components/InvoiceViewer.jsx", import.meta.url), "utf8");
   assert.ok(appSource.indexOf('label: "出差报销单"') < appSource.indexOf('key: "report-type-divider"'));
   assert.ok(appSource.indexOf('key: "report-type-divider"') < appSource.indexOf('label: "常规报销单"'));
+  assert.match(appSource, /"& \.MuiButton-endIcon": \{\s*ml: \{ xs: "auto", md: collapsed \? 0 : "auto" \},/);
+  assert.match(appSource, /minWidth: createMenuAnchor \? `\$\{createMenuAnchor\.clientWidth\}px` : undefined/);
   assert.match(appSource, /path="\/regular-reports\/new"/);
   assert.match(appSource, /path="\/regular-reports\/:id\/edit"/);
   assert.match(dashboardSource, /reportType: "travel"/);

@@ -85,7 +85,7 @@ export const buildSummaryCards = (summary = {}) => {
       key: "trip_days",
       title: "出差天数",
       primary: `${Number(period.trip_days || 0)} 天`,
-      secondary: "按实际行程日期统计",
+      secondary: "按日期占用统计 · 含草稿",
       target: "trip_days",
       clickable: false,
     },
@@ -114,15 +114,15 @@ export const buildDashboardCardReportTarget = ({ target, startMonth, endMonth })
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   } else if (target === "pending") {
-    params.set("statuses", "checked,printed");
+    params.set("statuses", "draft,checked,printed");
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   } else if (target === "trip_days") {
-    params.set("statuses", "checked,printed,reimbursed");
+    params.set("statuses", "draft,checked,printed,reimbursed");
     params.set("trip_start", startDate);
     params.set("trip_end", endDate);
   } else {
-    params.set("statuses", "checked,printed,reimbursed");
+    params.set("statuses", "draft,checked,printed,reimbursed");
     params.set("report_start", startDate);
     params.set("report_end", endDate);
   }
