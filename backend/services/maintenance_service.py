@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import platform
+import re
 import shutil
 import sqlite3
 import sys
@@ -12,7 +14,7 @@ from datetime import date, datetime
 from hashlib import sha256
 from io import BytesIO
 from pathlib import Path, PurePosixPath
-from time import perf_counter
+from time import perf_counter, time
 from types import SimpleNamespace
 from uuid import uuid4
 
@@ -43,6 +45,11 @@ from backend.schemas.maintenance import (
     RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestorePreviewRead,
+    UpdateStagingCleanupFailureRead,
+    UpdateStagingCleanupRead,
+    UpdateStagingDeleteRead,
+    UpdateStagingInfoRead,
+    UpdateStagingPackageRead,
     UpdateExecuteRead,
     UpdatePreviewRead,
     VersionCleanupRead,
@@ -69,6 +76,7 @@ except Exception:  # pragma: no cover - desktop helpers may be unavailable on so
 
 BACKUP_SCHEMA_VERSION = 1
 UPDATE_SCHEMA_VERSION = 1
+UPDATE_STAGING_RETENTION_DAYS = 7
 BACKUP_ROOT = DATA_DIR / "backups"
 RESTORE_STAGING_ROOT = DATA_DIR / "restore_staging"
 UPDATE_STAGING_ROOT = DATA_DIR / "update_staging"
@@ -80,6 +88,8 @@ APP_EXE_NAME = "报销管理.exe"
 CURRENT_VERSION_FILE = "current-version.json"
 VERSIONS_DIR_NAME = "versions"
 LOG_TAIL_BYTES = 200 * 1024
+UPDATE_PREVIEW_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
+logger = logging.getLogger(__name__)
 VALID_REPORT_STATUSES = set(REPORT_STATUS_VALUES)
 VALID_EXPENSE_CATEGORIES = {
     "transport_fare",
@@ -128,6 +138,13 @@ def _safe_preview_id(preview_id: str) -> str:
     if not preview_id or any(part in preview_id for part in ("/", "\\", "..")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的预览 ID")
     return preview_id
+
+
+def _safe_update_preview_id(preview_id: str) -> str:
+    safe_id = _safe_preview_id(preview_id)
+    if not UPDATE_PREVIEW_ID_PATTERN.fullmatch(safe_id):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的更新预览 ID")
+    return safe_id
 
 
 def _safe_version(version: str | None) -> str:
@@ -1683,6 +1700,105 @@ def cleanup_old_installed_versions(confirm_cleanup: bool) -> VersionCleanupRead:
     return VersionCleanupRead(deleted_versions=deleted_versions)
 
 
+def list_update_staging_packages() -> list[UpdateStagingPackageRead]:
+    if not UPDATE_STAGING_ROOT.is_dir():
+        return []
+
+    expired_before = time() - UPDATE_STAGING_RETENTION_DAYS * 24 * 60 * 60
+    packages: list[UpdateStagingPackageRead] = []
+    try:
+        staging_entries = list(UPDATE_STAGING_ROOT.iterdir())
+    except OSError:
+        return []
+
+    for preview_dir in staging_entries:
+        if not preview_dir.is_dir() or not UPDATE_PREVIEW_ID_PATTERN.fullmatch(preview_dir.name):
+            continue
+        package_path = preview_dir / "release.zip"
+        if not package_path.is_file():
+            continue
+        try:
+            package_stat = package_path.stat()
+        except OSError:
+            continue
+
+        manifest = None
+        valid = False
+        try:
+            manifest = _validate_update_package(package_path)
+            valid = True
+        except Exception as exc:  # A damaged or partial upload remains manually removable.
+            logger.debug("Unable to validate update staging package %s: %s", package_path, exc)
+
+        packages.append(
+            UpdateStagingPackageRead(
+                preview_id=preview_dir.name,
+                app_version=manifest.get("app_version") if manifest else None,
+                size_bytes=package_stat.st_size,
+                modified_at=datetime.fromtimestamp(package_stat.st_mtime).isoformat(),
+                valid=valid,
+                expired=package_stat.st_mtime < expired_before,
+            )
+        )
+
+    packages.sort(key=lambda item: item.modified_at or "", reverse=True)
+    return packages
+
+
+def get_update_staging_info() -> UpdateStagingInfoRead:
+    packages = list_update_staging_packages()
+    return UpdateStagingInfoRead(
+        retention_days=UPDATE_STAGING_RETENTION_DAYS,
+        total_count=len(packages),
+        total_size_bytes=sum(item.size_bytes for item in packages),
+        packages=packages,
+    )
+
+
+def delete_update_staging_package(preview_id: str, confirm_delete: bool) -> UpdateStagingDeleteRead:
+    if not confirm_delete:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除更新暂存包需要二次确认")
+
+    safe_id = _safe_update_preview_id(preview_id)
+    preview_dir = _path_inside(UPDATE_STAGING_ROOT, safe_id)
+    package_path = preview_dir / "release.zip"
+    if not preview_dir.is_dir() or not package_path.is_file():
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="更新暂存包不存在")
+
+    deleted_path = preview_dir.as_posix()
+    try:
+        shutil.rmtree(preview_dir)
+    except OSError as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除更新暂存包失败：{exc}") from exc
+    return UpdateStagingDeleteRead(deleted=True, preview_id=safe_id, deleted_path=deleted_path)
+
+
+def cleanup_selected_update_staging(preview_ids: list[str], confirm_cleanup: bool) -> UpdateStagingCleanupRead:
+    if not confirm_cleanup:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理更新暂存包需要二次确认")
+    if not preview_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个更新暂存包")
+
+    safe_ids: list[str] = []
+    for preview_id in preview_ids:
+        safe_id = _safe_update_preview_id(preview_id)
+        if safe_id not in safe_ids:
+            safe_ids.append(safe_id)
+
+    deleted_packages: list[UpdateStagingDeleteRead] = []
+    failed_packages: list[UpdateStagingCleanupFailureRead] = []
+    for safe_id in safe_ids:
+        try:
+            deleted_packages.append(delete_update_staging_package(safe_id, confirm_delete=True))
+        except HTTPException as exc:
+            failed_packages.append(UpdateStagingCleanupFailureRead(preview_id=safe_id, message=str(exc.detail)))
+
+    return UpdateStagingCleanupRead(
+        deleted_packages=deleted_packages,
+        failed_packages=failed_packages,
+    )
+
+
 def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
     current_version = _current_installed_version()
     current_version_dir = None
@@ -1704,6 +1820,7 @@ def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
         database_exists=DATABASE_PATH.exists(),
         uploads_exists=UPLOAD_ROOT.exists(),
         backups=list_backups(),
+        update_staging=get_update_staging_info(),
         qr_engine=get_qr_engine_diagnostics(db),
         browser_runtime=get_browser_runtime_diagnostics(),
         log_file=get_log_file_diagnostics(),
@@ -2103,8 +2220,8 @@ def create_update_preview(upload_file: UploadFile) -> UpdatePreviewRead:
 
 
 def _update_preview_package(preview_id: str) -> tuple[Path, dict]:
-    safe_id = _safe_preview_id(preview_id)
-    package_path = UPDATE_STAGING_ROOT / safe_id / "release.zip"
+    safe_id = _safe_update_preview_id(preview_id)
+    package_path = _path_inside(UPDATE_STAGING_ROOT, safe_id, "release.zip")
     if not package_path.exists():
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="更新预览不存在或已过期")
     manifest = _validate_update_package(package_path)
@@ -2150,7 +2267,8 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
     if not _is_portable_install():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能执行程序内更新")
 
-    package_path, manifest = _update_preview_package(preview_id)
+    safe_preview_id = _safe_update_preview_id(preview_id)
+    package_path, manifest = _update_preview_package(safe_preview_id)
     version = _safe_version(manifest.get("app_version"))
     previous_version = _current_installed_version()
     target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / version
@@ -2159,7 +2277,7 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
     data_compatibility = _data_compatibility(manifest, version)
     _require_data_compatible(data_compatibility)
 
-    work_root = UPDATE_STAGING_ROOT / _safe_preview_id(preview_id) / "work"
+    work_root = _path_inside(UPDATE_STAGING_ROOT, safe_preview_id, "work")
     extracted_root = work_root / "extracted"
     try:
         if work_root.exists():
@@ -2191,6 +2309,11 @@ def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
             shutil.rmtree(work_root)
         except OSError:
             pass
+
+    try:
+        shutil.rmtree(_path_inside(UPDATE_STAGING_ROOT, safe_preview_id))
+    except OSError as exc:
+        logger.warning("更新已安装，但无法删除更新暂存包 %s：%s", safe_preview_id, exc)
 
     return UpdateExecuteRead(
         installed=True,

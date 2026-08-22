@@ -6,10 +6,13 @@ import {
   databaseCheckSeverity,
   databaseCheckSummary,
   databaseIssueSummary,
+  defaultUpdateStagingSelection,
   formatFileSize,
+  formatUpdateStagingTime,
   latestBackup,
   qrEngineSummary,
   restorePreviewSummary,
+  selectedUpdateStagingSummary,
   updatePreviewSummary,
   yesNo,
 } from "./maintenanceUtils.js";
@@ -59,6 +62,19 @@ test("updatePreviewSummary includes version and package size", () => {
     }),
     "版本 1.2.0，10 个文件，3.0 MB",
   );
+});
+
+test("update staging helpers default to expired packages and summarize selected size", () => {
+  const packages = [
+    { preview_id: "old", expired: true, size_bytes: 1024 },
+    { preview_id: "recent", expired: false, size_bytes: 2048 },
+  ];
+  assert.deepEqual(defaultUpdateStagingSelection(packages), ["old"]);
+  assert.deepEqual(selectedUpdateStagingSummary(packages, ["old", "recent"]), {
+    count: 2,
+    size_bytes: 3072,
+  });
+  assert.equal(formatUpdateStagingTime("2026-08-20T12:34:56"), "2026-08-20 12:34:56");
 });
 
 test("diagnostic summaries format runtime states", () => {

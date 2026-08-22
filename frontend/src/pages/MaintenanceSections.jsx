@@ -4,6 +4,7 @@ import {
   Button,
   Card,
   CardContent,
+  Checkbox,
   Chip,
   CircularProgress,
   Divider,
@@ -30,6 +31,7 @@ import {
   databaseCheckSummary,
   databaseIssueSummary,
   formatFileSize,
+  formatUpdateStagingTime,
   qrEngineSummary,
   restorePreviewSummary,
   updatePreviewSummary,
@@ -308,6 +310,10 @@ export function MaintenanceUpdateSection({
   updatePreviewCompatibility,
   updatePreviewCompatible,
   updateVersionCompatible,
+  updateStagingPackages,
+  selectedUpdateStagingIds,
+  selectedUpdateStagingSummary,
+  updateStagingCleanupAvailable,
   updateFile,
   updateResult,
   versionSwitchResult,
@@ -320,6 +326,8 @@ export function MaintenanceUpdateSection({
   onSwitchVersion,
   onDeleteVersion,
   onCleanupVersions,
+  onToggleUpdateStaging,
+  onCleanupUpdateStaging,
   onRestartApp,
 }) {
   return (
@@ -415,6 +423,70 @@ export function MaintenanceUpdateSection({
               )}
             </Box>
           </Stack>
+
+          <Box sx={softPanelSx}>
+            <Stack spacing={1}>
+              <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={800}>
+                    更新暂存包
+                  </Typography>
+                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                    共 {info?.update_staging?.total_count || updateStagingPackages.length} 个，{formatFileSize(info?.update_staging?.total_size_bytes)}；超过 {info?.update_staging?.retention_days || 7} 天的包默认勾选
+                  </Typography>
+                </Box>
+                <Button
+                  variant="outlined"
+                  color="error"
+                  startIcon={busy === "update-staging-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
+                  onClick={onCleanupUpdateStaging}
+                  disabled={!updateStagingCleanupAvailable || Boolean(busy)}
+                  sx={{ flex: "0 0 auto" }}
+                >
+                  清理选中（{selectedUpdateStagingSummary?.count || 0}）
+                </Button>
+              </Stack>
+              {updateStagingPackages.length > 0 ? (
+                <Box sx={{ maxHeight: 240, overflowY: "auto", border: 1, borderColor: "divider", borderRadius: 1, bgcolor: "background.paper" }}>
+                  <Stack divider={<Divider />} spacing={0}>
+                    {updateStagingPackages.map((item) => {
+                      const checked = selectedUpdateStagingIds.includes(item.preview_id);
+                      return (
+                        <Stack key={item.preview_id} direction="row" spacing={0.75} alignItems="center" sx={{ px: 0.5, py: 0.35 }}>
+                          <Checkbox
+                            size="small"
+                            checked={checked}
+                            onChange={() => onToggleUpdateStaging(item.preview_id)}
+                            disabled={Boolean(busy)}
+                            inputProps={{ "aria-label": `选择更新暂存包 ${item.app_version || item.preview_id}` }}
+                          />
+                          <Box sx={{ minWidth: 0, flex: 1 }}>
+                            <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap>
+                              <Typography variant="body2" fontWeight={700} noWrap>
+                                {item.app_version || "无法解析版本"}
+                              </Typography>
+                              {!item.valid && <Chip size="small" color="warning" label="无效包" />}
+                              {item.expired && <Chip size="small" variant="outlined" label={`超过${info?.update_staging?.retention_days || 7}天`} />}
+                            </Stack>
+                            <Typography variant="caption" color="text.secondary" noWrap>
+                              {formatFileSize(item.size_bytes)} · {formatUpdateStagingTime(item.modified_at)} · {item.preview_id}
+                            </Typography>
+                          </Box>
+                        </Stack>
+                      );
+                    })}
+                  </Stack>
+                </Box>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  暂无更新暂存包。
+                </Typography>
+              )}
+              <Typography variant="caption" color="text.secondary">
+                这里只删除选中的更新暂存包，不会影响已安装版本、数据库、附件或备份。
+              </Typography>
+            </Stack>
+          </Box>
 
           <Divider />
 

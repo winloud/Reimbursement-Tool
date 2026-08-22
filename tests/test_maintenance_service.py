@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import zipfile
 from io import BytesIO
@@ -528,6 +529,7 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.browser_runtime.webview2_available is True
     assert info.browser_runtime.chromium_name == "Google Chrome"
     assert all(version.data_compatibility is not None for version in info.installed_versions)
+    assert info.update_staging.total_count == 0
 
 
 def test_database_integrity_check_reports_business_and_attachment_issues(
@@ -708,6 +710,87 @@ def test_update_preview_rejects_malicious_zip_path(monkeypatch: pytest.MonkeyPat
     assert exc_info.value.status_code == 400
 
 
+def test_update_staging_info_reports_valid_invalid_and_expired_packages(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    valid_preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+    old_preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.1"), "release.zip")
+    )
+    old_package = paths["update_staging"] / old_preview.preview_id / "release.zip"
+    old_timestamp = old_package.stat().st_mtime - (maintenance_service.UPDATE_STAGING_RETENTION_DAYS + 1) * 24 * 60 * 60
+    os.utime(old_package, (old_timestamp, old_timestamp))
+
+    invalid_preview_id = "a" * 32
+    invalid_dir = paths["update_staging"] / invalid_preview_id
+    invalid_dir.mkdir(parents=True)
+    (invalid_dir / "release.zip").write_bytes(b"not a zip")
+
+    info = maintenance_service.get_update_staging_info()
+
+    assert info.total_count == 3
+    assert info.total_size_bytes > 0
+    packages = {item.preview_id: item for item in info.packages}
+    assert packages[valid_preview.preview_id].valid is True
+    assert packages[valid_preview.preview_id].app_version == "1.2.0"
+    assert packages[old_preview.preview_id].expired is True
+    assert packages[invalid_preview_id].valid is False
+    assert packages[invalid_preview_id].app_version is None
+
+
+def test_cleanup_selected_update_staging_only_deletes_selected_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    selected = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+    kept = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.1"), "release.zip")
+    )
+
+    result = maintenance_service.cleanup_selected_update_staging([selected.preview_id], confirm_cleanup=True)
+
+    assert [item.preview_id for item in result.deleted_packages] == [selected.preview_id]
+    assert result.failed_packages == []
+    assert not (paths["update_staging"] / selected.preview_id).exists()
+    assert (paths["update_staging"] / kept.preview_id / "release.zip").is_file()
+
+
+def test_cleanup_selected_update_staging_requires_confirmation_and_reports_missing_package(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    configure_runtime(monkeypatch, tmp_path)
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.cleanup_selected_update_staging(["a" * 32], confirm_cleanup=False)
+    assert exc_info.value.status_code == 400
+
+    result = maintenance_service.cleanup_selected_update_staging(["b" * 32], confirm_cleanup=True)
+
+    assert result.deleted_packages == []
+    assert result.failed_packages[0].preview_id == "b" * 32
+    assert "不存在" in result.failed_packages[0].message
+
+
+def test_cleanup_selected_update_staging_rejects_path_traversal(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+):
+    paths = configure_runtime(monkeypatch, tmp_path)
+    preview = maintenance_service.create_update_preview(
+        upload_file_from_bytes(make_portable_release_zip("1.2.0"), "release.zip")
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        maintenance_service.cleanup_selected_update_staging([f"../{preview.preview_id}"], confirm_cleanup=True)
+
+    assert exc_info.value.status_code == 400
+    assert (paths["update_staging"] / preview.preview_id / "release.zip").is_file()
+
+
 def test_execute_update_installs_new_version_and_creates_pre_update_backup(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
     write_database(paths["database"], "current")
@@ -729,6 +812,7 @@ def test_execute_update_installs_new_version_and_creates_pre_update_backup(monke
     current = json.loads((paths["app_root"] / "current-version.json").read_text(encoding="utf-8"))
     assert current["current_version"] == "1.2.0"
     assert current["data_schema_version"] == maintenance_service.DATA_SCHEMA_VERSION
+    assert not (paths["update_staging"] / preview.preview_id).exists()
 
 
 def test_execute_update_refuses_unknown_data_compatibility(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -779,6 +863,7 @@ def test_execute_update_refuses_existing_version_directory(monkeypatch: pytest.M
         maintenance_service.execute_update(preview.preview_id, confirm_update=True)
 
     assert exc_info.value.status_code == 409
+    assert (paths["update_staging"] / preview.preview_id / "release.zip").is_file()
 
 
 def test_switch_installed_version_updates_current_version_and_creates_backup(

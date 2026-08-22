@@ -10,6 +10,7 @@ import {
 import {
   checkMaintenanceDatabase,
   cleanupMaintenanceBackups,
+  cleanupMaintenanceUpdateStaging,
   cleanupMaintenanceVersions,
   createMaintenanceBackup,
   deleteMaintenanceBackup,
@@ -27,8 +28,10 @@ import {
 } from "../api/client";
 import { saveBlobDownload } from "../utils/browserDownload";
 import {
+  defaultUpdateStagingSelection,
   formatFileSize,
   latestBackup,
+  selectedUpdateStagingSummary,
 } from "./maintenanceUtils";
 import {
   MaintenanceBackupSection,
@@ -50,6 +53,7 @@ const shouldFallbackToBrowserFilePicker = (err) => {
 export default function MaintenancePanel() {
   const fileInputRef = useRef(null);
   const updateFileInputRef = useRef(null);
+  const updateStagingSelectionInitializedRef = useRef(false);
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
@@ -67,6 +71,7 @@ export default function MaintenancePanel() {
   const [versionSwitchResult, setVersionSwitchResult] = useState(null);
   const [selectedBackupId, setSelectedBackupId] = useState("");
   const [selectedVersion, setSelectedVersion] = useState("");
+  const [selectedUpdateStagingIds, setSelectedUpdateStagingIds] = useState([]);
   const [databaseCheck, setDatabaseCheck] = useState(null);
 
   const backups = info?.backups || [];
@@ -89,6 +94,9 @@ export default function MaintenancePanel() {
   const updatePreviewCompatibility = updatePreview?.data_compatibility;
   const updatePreviewCompatible = updatePreviewCompatibility?.status === "compatible";
   const updateVersionCompatible = updateVersionRecord?.data_compatibility?.status === "compatible";
+  const updateStagingPackages = info?.update_staging?.packages || [];
+  const selectedUpdateStagingSummaryValue = selectedUpdateStagingSummary(updateStagingPackages, selectedUpdateStagingIds);
+  const updateStagingCleanupAvailable = selectedUpdateStagingSummaryValue.count > 0;
 
   const loadInfo = async () => {
     setLoading(true);
@@ -100,6 +108,18 @@ export default function MaintenancePanel() {
         return;
       }
       setInfo(res.data);
+      const nextUpdateStagingPackages = res.data?.update_staging?.packages || [];
+      const shouldInitializeUpdateStagingSelection = !updateStagingSelectionInitializedRef.current;
+      if (shouldInitializeUpdateStagingSelection) {
+        updateStagingSelectionInitializedRef.current = true;
+      }
+      setSelectedUpdateStagingIds((previous) => {
+        const availableIds = new Set(nextUpdateStagingPackages.map((item) => item.preview_id));
+        if (shouldInitializeUpdateStagingSelection) {
+          return defaultUpdateStagingSelection(nextUpdateStagingPackages);
+        }
+        return previous.filter((previewId) => availableIds.has(previewId));
+      });
       const nextBackups = res.data?.backups || [];
       setSelectedBackupId((previous) =>
         nextBackups.some((backupItem) => backupItem.backup_id === previous) ? previous : nextBackups[0]?.backup_id || "",
@@ -360,6 +380,48 @@ export default function MaintenancePanel() {
     }
   };
 
+  const handleToggleUpdateStaging = (previewId) => {
+    setSelectedUpdateStagingIds((previous) =>
+      previous.includes(previewId) ? previous.filter((item) => item !== previewId) : [...previous, previewId],
+    );
+  };
+
+  const handleCleanupUpdateStaging = async () => {
+    if (!updateStagingCleanupAvailable) return;
+    const selectedIds = selectedUpdateStagingIds.filter((previewId) =>
+      updateStagingPackages.some((item) => item.preview_id === previewId),
+    );
+    const summary = selectedUpdateStagingSummary(updateStagingPackages, selectedIds);
+    const confirmed = window.confirm(
+      `将删除选中的 ${summary.count} 个更新暂存包（${formatFileSize(summary.size_bytes)}）。不会影响版本、数据库、附件或备份。确认删除？`,
+    );
+    if (!confirmed) return;
+    setBusy("update-staging-cleanup");
+    setUpdateError("");
+    try {
+      const res = await cleanupMaintenanceUpdateStaging(selectedIds);
+      if (!res.success) {
+        setUpdateError(res.message || "清理更新暂存包失败");
+        return;
+      }
+      const deletedIds = res.data?.deleted_packages?.map((item) => item.preview_id) || [];
+      const failedPackages = res.data?.failed_packages || [];
+      if (updatePreview && deletedIds.includes(updatePreview.preview_id)) {
+        setUpdateFile(null);
+        setUpdatePreview(null);
+      }
+      setToast(`更新暂存包已清理：${deletedIds.length} 个`);
+      if (failedPackages.length > 0) {
+        setUpdateError(`有 ${failedPackages.length} 个更新暂存包清理失败，请刷新后重试。`);
+      }
+      await loadInfo();
+    } catch (err) {
+      setUpdateError(getApiErrorMessage(err, "清理更新暂存包失败"));
+    } finally {
+      setBusy("");
+    }
+  };
+
   const handleSwitchVersion = async (version = selectedVersion) => {
     if (!version) return;
     const versionRecord = installedVersions.find((item) => item.version === version);
@@ -517,6 +579,10 @@ export default function MaintenancePanel() {
             updatePreviewCompatibility={updatePreviewCompatibility}
             updatePreviewCompatible={updatePreviewCompatible}
             updateVersionCompatible={updateVersionCompatible}
+            updateStagingPackages={updateStagingPackages}
+            selectedUpdateStagingIds={selectedUpdateStagingIds}
+            selectedUpdateStagingSummary={selectedUpdateStagingSummaryValue}
+            updateStagingCleanupAvailable={updateStagingCleanupAvailable}
             updateFile={updateFile}
             updateResult={updateResult}
             versionSwitchResult={versionSwitchResult}
@@ -529,6 +595,8 @@ export default function MaintenancePanel() {
             onSwitchVersion={handleSwitchVersion}
             onDeleteVersion={handleDeleteVersion}
             onCleanupVersions={handleCleanupVersions}
+            onToggleUpdateStaging={handleToggleUpdateStaging}
+            onCleanupUpdateStaging={handleCleanupUpdateStaging}
             onRestartApp={handleRestartApp}
           />
 

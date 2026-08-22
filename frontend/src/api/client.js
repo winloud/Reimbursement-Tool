@@ -163,6 +163,15 @@ export const executeMaintenanceUpdate = async (payload) => {
   return response.data;
 };
 
+export const cleanupMaintenanceUpdateStaging = async (previewIds) => {
+  const response = await apiClient.post(
+    "/api/maintenance/updates/staging/cleanup",
+    { preview_ids: previewIds, confirm_cleanup: true },
+    { timeout: 120000 },
+  );
+  return response.data;
+};
+
 export const switchMaintenanceVersion = async (payload) => {
   const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
   return response.data;
