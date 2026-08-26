@@ -67,3 +67,11 @@ templates/*.dwg
 
 # 发票测试样本
 test example/
+
+# Rust / Tauri build artifacts
+/src-tauri/target/
+/src-tauri/gen/
+
+# Frontend build output
+frontend/dist/
+
