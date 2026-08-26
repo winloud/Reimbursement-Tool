@@ -4,6 +4,7 @@ import {
   Card,
   CardContent,
   CircularProgress,
+  Snackbar,
   Stack,
   Typography,
 } from "@mui/material";
@@ -30,6 +31,7 @@ import { saveBlobDownload } from "../utils/browserDownload";
 import {
   defaultUpdateStagingSelection,
   formatFileSize,
+  getMaintenanceUpdateAction,
   latestBackup,
   selectedUpdateStagingSummary,
 } from "./maintenanceUtils";
@@ -69,6 +71,7 @@ export default function MaintenancePanel() {
   const [updatePreview, setUpdatePreview] = useState(null);
   const [updateResult, setUpdateResult] = useState(null);
   const [versionSwitchResult, setVersionSwitchResult] = useState(null);
+  const [updateConfirmation, setUpdateConfirmation] = useState("");
   const [selectedBackupId, setSelectedBackupId] = useState("");
   const [selectedVersion, setSelectedVersion] = useState("");
   const [selectedUpdateStagingIds, setSelectedUpdateStagingIds] = useState([]);
@@ -97,15 +100,32 @@ export default function MaintenancePanel() {
   const updateStagingPackages = info?.update_staging?.packages || [];
   const selectedUpdateStagingSummaryValue = selectedUpdateStagingSummary(updateStagingPackages, selectedUpdateStagingIds);
   const updateStagingCleanupAvailable = selectedUpdateStagingSummaryValue.count > 0;
+  const updateRestartRequired = Boolean(updateResult?.restart_required || versionSwitchResult?.restart_required);
+  const updateAction = getMaintenanceUpdateAction({
+    portableInstall: Boolean(info?.portable_install),
+    busy,
+    hasSelectedFile: Boolean(updateFile),
+    hasPreview: Boolean(updatePreview),
+    previewCompatible: updatePreviewCompatible,
+    versionInstalled: updateVersionInstalled,
+    versionCurrent: updateVersionCurrent,
+    versionCompatible: updateVersionCompatible,
+    restartRequired: updateRestartRequired,
+    confirmation: updateConfirmation,
+  });
 
-  const loadInfo = async () => {
-    setLoading(true);
-    setGlobalError("");
+  const loadInfo = async ({ initial = false } = {}) => {
+    if (initial) {
+      setLoading(true);
+      setGlobalError("");
+    }
     try {
       const res = await getMaintenanceInfo();
       if (!res.success) {
-        setGlobalError(res.message || "加载数据维护信息失败");
-        return;
+        const message = res.message || "加载数据维护信息失败";
+        if (initial) setGlobalError(message);
+        else setToast(`操作已完成，但${message}`);
+        return false;
       }
       setInfo(res.data);
       const nextUpdateStagingPackages = res.data?.update_staging?.packages || [];
@@ -132,15 +152,19 @@ export default function MaintenancePanel() {
         }
         return nextSwitchableVersions[0]?.version || nextInstalledVersions[0]?.version || "";
       });
+      return true;
     } catch (err) {
-      setGlobalError(getApiErrorMessage(err, "加载数据维护信息失败"));
+      const message = getApiErrorMessage(err, "加载数据维护信息失败");
+      if (initial) setGlobalError(message);
+      else setToast(`操作已完成，但${message}`);
+      return false;
     } finally {
-      setLoading(false);
+      if (initial) setLoading(false);
     }
   };
 
   useEffect(() => {
-    loadInfo();
+    loadInfo({ initial: true });
   }, []);
 
   const handleCreateBackup = async () => {
@@ -277,6 +301,8 @@ export default function MaintenancePanel() {
   };
 
   const handleChooseUpdateFile = () => {
+    if (busy) return;
+    setUpdateConfirmation("");
     updateFileInputRef.current?.click();
   };
 
@@ -336,6 +362,7 @@ export default function MaintenancePanel() {
     setUpdatePreview(null);
     setUpdateResult(null);
     setVersionSwitchResult(null);
+    setUpdateConfirmation("");
     setBusy("update-preview");
     setUpdateError("");
     try {
@@ -353,9 +380,8 @@ export default function MaintenancePanel() {
   };
 
   const handleExecuteUpdate = async () => {
-    if (!updatePreview) return;
-    const confirmed = window.confirm("安装更新前会自动创建完整备份。安装完成后需要关闭程序，并从报销管理根目录重新启动。确认安装？");
-    if (!confirmed) return;
+    if (!updatePreview || busy) return;
+    setUpdateConfirmation("");
     setBusy("update");
     setUpdateError("");
     try {
@@ -367,7 +393,6 @@ export default function MaintenancePanel() {
         setUpdateError(res.message || "安装更新失败");
         return;
       }
-      setToast(`更新已安装：${res.data?.app_version || ""}。点击重启程序后生效。`);
       setUpdateResult(res.data);
       setVersionSwitchResult(null);
       setUpdateFile(null);
@@ -409,6 +434,7 @@ export default function MaintenancePanel() {
       if (updatePreview && deletedIds.includes(updatePreview.preview_id)) {
         setUpdateFile(null);
         setUpdatePreview(null);
+        setUpdateConfirmation("");
       }
       setToast(`更新暂存包已清理：${deletedIds.length} 个`);
       if (failedPackages.length > 0) {
@@ -422,15 +448,14 @@ export default function MaintenancePanel() {
     }
   };
 
-  const handleSwitchVersion = async (version = selectedVersion) => {
+  const executeVersionSwitch = async (version) => {
     if (!version) return;
     const versionRecord = installedVersions.find((item) => item.version === version);
     if (versionRecord?.data_compatibility?.status && versionRecord.data_compatibility.status !== "compatible") {
       setUpdateError(dataCompatibilityMessage(versionRecord.data_compatibility));
       return;
     }
-    const confirmed = window.confirm(`将切换到已安装版本 ${version}，切换前会自动创建完整备份。确认切换？`);
-    if (!confirmed) return;
+    setUpdateConfirmation("");
     setBusy("version-switch");
     setUpdateError("");
     try {
@@ -442,7 +467,6 @@ export default function MaintenancePanel() {
         setUpdateError(res.message || "切换版本失败");
         return;
       }
-      setToast(`已切换到版本：${res.data?.app_version || version}。点击重启程序后生效。`);
       setVersionSwitchResult(res.data);
       setUpdateResult(null);
       await loadInfo();
@@ -451,6 +475,18 @@ export default function MaintenancePanel() {
     } finally {
       setBusy("");
     }
+  };
+
+  const handleSwitchVersion = async (version = selectedVersion) => {
+    if (!version || busy) return;
+    const versionRecord = installedVersions.find((item) => item.version === version);
+    if (versionRecord?.data_compatibility?.status && versionRecord.data_compatibility.status !== "compatible") {
+      setUpdateError(dataCompatibilityMessage(versionRecord.data_compatibility));
+      return;
+    }
+    const confirmed = window.confirm(`将切换到已安装版本 ${version}，切换前会自动创建完整备份。确认切换？`);
+    if (!confirmed) return;
+    await executeVersionSwitch(version);
   };
 
   const handleDeleteVersion = async () => {
@@ -501,8 +537,7 @@ export default function MaintenancePanel() {
   };
 
   const handleRestartApp = async () => {
-    const confirmed = window.confirm("将关闭当前程序并启动已安装的新版本。确认重启？");
-    if (!confirmed) return;
+    if (busy) return;
     setBusy("restart");
     setUpdateError("");
     try {
@@ -520,14 +555,40 @@ export default function MaintenancePanel() {
     }
   };
 
+  const handlePrimaryUpdateAction = async () => {
+    if (!updateAction.interactive || busy) return;
+    if (["choose", "reselect"].includes(updateAction.key)) {
+      handleChooseUpdateFile();
+      return;
+    }
+    if (updateAction.key === "install") {
+      setUpdateConfirmation("install");
+      return;
+    }
+    if (updateAction.key === "confirm-install") {
+      await handleExecuteUpdate();
+      return;
+    }
+    if (updateAction.key === "switch") {
+      setUpdateConfirmation("switch");
+      return;
+    }
+    if (updateAction.key === "confirm-switch") {
+      await executeVersionSwitch(updatePreview?.app_version);
+      return;
+    }
+    if (updateAction.key === "restart") {
+      await handleRestartApp();
+    }
+  };
+
+  const handleCancelUpdateConfirmation = () => {
+    if (!busy) setUpdateConfirmation("");
+  };
+
   return (
     <Stack spacing={2}>
       {globalError && <Alert severity="error">{globalError}</Alert>}
-      {toast && (
-        <Alert severity="success" onClose={() => setToast("")}>
-          {toast}
-        </Alert>
-      )}
 
       {loading ? (
         <Card sx={cardSx}>
@@ -540,6 +601,45 @@ export default function MaintenancePanel() {
         </Card>
       ) : (
         <Stack spacing={2}>
+          <MaintenanceUpdateSection
+            busy={busy}
+            info={info}
+            installedVersions={installedVersions}
+            selectedVersion={selectedVersion}
+            selectedVersionCurrent={selectedVersionCurrent}
+            selectedVersionCompatibility={selectedVersionCompatibility}
+            selectedVersionCompatible={selectedVersionCompatible}
+            selectedVersionDeletable={selectedVersionDeletable}
+            oldVersionCleanupAvailable={oldVersionCleanupAvailable}
+            updateVersionRecord={updateVersionRecord}
+            updateVersionInstalled={updateVersionInstalled}
+            updateVersionCurrent={updateVersionCurrent}
+            updatePreview={updatePreview}
+            updatePreviewCompatibility={updatePreviewCompatibility}
+            updateVersionCompatible={updateVersionCompatible}
+            updateStagingPackages={updateStagingPackages}
+            selectedUpdateStagingIds={selectedUpdateStagingIds}
+            selectedUpdateStagingSummary={selectedUpdateStagingSummaryValue}
+            updateStagingCleanupAvailable={updateStagingCleanupAvailable}
+            updateFile={updateFile}
+            updateResult={updateResult}
+            versionSwitchResult={versionSwitchResult}
+            updateError={updateError}
+            updateAction={updateAction}
+            updateConfirmation={updateConfirmation}
+            updateFileInputRef={updateFileInputRef}
+            onSelectVersion={setSelectedVersion}
+            onChooseUpdateFile={handleChooseUpdateFile}
+            onUpdateFileChange={handleUpdateFileChange}
+            onPrimaryUpdateAction={handlePrimaryUpdateAction}
+            onCancelUpdateConfirmation={handleCancelUpdateConfirmation}
+            onSwitchVersion={handleSwitchVersion}
+            onDeleteVersion={handleDeleteVersion}
+            onCleanupVersions={handleCleanupVersions}
+            onToggleUpdateStaging={handleToggleUpdateStaging}
+            onCleanupUpdateStaging={handleCleanupUpdateStaging}
+          />
+
           <MaintenanceBackupSection
             busy={busy}
             backupError={backupError}
@@ -562,44 +662,6 @@ export default function MaintenancePanel() {
             restoreError={restoreError}
           />
 
-          <MaintenanceUpdateSection
-            busy={busy}
-            info={info}
-            installedVersions={installedVersions}
-            selectedVersion={selectedVersion}
-            selectedVersionCurrent={selectedVersionCurrent}
-            selectedVersionCompatibility={selectedVersionCompatibility}
-            selectedVersionCompatible={selectedVersionCompatible}
-            selectedVersionDeletable={selectedVersionDeletable}
-            oldVersionCleanupAvailable={oldVersionCleanupAvailable}
-            updateVersionRecord={updateVersionRecord}
-            updateVersionInstalled={updateVersionInstalled}
-            updateVersionCurrent={updateVersionCurrent}
-            updatePreview={updatePreview}
-            updatePreviewCompatibility={updatePreviewCompatibility}
-            updatePreviewCompatible={updatePreviewCompatible}
-            updateVersionCompatible={updateVersionCompatible}
-            updateStagingPackages={updateStagingPackages}
-            selectedUpdateStagingIds={selectedUpdateStagingIds}
-            selectedUpdateStagingSummary={selectedUpdateStagingSummaryValue}
-            updateStagingCleanupAvailable={updateStagingCleanupAvailable}
-            updateFile={updateFile}
-            updateResult={updateResult}
-            versionSwitchResult={versionSwitchResult}
-            updateError={updateError}
-            updateFileInputRef={updateFileInputRef}
-            onSelectVersion={setSelectedVersion}
-            onChooseUpdateFile={handleChooseUpdateFile}
-            onUpdateFileChange={handleUpdateFileChange}
-            onExecuteUpdate={handleExecuteUpdate}
-            onSwitchVersion={handleSwitchVersion}
-            onDeleteVersion={handleDeleteVersion}
-            onCleanupVersions={handleCleanupVersions}
-            onToggleUpdateStaging={handleToggleUpdateStaging}
-            onCleanupUpdateStaging={handleCleanupUpdateStaging}
-            onRestartApp={handleRestartApp}
-          />
-
           <MaintenanceDiagnosticsSection
             busy={busy}
             diagnosticsError={diagnosticsError}
@@ -610,6 +672,14 @@ export default function MaintenancePanel() {
           />
         </Stack>
       )}
+
+      <Snackbar
+        open={Boolean(toast)}
+        autoHideDuration={3000}
+        onClose={() => setToast("")}
+        message={toast}
+        anchorOrigin={{ vertical: "bottom", horizontal: "center" }}
+      />
     </Stack>
   );
 }

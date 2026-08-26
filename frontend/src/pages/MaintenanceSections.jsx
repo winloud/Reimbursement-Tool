@@ -70,6 +70,12 @@ const infoGridSx = {
   gap: 1.25,
 };
 
+const statusGridSx = {
+  display: "grid",
+  gridTemplateColumns: { xs: "1fr", sm: "repeat(2, minmax(0, 1fr))", lg: "repeat(3, minmax(0, 1fr))" },
+  gap: 1.25,
+};
+
 export const dataCompatibilitySeverity = (compatibility) => {
   if (compatibility?.status === "compatible") return "info";
   if (compatibility?.status === "incompatible") return "error";
@@ -187,26 +193,36 @@ export function MaintenanceBackupSection({
           {backupError && <Alert severity="error">{backupError}</Alert>}
 
           <Box sx={softPanelSx}>
-            <Stack spacing={1.5}>
-              <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
-                <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={800}>
-                    最近备份
-                  </Typography>
-                  <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
-                    {backupSummary}
-                  </Typography>
-                </Box>
-                <Button
-                  variant="outlined"
-                  startIcon={busy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
-                  onClick={onDownloadBackup}
-                  disabled={!backup || Boolean(busy)}
-                >
-                  下载最近备份
-                </Button>
-              </Stack>
-              <Divider />
+            <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={800}>
+                  最近备份
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
+                  {backupSummary}
+                </Typography>
+              </Box>
+              <Button
+                variant="outlined"
+                startIcon={busy === "download" ? <CircularProgress size={16} /> : <DownloadIcon />}
+                onClick={onDownloadBackup}
+                disabled={!backup || Boolean(busy)}
+              >
+                下载最近备份
+              </Button>
+            </Stack>
+          </Box>
+
+          <Box sx={softPanelSx}>
+            <Stack spacing={1.25}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={800}>
+                  备份管理
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  选择历史备份进行删除，或保留最近备份并清理其余文件
+                </Typography>
+              </Box>
               <Stack direction={{ xs: "column", md: "row" }} spacing={1.25} alignItems={{ xs: "stretch", md: "center" }}>
                 <FormControl size="small" sx={{ minWidth: { xs: 0, md: 360 }, flex: 1 }}>
                   <InputLabel id="maintenance-backup-select-label">备份文件</InputLabel>
@@ -225,7 +241,7 @@ export function MaintenanceBackupSection({
                   </Select>
                 </FormControl>
                 <Button
-                  variant="outlined"
+                  variant="text"
                   color="error"
                   startIcon={busy === "backup-delete" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
                   onClick={onDeleteBackup}
@@ -235,7 +251,7 @@ export function MaintenanceBackupSection({
                   删除选中
                 </Button>
                 <Button
-                  variant="outlined"
+                  variant="text"
                   startIcon={busy === "backup-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
                   onClick={onCleanupBackups}
                   disabled={backups.length <= 1 || Boolean(busy)}
@@ -244,49 +260,47 @@ export function MaintenanceBackupSection({
                   清理旧备份
                 </Button>
               </Stack>
-              <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
-                  清理旧备份会保留最近备份；删除选中备份不会影响当前数据。
-                </Typography>
-              </Box>
+              <Typography variant="caption" color="text.secondary">
+                删除备份不会影响当前数据库或附件。
+              </Typography>
             </Stack>
           </Box>
 
-          <Divider />
-
-          <Stack spacing={1.25}>
-            <Box sx={{ minWidth: 0 }}>
-              <Typography variant="body2" fontWeight={800}>
-                备份恢复
-              </Typography>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
-                选择备份 ZIP，恢复前会自动创建当前数据备份
-              </Typography>
-            </Box>
-            <Stack {...actionRowSx}>
-              <input ref={fileInputRef} type="file" accept=".zip,application/zip" hidden onChange={onRestoreFileChange} />
-              <Button
-                variant="outlined"
-                startIcon={busy === "preview" ? <CircularProgress size={16} /> : <UploadFileIcon />}
-                onClick={onChooseRestoreFile}
-                disabled={Boolean(busy)}
-              >
-                选择备份 ZIP
-              </Button>
-              <Button
-                variant="contained"
-                color="warning"
-                startIcon={busy === "restore" ? <CircularProgress size={16} color="inherit" /> : <RestoreIcon />}
-                onClick={onExecuteRestore}
-                disabled={!restorePreview || Boolean(busy)}
-              >
-                执行恢复
-              </Button>
+          <Box sx={softPanelSx}>
+            <Stack spacing={1.25}>
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={800}>
+                  恢复数据
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  选择备份 ZIP；执行恢复前会自动创建当前数据备份
+                </Typography>
+              </Box>
+              <Stack {...actionRowSx}>
+                <input ref={fileInputRef} type="file" accept=".zip,application/zip" hidden onChange={onRestoreFileChange} />
+                <Button
+                  variant="outlined"
+                  startIcon={busy === "preview" ? <CircularProgress size={16} /> : <UploadFileIcon />}
+                  onClick={onChooseRestoreFile}
+                  disabled={Boolean(busy)}
+                >
+                  选择备份 ZIP
+                </Button>
+                <Button
+                  variant="contained"
+                  color="warning"
+                  startIcon={busy === "restore" ? <CircularProgress size={16} color="inherit" /> : <RestoreIcon />}
+                  onClick={onExecuteRestore}
+                  disabled={!restorePreview || Boolean(busy)}
+                >
+                  执行恢复
+                </Button>
+              </Stack>
+              <SelectedFileText label="已选择" name={restoreFile?.name} />
+              {restorePreview && <Alert severity="warning">恢复预览：{restorePreviewSummary(restorePreview)}</Alert>}
+              {restoreError && <Alert severity="error">{restoreError}</Alert>}
             </Stack>
-            <SelectedFileText label="已选择" name={restoreFile?.name} />
-            {restorePreview && <Alert severity="warning">恢复预览：{restorePreviewSummary(restorePreview)}</Alert>}
-            {restoreError && <Alert severity="error">{restoreError}</Alert>}
-          </Stack>
+          </Box>
         </Stack>
       </CardContent>
     </Card>
@@ -308,7 +322,6 @@ export function MaintenanceUpdateSection({
   updateVersionCurrent,
   updatePreview,
   updatePreviewCompatibility,
-  updatePreviewCompatible,
   updateVersionCompatible,
   updateStagingPackages,
   selectedUpdateStagingIds,
@@ -318,18 +331,40 @@ export function MaintenanceUpdateSection({
   updateResult,
   versionSwitchResult,
   updateError,
+  updateAction,
+  updateConfirmation,
   updateFileInputRef,
   onSelectVersion,
   onChooseUpdateFile,
   onUpdateFileChange,
-  onExecuteUpdate,
+  onPrimaryUpdateAction,
+  onCancelUpdateConfirmation,
   onSwitchVersion,
   onDeleteVersion,
   onCleanupVersions,
   onToggleUpdateStaging,
   onCleanupUpdateStaging,
-  onRestartApp,
 }) {
+  const updateCompleted = Boolean(updateResult?.restart_required || versionSwitchResult?.restart_required);
+  const showChangePackage = Boolean(
+    updatePreview
+      && !updateCompleted
+      && !updateAction.busy
+      && !updateConfirmation
+      && !["reselect", "choose"].includes(updateAction.key),
+  );
+  const primaryVariant = ["choose", "reselect", "unavailable", "current"].includes(updateAction.key) ? "outlined" : "contained";
+  const primaryColor = updateAction.confirm ? "warning" : updateAction.key === "restart" ? "success" : "primary";
+  const primaryIcon = updateAction.busy ? (
+    <CircularProgress size={16} color="inherit" />
+  ) : updateAction.key === "restart" ? (
+    <RestartAltIcon />
+  ) : ["choose", "reselect"].includes(updateAction.key) ? (
+    <UploadFileIcon />
+  ) : (
+    <SystemUpdateAltIcon />
+  );
+
   return (
     <Card sx={cardSx}>
       <CardContent sx={cardContentSx}>
@@ -348,81 +383,188 @@ export function MaintenanceUpdateSection({
             }
           />
 
-          <Stack spacing={1.5}>
-            <Box sx={softPanelSx}>
-              <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between">
+          <Box sx={{ ...softPanelSx, bgcolor: "#F5F8FE" }}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="flex-start" justifyContent="space-between">
+              <Stack spacing={1.25} sx={{ minWidth: 0, flex: 1 }}>
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={800}>
-                    已安装版本
+                  <Typography variant="body2" fontWeight={900}>
+                    安装新版本
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
                     当前版本：{info?.current_version || "-"}
                   </Typography>
                 </Box>
-                {installedVersions.length > 0 ? (
-                  <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ minWidth: { xs: 0, md: 620 } }}>
-                    <FormControl size="small" fullWidth>
-                      <InputLabel id="maintenance-version-switch-label">已安装版本</InputLabel>
-                      <Select
-                        labelId="maintenance-version-switch-label"
-                        label="已安装版本"
-                        value={selectedVersion}
-                        onChange={(event) => onSelectVersion(event.target.value)}
-                      >
-                        {installedVersions.map((version) => (
-                          <MenuItem key={version.version} value={version.version}>
-                            {version.version}
-                            {version.current ? "（当前）" : ""}
-                            {version.data_compatibility?.status !== "compatible" ? `（${dataCompatibilityLabel(version.data_compatibility)}）` : ""}
-                          </MenuItem>
-                        ))}
-                      </Select>
-                    </FormControl>
-                    <Button
-                      variant="outlined"
-                      startIcon={busy === "version-switch" ? <CircularProgress size={16} /> : <RestartAltIcon />}
-                      onClick={() => onSwitchVersion(selectedVersion)}
-                      disabled={!selectedVersion || selectedVersionCurrent || !selectedVersionCompatible || Boolean(busy)}
-                      sx={{ flex: "0 0 auto" }}
-                    >
-                      切换版本
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      color="error"
-                      startIcon={busy === "version-delete" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
-                      onClick={onDeleteVersion}
-                      disabled={!selectedVersionDeletable || Boolean(busy)}
-                      sx={{ flex: "0 0 auto" }}
-                    >
-                      删除选中
-                    </Button>
-                    <Button
-                      variant="outlined"
-                      startIcon={busy === "version-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
-                      onClick={onCleanupVersions}
-                      disabled={!oldVersionCleanupAvailable || Boolean(busy)}
-                      sx={{ flex: "0 0 auto" }}
-                    >
-                      清理旧版本
-                    </Button>
-                  </Stack>
-                ) : (
-                  <Typography variant="body2" color="text.secondary">
-                    暂无已安装版本
-                  </Typography>
+
+                <Stack
+                  spacing={1}
+                  role="status"
+                  aria-live="polite"
+                  aria-busy={Boolean(updateAction.busy)}
+                  sx={{ minWidth: 0 }}
+                >
+                  {!updateFile && !updatePreview && !updateCompleted && !updateError && (
+                    <Typography variant="body2" color="text.secondary">
+                      选择新版发布 ZIP 后会先校验版本、内容和数据兼容性。
+                    </Typography>
+                  )}
+                  <SelectedFileText label="已选择" name={updateFile?.name} />
+                  {updateAction.key === "previewing" && (
+                    <Typography variant="body2" color="text.secondary">
+                      正在校验更新包，请稍候…
+                    </Typography>
+                  )}
+                  {updatePreview && (
+                    <Alert severity={dataCompatibilitySeverity(updatePreviewCompatibility)}>
+                      <Stack spacing={0.5}>
+                        <Typography variant="body2">更新预览：{updatePreviewSummary(updatePreview)}</Typography>
+                        <Typography variant="body2">
+                          {dataCompatibilityLabel(updatePreviewCompatibility)}：{dataCompatibilityMessage(updatePreviewCompatibility)}
+                        </Typography>
+                      </Stack>
+                    </Alert>
+                  )}
+                  {updateVersionInstalled && (
+                    <Typography variant="body2" color={updateVersionCurrent ? "success.main" : updateVersionCompatible ? "warning.main" : "error.main"}>
+                      {updateVersionCurrent
+                        ? `当前已经是 ${updatePreview.app_version}，可重新选择其他更新包。`
+                        : updateVersionCompatible
+                          ? `版本目录已存在，确认后将直接切换到 ${updatePreview.app_version}。`
+                          : `版本目录已存在，但${dataCompatibilityMessage(updateVersionRecord?.data_compatibility)}`}
+                    </Typography>
+                  )}
+                  {updateConfirmation === "install" && (
+                    <Alert severity="warning">
+                      安装前会自动创建完整备份；安装完成后可在原位置重启程序。
+                    </Alert>
+                  )}
+                  {updateConfirmation === "switch" && (
+                    <Alert severity="warning">
+                      切换版本前会自动创建完整备份；切换完成后可在原位置重启程序。
+                    </Alert>
+                  )}
+                  {updateError && <Alert severity="error">{updateError}</Alert>}
+                  {updateCompleted && (
+                    <Alert severity="success">
+                      {updateResult ? `更新已安装：${updateResult.app_version}` : `版本已切换：${versionSwitchResult.app_version}`}，点击右侧按钮重启后生效。
+                    </Alert>
+                  )}
+                </Stack>
+              </Stack>
+
+              <Stack spacing={0.5} alignItems={{ xs: "stretch", md: "flex-end" }} sx={{ width: { xs: "100%", md: 176 }, flex: "0 0 auto" }}>
+                <input ref={updateFileInputRef} type="file" accept=".zip,application/zip" hidden onChange={onUpdateFileChange} />
+                <Button
+                  data-maintenance-update-primary-action="true"
+                  variant={primaryVariant}
+                  color={primaryColor}
+                  startIcon={primaryIcon}
+                  onClick={onPrimaryUpdateAction}
+                  aria-disabled={!updateAction.interactive}
+                  sx={{
+                    width: "100%",
+                    minWidth: 176,
+                    opacity: updateAction.interactive ? 1 : 0.55,
+                    cursor: updateAction.interactive ? "pointer" : "default",
+                  }}
+                >
+                  {updateAction.label}
+                </Button>
+                {updateConfirmation && (
+                  <Button variant="text" size="small" onClick={onCancelUpdateConfirmation} disabled={Boolean(busy)}>
+                    取消
+                  </Button>
+                )}
+                {showChangePackage && (
+                  <Button variant="text" size="small" onClick={onChooseUpdateFile} disabled={Boolean(busy)}>
+                    更换 ZIP
+                  </Button>
                 )}
               </Stack>
-              <Typography variant="body2" color="text.secondary" sx={{ mt: 1.25 }}>
-                清理旧版本会保留当前版本；删除版本不会删除数据库、附件或备份。
-              </Typography>
-              {!selectedVersionCurrent && selectedVersionCompatibility?.status && selectedVersionCompatibility.status !== "compatible" && (
-                <Alert severity={dataCompatibilitySeverity(selectedVersionCompatibility)} sx={{ mt: 1.25 }}>
-                  {dataCompatibilityMessage(selectedVersionCompatibility)}
-                </Alert>
+            </Stack>
+          </Box>
+
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={900}>
+              版本与暂存管理
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              管理已安装版本和校验更新时产生的暂存文件
+            </Typography>
+          </Box>
+
+          <Box sx={softPanelSx}>
+            <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between">
+              <Box sx={{ minWidth: 0 }}>
+                <Typography variant="body2" fontWeight={800}>
+                  已安装版本
+                </Typography>
+                <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+                  当前版本：{info?.current_version || "-"}
+                </Typography>
+              </Box>
+              {installedVersions.length > 0 ? (
+                <Stack direction={{ xs: "column", sm: "row" }} spacing={1} sx={{ minWidth: { xs: 0, md: 620 } }}>
+                  <FormControl size="small" fullWidth>
+                    <InputLabel id="maintenance-version-switch-label">已安装版本</InputLabel>
+                    <Select
+                      labelId="maintenance-version-switch-label"
+                      label="已安装版本"
+                      value={selectedVersion}
+                      onChange={(event) => onSelectVersion(event.target.value)}
+                    >
+                      {installedVersions.map((version) => (
+                        <MenuItem key={version.version} value={version.version}>
+                          {version.version}
+                          {version.current ? "（当前）" : ""}
+                          {version.data_compatibility?.status !== "compatible" ? `（${dataCompatibilityLabel(version.data_compatibility)}）` : ""}
+                        </MenuItem>
+                      ))}
+                    </Select>
+                  </FormControl>
+                  <Button
+                    variant="outlined"
+                    startIcon={busy === "version-switch" ? <CircularProgress size={16} /> : <RestartAltIcon />}
+                    onClick={() => onSwitchVersion(selectedVersion)}
+                    disabled={!selectedVersion || selectedVersionCurrent || !selectedVersionCompatible || Boolean(busy)}
+                    sx={{ flex: "0 0 auto" }}
+                  >
+                    切换版本
+                  </Button>
+                  <Button
+                    variant="text"
+                    color="error"
+                    startIcon={busy === "version-delete" ? <CircularProgress size={16} /> : <DeleteOutlineIcon />}
+                    onClick={onDeleteVersion}
+                    disabled={!selectedVersionDeletable || Boolean(busy)}
+                    sx={{ flex: "0 0 auto" }}
+                  >
+                    删除选中
+                  </Button>
+                  <Button
+                    variant="text"
+                    startIcon={busy === "version-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
+                    onClick={onCleanupVersions}
+                    disabled={!oldVersionCleanupAvailable || Boolean(busy)}
+                    sx={{ flex: "0 0 auto" }}
+                  >
+                    清理旧版本
+                  </Button>
+                </Stack>
+              ) : (
+                <Typography variant="body2" color="text.secondary">
+                  暂无已安装版本
+                </Typography>
               )}
-            </Box>
-          </Stack>
+            </Stack>
+            <Typography variant="caption" color="text.secondary" sx={{ display: "block", mt: 1.25 }}>
+              清理旧版本会保留当前版本；删除版本不会删除数据库、附件或备份。
+            </Typography>
+            {!selectedVersionCurrent && selectedVersionCompatibility?.status && selectedVersionCompatibility.status !== "compatible" && (
+              <Alert severity={dataCompatibilitySeverity(selectedVersionCompatibility)} sx={{ mt: 1.25 }}>
+                {dataCompatibilityMessage(selectedVersionCompatibility)}
+              </Alert>
+            )}
+          </Box>
 
           <Box sx={softPanelSx}>
             <Stack spacing={1}>
@@ -436,7 +578,7 @@ export function MaintenanceUpdateSection({
                   </Typography>
                 </Box>
                 <Button
-                  variant="outlined"
+                  variant="text"
                   color="error"
                   startIcon={busy === "update-staging-cleanup" ? <CircularProgress size={16} /> : <CleaningServicesIcon />}
                   onClick={onCleanupUpdateStaging}
@@ -487,81 +629,6 @@ export function MaintenanceUpdateSection({
               </Typography>
             </Stack>
           </Box>
-
-          <Divider />
-
-          <Stack {...actionRowSx}>
-            <input ref={updateFileInputRef} type="file" accept=".zip,application/zip" hidden onChange={onUpdateFileChange} />
-            <Button
-              variant="outlined"
-              startIcon={busy === "update-preview" ? <CircularProgress size={16} /> : <UploadFileIcon />}
-              onClick={onChooseUpdateFile}
-              disabled={!info?.portable_install || Boolean(busy)}
-            >
-              选择更新 ZIP
-            </Button>
-            <Button
-              variant="contained"
-              startIcon={busy === "update" ? <CircularProgress size={16} color="inherit" /> : <SystemUpdateAltIcon />}
-              onClick={onExecuteUpdate}
-              disabled={!updatePreview || updateVersionInstalled || !updatePreviewCompatible || Boolean(busy)}
-            >
-              安装更新
-            </Button>
-          </Stack>
-          <SelectedFileText label="已选择" name={updateFile?.name} />
-          {updatePreview && (
-            <Alert severity={dataCompatibilitySeverity(updatePreviewCompatibility)}>
-              <Stack spacing={0.5}>
-                <Typography variant="body2">更新预览：{updatePreviewSummary(updatePreview)}</Typography>
-                <Typography variant="body2">
-                  {dataCompatibilityLabel(updatePreviewCompatibility)}：{dataCompatibilityMessage(updatePreviewCompatibility)}
-                </Typography>
-              </Stack>
-            </Alert>
-          )}
-          {updateVersionInstalled && (
-            <Alert
-              severity={updateVersionCurrent ? "success" : updateVersionCompatible ? "warning" : "error"}
-              action={
-                updateVersionCurrent || !updateVersionCompatible ? null : (
-                  <Button
-                    color="inherit"
-                    size="small"
-                    onClick={() => onSwitchVersion(updatePreview.app_version)}
-                    disabled={Boolean(busy)}
-                  >
-                    切换到此版本
-                  </Button>
-                )
-              }
-            >
-              {updateVersionCurrent
-                ? `当前已经是 ${updatePreview.app_version}`
-                : updateVersionCompatible
-                  ? `版本目录已存在，可直接切换到 ${updatePreview.app_version}`
-                  : `版本目录已存在，但${dataCompatibilityMessage(updateVersionRecord?.data_compatibility)}`}
-            </Alert>
-          )}
-          {updateError && <Alert severity="error">{updateError}</Alert>}
-          {(updateResult?.restart_required || versionSwitchResult?.restart_required) && (
-            <Alert
-              severity="success"
-              action={
-                <Button
-                  color="inherit"
-                  size="small"
-                  startIcon={busy === "restart" ? <CircularProgress size={16} color="inherit" /> : <RestartAltIcon />}
-                  onClick={onRestartApp}
-                  disabled={Boolean(busy)}
-                >
-                  重启程序
-                </Button>
-              }
-            >
-              {updateResult ? `更新已安装：${updateResult.app_version}` : `版本已切换：${versionSwitchResult.app_version}`}
-            </Alert>
-          )}
         </Stack>
       </CardContent>
     </Card>
@@ -617,22 +684,16 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
 
           <Box sx={{ minWidth: 0 }}>
             <Typography variant="body2" fontWeight={800}>
-              诊断信息
+              运行状态
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
               诊断包包含日志、配置和环境摘要，不包含数据库或附件
             </Typography>
           </Box>
-          <Box sx={{ ...softPanelSx, ...infoGridSx }}>
+          <Box sx={{ ...softPanelSx, ...statusGridSx }}>
             <InfoRow label="程序版本" value={info?.app_version} />
             <InfoRow label="当前版本" value={info?.current_version} />
-            <InfoRow label="安装根目录" value={info?.app_root} />
-            <InfoRow label="当前版本目录" value={info?.current_version_dir} />
-            <InfoRow label="数据目录" value={info?.data_dir} />
-            <InfoRow label="数据库" value={info?.database_path} />
-            <InfoRow label="附件目录" value={info?.uploads_dir} />
-            <InfoRow label="备份目录" value={info?.backups_dir} />
-            <InfoRow label="日志路径" value={info?.log_file?.path || info?.logs_dir} />
+            <InfoRow label="数据库检查" value={databaseCheck ? databaseCheckSummary(databaseCheck) : "尚未检查"} />
             <InfoRow
               label="日志状态"
               value={
@@ -651,6 +712,24 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
               }
             />
             <InfoRow label="浏览器/WebView2" value={browserRuntimeSummary(info?.browser_runtime)} />
+          </Box>
+
+          <Box sx={{ minWidth: 0 }}>
+            <Typography variant="body2" fontWeight={800}>
+              运行路径
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
+              排查启动、数据或附件问题时使用的本机目录
+            </Typography>
+          </Box>
+          <Box sx={{ ...softPanelSx, ...infoGridSx }}>
+            <InfoRow label="安装根目录" value={info?.app_root} />
+            <InfoRow label="当前版本目录" value={info?.current_version_dir} />
+            <InfoRow label="数据目录" value={info?.data_dir} />
+            <InfoRow label="数据库" value={info?.database_path} />
+            <InfoRow label="附件目录" value={info?.uploads_dir} />
+            <InfoRow label="备份目录" value={info?.backups_dir} />
+            <InfoRow label="日志路径" value={info?.log_file?.path || info?.logs_dir} />
           </Box>
         </Stack>
       </CardContent>

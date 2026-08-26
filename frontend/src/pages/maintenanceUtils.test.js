@@ -9,6 +9,7 @@ import {
   defaultUpdateStagingSelection,
   formatFileSize,
   formatUpdateStagingTime,
+  getMaintenanceUpdateAction,
   latestBackup,
   qrEngineSummary,
   restorePreviewSummary,
@@ -62,6 +63,61 @@ test("updatePreviewSummary includes version and package size", () => {
     }),
     "版本 1.2.0，10 个文件，3.0 MB",
   );
+});
+
+test("maintenance update action keeps one primary action across the update flow", () => {
+  const base = { portableInstall: true };
+  assert.deepEqual(getMaintenanceUpdateAction(base), {
+    key: "choose",
+    label: "选择更新 ZIP",
+    interactive: true,
+  });
+  assert.equal(getMaintenanceUpdateAction({ ...base, busy: "update-preview", hasSelectedFile: true }).key, "previewing");
+  assert.equal(
+    getMaintenanceUpdateAction({ ...base, hasSelectedFile: true, hasPreview: true, previewCompatible: true }).key,
+    "install",
+  );
+  assert.equal(
+    getMaintenanceUpdateAction({ ...base, hasPreview: true, previewCompatible: true, confirmation: "install" }).key,
+    "confirm-install",
+  );
+  assert.equal(getMaintenanceUpdateAction({ ...base, busy: "update" }).key, "installing");
+  assert.equal(getMaintenanceUpdateAction({ ...base, restartRequired: true }).key, "restart");
+});
+
+test("maintenance update action handles invalid and installed packages", () => {
+  const base = { portableInstall: true, hasSelectedFile: true, hasPreview: true };
+  assert.equal(getMaintenanceUpdateAction(base).key, "reselect");
+  assert.equal(
+    getMaintenanceUpdateAction({
+      ...base,
+      previewCompatible: true,
+      versionInstalled: true,
+      versionCompatible: true,
+    }).key,
+    "switch",
+  );
+  assert.equal(
+    getMaintenanceUpdateAction({
+      ...base,
+      previewCompatible: true,
+      versionInstalled: true,
+      versionCurrent: true,
+      versionCompatible: true,
+    }).key,
+    "current",
+  );
+  assert.equal(
+    getMaintenanceUpdateAction({
+      ...base,
+      previewCompatible: true,
+      versionInstalled: true,
+      versionCompatible: true,
+      confirmation: "switch",
+    }).key,
+    "confirm-switch",
+  );
+  assert.equal(getMaintenanceUpdateAction({}).key, "unavailable");
 });
 
 test("update staging helpers default to expired packages and summarize selected size", () => {
