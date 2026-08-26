@@ -249,7 +249,7 @@ export default function ReportEditView({
   const hasAdvanceInfo = Boolean(
     form.advance_date_month || form.advance_date_day || Number(form.advance_amount || 0),
   );
-  const basicInfoSummary = `${form.employee_name || "出差人待填写"} · ${form.department || "部门待填写"} · ${form.report_date || "报销日期待填写"}`;
+  const basicInfoSummary = `${form.employee_name || "出差人待填写"} · ${form.department || "部门待填写"} · ${form.report_date || "报销日期待提交"}`;
   const advanceSummary = hasAdvanceInfo
     ? `${form.advance_date_month || "-"} 月 ${form.advance_date_day || "-"} 日 · ${formatAmount(form.advance_amount)}`
     : "无预支";
@@ -303,9 +303,8 @@ export default function ReportEditView({
                             label="报销日期"
                             type="date"
                             value={form.report_date}
-                            onChange={handleChange("report_date")}
                             InputLabelProps={{ shrink: true }}
-                            disabled={readonly}
+                            disabled
                           />
                         </Box>
                         <Box sx={{ gridColumn: { sm: "span 6", lg: "span 3" } }}>

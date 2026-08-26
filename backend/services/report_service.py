@@ -257,8 +257,6 @@ def ensure_regular_invoice_files_confirmed(report: ExpenseReport) -> None:
 def ensure_regular_report_complete(report: ExpenseReport, *, action: str) -> None:
     if report.report_type != "regular":
         return
-    if report.report_date is None:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"请填写报销日期后再{action}")
     if not (report.employee_name or "").strip():
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"请填写报销人后再{action}")
     if not report.regular_items:

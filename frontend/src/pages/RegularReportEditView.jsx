@@ -377,7 +377,7 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
     return <EditPageLoading message="正在加载常规报销单..." />;
   }
 
-  const basicSummary = `${form.employee_name || "报销人待填写"} · ${form.report_date || "报销日期待填写"}`;
+  const basicSummary = `${form.employee_name || "报销人待填写"} · ${form.report_date || "报销日期待提交"}`;
   const itemsSummary =
     items.length > 0
       ? `${items.length} 项 · ${formatRegularAmount(summary.totalAmount)} · ${summary.documentCount} 张单据`
@@ -433,10 +433,8 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                   size="small"
                   type="date"
                   label="报销日期"
-                  required
-                  disabled={readonly}
+                  disabled
                   value={form.report_date}
-                  onChange={(event) => onChange("report_date", event.target.value)}
                   InputLabelProps={{ shrink: true }}
                 />
                 <TextField

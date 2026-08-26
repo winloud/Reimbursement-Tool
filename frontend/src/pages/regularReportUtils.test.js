@@ -63,7 +63,7 @@ test("invoice mode derives confirmed total and counts every invoice record", () 
 });
 
 test("regular validation allows optional evidence but requires complete invoice items", () => {
-  const form = { report_date: "2026-08-11", employee_name: "李四" };
+  const form = { report_date: "", employee_name: "李四" };
   const item = { ...makeBlankRegularItem(), id: 12, occurred_on: "2026-08-10", description: "材料费", amount: "50" };
   assert.equal(validateRegularReport({ form, mode: "no_invoice", items: [item] }), "");
   assert.match(validateRegularReport({ form, mode: "invoice", items: [item], invoices: [] }), /至少需要上传一张发票/);

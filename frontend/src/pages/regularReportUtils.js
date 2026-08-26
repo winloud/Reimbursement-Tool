@@ -157,7 +157,6 @@ export const isRegularDraftEmpty = ({ form, defaults, items = [], invoices = [],
 };
 
 export const validateRegularReport = ({ form, mode, items = [], invoices = [] }) => {
-  if (!form.report_date) return "请填写报销日期";
   if (!String(form.employee_name || "").trim()) return "请填写报销人";
   if (items.length === 0) return "请至少添加一个报销项目";
 

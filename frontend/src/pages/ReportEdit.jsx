@@ -50,7 +50,6 @@ import {
   shouldUsePersistedOccupancyDates,
   swapTripEndpoints,
   toMoney,
-  todayStr,
   validateExpenseItems,
   validateManualSubsidyTotal,
   validatePaperInvoice,
@@ -197,7 +196,7 @@ export default function ReportEdit() {
           throw new Error("该记录不是出差报销单");
         }
         const nextForm = {
-          report_date: report.report_date || todayStr(),
+          report_date: report.report_date || "",
           department: report.department || "",
           employee_name: report.employee_name || "",
           purpose: report.purpose || "",
@@ -267,7 +266,6 @@ export default function ReportEdit() {
       setAutosaveDelaySeconds(normalizeAutosaveDelaySeconds(settings.autosave_delay_seconds));
       const draftForm = {
         ...emptyForm,
-        report_date: todayStr(),
         department: settings.department || "",
         employee_name: settings.employee_name || "",
         daily_subsidy: toMoney(settings.daily_subsidy),

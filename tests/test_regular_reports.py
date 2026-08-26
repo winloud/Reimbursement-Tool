@@ -165,7 +165,7 @@ def test_regular_status_validation_is_mode_specific(db):
         ensure_reimbursable_expenses_printable(invoice)
 
 
-def test_regular_formal_actions_require_report_date_and_claimant_but_draft_preview_does_not(db):
+def test_regular_formal_actions_allow_blank_report_date_before_submission_but_require_claimant(db):
     report = create_report(
         db,
         ReportCreate(
@@ -176,13 +176,13 @@ def test_regular_formal_actions_require_report_date_and_claimant_but_draft_previ
     )
 
     ensure_report_previewable(report)
-    with pytest.raises(HTTPException, match="请填写报销日期"):
-        update_report_status(db, report.id, "checked")
-
-    report.report_date = date(2026, 8, 11)
-    db.commit()
     with pytest.raises(HTTPException, match="请填写报销人"):
         ensure_reimbursable_expenses_printable(report)
+
+    report.employee_name = "张三"
+    db.commit()
+    checked = update_report_status(db, report.id, "checked")
+    assert checked.report_date is None
 
 
 def test_regular_kind_is_immutable_and_cross_kind_payloads_are_rejected(db):

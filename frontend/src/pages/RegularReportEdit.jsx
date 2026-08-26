@@ -51,8 +51,8 @@ export default function RegularReportEdit() {
   const requestedMode = searchParams.get("mode") || "";
 
   const [mode, setMode] = useState(isRegularMode(requestedMode) ? requestedMode : "no_invoice");
-  const [form, setForm] = useState({ report_date: regularToday(), employee_name: "" });
-  const [defaults, setDefaults] = useState({ report_date: regularToday(), employee_name: "" });
+  const [form, setForm] = useState({ report_date: "", employee_name: "" });
+  const [defaults, setDefaults] = useState({ report_date: "", employee_name: "" });
   const [items, setItems] = useState([]);
   const [invoices, setInvoices] = useState([]);
   const [attachments, setAttachments] = useState([]);
@@ -111,7 +111,7 @@ export default function RegularReportEdit() {
       throw new Error("该记录不是常规报销单");
     }
     const nextForm = {
-      report_date: report.report_date || regularToday(),
+      report_date: report.report_date || "",
       employee_name: report.employee_name || "",
     };
     const previousById = new Map(
@@ -196,7 +196,7 @@ export default function RegularReportEdit() {
     try {
       const settingsResponse = await getSettings().catch(() => null);
       const settings = settingsResponse?.success ? settingsResponse.data || {} : {};
-      const nextForm = { report_date: regularToday(), employee_name: settings.employee_name || "" };
+      const nextForm = { report_date: "", employee_name: settings.employee_name || "" };
       setMode(requestedMode);
       setForm(nextForm);
       setDefaults(nextForm);
@@ -349,7 +349,7 @@ export default function RegularReportEdit() {
     setError("");
     setItems((current) => [
       ...current,
-      { ...makeBlankRegularItem({ occurredOn: form.report_date }), sort_order: current.length + 1 },
+      { ...makeBlankRegularItem({ occurredOn: regularToday() }), sort_order: current.length + 1 },
     ]);
   };
 

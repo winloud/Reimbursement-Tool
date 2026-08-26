@@ -1,7 +1,5 @@
-export const todayStr = () => new Date().toISOString().slice(0, 10);
-
 export const emptyForm = {
-  report_date: todayStr(),
+  report_date: "",
   department: "",
   employee_name: "",
   purpose: "",

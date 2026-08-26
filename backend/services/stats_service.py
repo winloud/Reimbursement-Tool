@@ -89,8 +89,7 @@ def get_stats_category(
     reports = [
         report
         for report in list_stats_reports(db)
-        if report.report_date is not None
-        and period_start <= report.report_date < period_end
+        if period_start <= report_stats_date(report) < period_end
     ]
     for report in reports:
         for trip in report.trips:
@@ -187,6 +186,11 @@ def list_stats_reports(
     )
 
 
+def report_stats_date(report: ExpenseReport) -> date:
+    """未提交报销单以创建日期暂时归入统计，不回填业务上的报销日期。"""
+    return report.report_date or report.created_at.date()
+
+
 def summarize_period(
     reports: list[ExpenseReport],
     occupancy_dates: list[date],
@@ -197,9 +201,10 @@ def summarize_period(
         trip_days=sum(1 for occupied_on in occupancy_dates if start <= occupied_on < end)
     )
     for report in reports:
-        if report.deleted_at is not None or report.report_date is None:
+        if report.deleted_at is not None:
             continue
-        if not start <= report.report_date < end:
+        effective_date = report_stats_date(report)
+        if not start <= effective_date < end:
             continue
         summary.total_amount = quantize_amount(summary.total_amount + report.total_amount)
         summary.total_count += 1
@@ -230,9 +235,8 @@ def build_monthly_trend(
         total_count = 0
         trip_days = sum(1 for occupied_on in occupancy_dates if month_start <= occupied_on < month_end)
         for report in reports:
-            if report.report_date is None:
-                continue
-            if month_start <= report.report_date < month_end:
+            effective_date = report_stats_date(report)
+            if month_start <= effective_date < month_end:
                 total_amount += report.total_amount
                 total_count += 1
                 if report.status in PENDING_STATUSES:

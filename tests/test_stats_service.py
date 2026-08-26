@@ -1,6 +1,6 @@
 """Dashboard statistics and calendar aggregation tests."""
 
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -29,8 +29,9 @@ def add_invoice(db, report, category: str, amount: str, confirmed: bool = True) 
 def make_report(
     db,
     *,
-    report_date: date,
+    report_date: date | None,
     status: str,
+    created_at: datetime | None = None,
     employee_name: str | None = None,
     amount: str = "0.00",
     category: str = "luggage",
@@ -54,6 +55,8 @@ def make_report(
         ),
     )
     report.daily_subsidy = Decimal(daily_subsidy)
+    if created_at is not None:
+        report.created_at = created_at
     if amount != "0.00":
         add_invoice(db, report, category, amount)
     db.flush()
@@ -65,7 +68,13 @@ def make_report(
 
 
 def test_stats_summary_includes_drafts_in_pending_and_splits_reimbursed_amounts(db):
-    make_report(db, report_date=date(2026, 6, 1), status="draft", amount="999.00")
+    make_report(
+        db,
+        report_date=None,
+        created_at=datetime(2026, 6, 1, 9, 0),
+        status="draft",
+        amount="999.00",
+    )
     make_report(db, report_date=date(2026, 6, 2), status="printed", amount="120.00")
     make_report(db, report_date=date(2026, 6, 3), status="reimbursed", amount="300.00")
     make_report(db, report_date=date(2026, 6, 4), status="checked", amount="70.00")
@@ -189,7 +198,14 @@ def test_stats_category_includes_drafts_and_keeps_confirmed_invoice_rules(db):
     add_invoice(db, reimbursed, "city_transport", "999.00", confirmed=False)
     make_report(db, report_date=date(2026, 6, 5), status="printed", amount="200.00", category="luggage")
     make_report(db, report_date=date(2026, 6, 6), status="checked", amount="80.00", category="postal")
-    make_report(db, report_date=date(2026, 6, 7), status="draft", amount="900.00", category="city_transport")
+    make_report(
+        db,
+        report_date=None,
+        created_at=datetime(2026, 6, 7, 9, 0),
+        status="draft",
+        amount="900.00",
+        category="city_transport",
+    )
     db.commit()
 
     make_report(db, report_date=date(2026, 7, 5), status="reimbursed", amount="700.00", category="postal")
@@ -406,11 +422,13 @@ def test_stats_calendar_returns_continuous_month_cards_for_cross_year_range(db):
 def make_regular_report(
     db,
     *,
-    report_date: date,
+    report_date: date | None,
     status: str,
     mode: str,
     amount: str,
+    created_at: datetime | None = None,
 ):
+    item_date = report_date or (created_at.date() if created_at is not None else date.today())
     report = create_report(
         db,
         ReportCreate(
@@ -421,13 +439,15 @@ def make_regular_report(
             regular_items=[
                 RegularItemWrite(
                     sort_order=1,
-                    occurred_on=report_date,
+                    occurred_on=item_date,
                     description=f"{mode}-{report_date}",
                     amount=Decimal(amount) if mode == "no_invoice" else None,
                 )
             ],
         ),
     )
+    if created_at is not None:
+        report.created_at = created_at
     if mode == "invoice":
         item = report.regular_items[0]
         db.add(
@@ -474,7 +494,8 @@ def test_stats_summary_defaults_to_travel_and_regular_uses_exact_date_and_mode_f
     )
     make_regular_report(
         db,
-        report_date=date(2026, 6, 11),
+        report_date=None,
+        created_at=datetime(2026, 6, 11, 9, 0),
         status="draft",
         mode="invoice",
         amount="999.00",
