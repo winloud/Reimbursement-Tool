@@ -5,7 +5,7 @@ import sys
 from pathlib import Path
 
 
-DEFAULT_APP_VERSION = "1.4.0"
+DEFAULT_APP_VERSION = "1.4.1"
 
 
 def resolve_app_version() -> str:
