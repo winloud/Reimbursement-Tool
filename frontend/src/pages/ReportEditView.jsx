@@ -558,9 +558,11 @@ export default function ReportEditView({
                   </Typography>
                 </Box>
 
-                <Alert severity={pdfGate.severity} sx={{ py: 0.75 }}>
-                  {pdfGate.message}
-                </Alert>
+                {pdfGate.showSummaryAlert !== false && (
+                  <Alert severity={pdfGate.severity} sx={{ py: 0.75 }}>
+                    {pdfGate.message}
+                  </Alert>
+                )}
 
                 <Divider />
 

@@ -9,6 +9,7 @@ import {
   Typography,
 } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
+import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 
 import CollapsibleRow from "../report-edit-shared/CollapsibleRow";
 import FileDropSlot from "../report-edit-shared/FileDropSlot";
@@ -203,10 +204,44 @@ export default function ExpenseCategoryList({
           const summary = (
             <Box sx={{ display: "flex", alignItems: "center", gap: 1, width: "100%", minWidth: 0 }}>
               <Box sx={categoryRowGridSx}>
-                <Box sx={categoryNameCellSx}>
+                <Box
+                  sx={{
+                    ...categoryNameCellSx,
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 0.75,
+                    flexWrap: "wrap",
+                  }}
+                >
                   <Typography variant="body2" fontWeight={800} noWrap>
                     {category.label}
                   </Typography>
+                  {invoiceShortfall > 0 && (
+                    <Tooltip
+                      title="发票金额不足；仍可预览 PDF，补足后才能修改状态或下载。"
+                      arrow
+                    >
+                      <Box
+                        component="span"
+                        role="status"
+                        aria-label={`${category.label}发票缺口 ${formatAmount(invoiceShortfall)}`}
+                        sx={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 0.25,
+                          minWidth: 0,
+                          maxWidth: "100%",
+                          color: "warning.dark",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        <WarningAmberIcon fontSize="small" aria-hidden="true" />
+                        <Typography component="span" variant="caption" fontWeight={800} noWrap>
+                          发票缺口 {formatAmount(invoiceShortfall)}
+                        </Typography>
+                      </Box>
+                    </Tooltip>
+                  )}
                 </Box>
                 <Metric label="报销" value={amount > 0 ? formatAmount(amount) : "—"} muted={amount <= 0} />
                 <Metric label="" value={invoiceCount > 0 ? `${invoiceCount} 张` : "—"} muted={invoiceCount <= 0} />
@@ -262,12 +297,7 @@ export default function ExpenseCategoryList({
                     value={item.reimbursable_amount ?? ""}
                     disabled={readonly}
                     error={Boolean(manualAmountError)}
-                    helperText={
-                      manualAmountError ||
-                      (invoiceShortfall > 0
-                        ? `发票金额不足 ${formatAmount(invoiceShortfall)}；仍可预览 PDF，补足后才能修改状态或下载。`
-                        : "留空则按已确认发票合计报销")
-                    }
+                    helperText={manualAmountError || "留空则按已确认发票合计报销"}
                     onChange={(event) => onUpdateExpenseItem(category.value, { reimbursable_amount: event.target.value })}
                     InputProps={{
                       startAdornment: <InputAdornment position="start">¥</InputAdornment>,

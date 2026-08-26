@@ -332,6 +332,7 @@ export const getTripPdfGate = ({
     downloadDisabled: blockedByStatus,
     previewBlockedLabel: "确认后预览",
     downloadBlockedLabel: "确认后下载",
+    showSummaryAlert: true,
   };
 
   if (hasTripMarkerIssue) {
@@ -372,6 +373,7 @@ export const getTripPdfGate = ({
       downloadBlocked: true,
       downloadBlockedLabel: "补足后下载",
       unconfirmedCount: 0,
+      showSummaryAlert: false,
     };
   }
 

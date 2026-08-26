@@ -155,6 +155,7 @@ describe("report edit utilities", () => {
   it("blocks both PDF actions while invoices are unconfirmed", () => {
     const gate = getTripPdfGate({ unconfirmedCount: 3, confirmedInvoiceCount: 1 });
     assert.equal(gate.severity, "warning");
+    assert.equal(gate.showSummaryAlert, true);
     assert.equal(gate.previewBlocked, true);
     assert.equal(gate.downloadBlocked, true);
     assert.equal(gate.unconfirmedCount, 3);
@@ -173,6 +174,7 @@ describe("report edit utilities", () => {
     assert.equal(gate.downloadDisabled, false);
     assert.equal(gate.previewBlockedLabel, "补齐起止后预览");
     assert.equal(gate.downloadBlockedLabel, "补齐起止后下载");
+    assert.equal(gate.showSummaryAlert, true);
     assert.equal(gate.hasTripMarkerIssue, true);
     assert.equal(gate.dialogTitle, "行程起止未成对");
     assert.match(gate.message, /“起”“止”没有成对/);
@@ -190,6 +192,7 @@ describe("report edit utilities", () => {
     assert.equal(gate.downloadDisabled, false);
     assert.equal(gate.downloadBlockedLabel, "补足后下载");
     assert.equal(gate.dialogTitle, "宴请发票金额不足");
+    assert.equal(gate.showSummaryAlert, false);
   });
 
   it("clears the gate once invoices are confirmed and distinguishes the empty report", () => {
@@ -941,7 +944,12 @@ describe("report edit utilities", () => {
     const expenseSummarySource = expenseSource.slice(expenseSummaryStart, expenseSummaryEnd);
     assert.match(expenseSummarySource, /<Metric label="报销"/);
     assert.match(expenseSummarySource, /invoiceCount/);
+    assert.match(expenseSummarySource, /WarningAmberIcon/);
+    assert.match(expenseSummarySource, /发票缺口/);
     assert.doesNotMatch(expenseSummarySource, /<Metric label="发票"/);
+    assert.match(viewSource, /pdfGate\.showSummaryAlert !== false/);
+    assert.match(expenseSource, /helperText=\{manualAmountError \|\| "留空则按已确认发票合计报销"\}/);
+    assert.doesNotMatch(expenseSource, /发票金额不足 \$\{formatAmount\(invoiceShortfall\)\}/);
   });
 
   it("allows parent rows to delete their related invoices without a manual cleanup step", () => {
