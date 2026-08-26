@@ -4,22 +4,31 @@
 
 ## 状态
 
-- 版本号：TBD
+- 版本号：v2.0.0
 - 计划状态：规划中
-- 预计版本类型：TBD
+- 预计版本类型：正式发布
 
 ## 目标
 
-- [ ] 收集下一轮需求并确认版本范围。
+- [ ] 用 Tauri 取代 `desktop_app.py` 桌面壳，Tauri 管窗口、安装、更新和进程生命周期。
+- [ ] 现有 Python 后端改为 PyInstaller API sidecar（只提供 API，不携带前端和 pywebview）。
+- [ ] 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，提供从旧便携版迁移。
+- [ ] 更新改用 GitHub Releases `latest.json` + 签名 NSIS + `passive` 安装模式。
 
 ## 范围
 
-- 本轮包含：TBD
-- 本轮不包含：未明确版本号和发布前验证前，不主动同步或部署 Linux 服务器。
+- 本轮包含：Tauri 桌面壳与发行体系整体迁移，详见 `docs/decisions/0009-tauri-nsis-applocaldata.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
+- 本轮不包含：Authenticode 代码签名（首期不做，保留 SmartScreen 风险说明）；差分更新；Linux 服务器部署同步（未明确版本号和发布前验证前不主动同步或部署）。
 
 ## 验收条件
 
-- [ ] 根据实际改动补充可验证的完成条件。
+- [ ] 阶段 2 门槛：Tauri 启动真实 Python sidecar，窗口显示业务界面，正常关闭/崩溃/更新不遗留后台进程。
+- [ ] 数据迁移：实际便携目录副本迁移后核对库行数、附件哈希、备份和设置一致；失败可重试，旧目录不变。
+- [ ] 下载：PDF、批量 ZIP、数据导出、备份、诊断包覆盖保存成功、取消、重名、不可写路径及非法后端路径。
+- [ ] 安装矩阵：Windows 10/11 x64；在线包有/无 WebView2；离线包断网无 WebView2 干净环境；卸载重装不删 AppLocalData 数据。
+- [ ] 更新矩阵：测试签名和测试 feed 完成预览版间升级、安装后重启、升级前备份、签名篡改拒绝、不兼容数据结构拒绝。
+- [ ] 业务烟测：报销单 CRUD、发票/附件上传与预览、PDF 生成与保存、数据导入导出、备份恢复、OpenCV 兼容模式。
+- [ ] `scripts/verify.ps1` 全档位（含新增 `Desktop`）通过。
 
 ## 阻塞
 

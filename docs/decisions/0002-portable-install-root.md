@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受。
+已被取代（见 [ADR 0009](0009-tauri-nsis-applocaldata.md)）。本文记录的便携 ZIP 方案适用于 v1.x 发行，v2.0.0 起改用 Tauri + NSIS + AppLocalData。
 
 ## 背景
 
