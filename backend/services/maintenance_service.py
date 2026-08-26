@@ -33,31 +33,17 @@ from backend.schemas.maintenance import (
     BackupCleanupRead,
     BackupRead,
     BackupDeleteRead,
-    DataCompatibilityRead,
     DatabaseIntegrityCheckRead,
     DatabaseIntegrityIssueRead,
     DiagnosticBrowserRuntimeRead,
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
-    InstalledVersionRead,
     MaintenanceInfoRead,
-    RestartRead,
     RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestorePreviewRead,
-    UpdateStagingCleanupFailureRead,
-    UpdateStagingCleanupRead,
-    UpdateStagingDeleteRead,
-    UpdateStagingInfoRead,
-    UpdateStagingPackageRead,
-    UpdateExecuteRead,
-    UpdatePreviewRead,
-    VersionCleanupRead,
-    VersionDeleteRead,
-    VersionSwitchRead,
 )
 from backend.schemas.report import REPORT_STATUS_VALUES
-from backend.services import desktop_restart_service as desktop_restart
 from backend.services.invoice_qr_runtime import (
     INVOICE_QR_ENGINE_OPENCV_WECHAT,
     INVOICE_QR_ENGINE_ZXING,
@@ -140,33 +126,8 @@ def _safe_preview_id(preview_id: str) -> str:
     return preview_id
 
 
-def _safe_update_preview_id(preview_id: str) -> str:
-    safe_id = _safe_preview_id(preview_id)
-    if not UPDATE_PREVIEW_ID_PATTERN.fullmatch(safe_id):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的更新预览 ID")
-    return safe_id
-
-
-def _safe_version(version: str | None) -> str:
-    if not version or any(part in version for part in ("/", "\\", "..")):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的更新版本号")
-    return version
-
-
 def _is_portable_install() -> bool:
     return (APP_ROOT / CURRENT_VERSION_FILE).is_file() and (APP_ROOT / VERSIONS_DIR_NAME).is_dir()
-
-
-def _current_installed_version() -> str | None:
-    current_path = APP_ROOT / CURRENT_VERSION_FILE
-    try:
-        payload = json.loads(current_path.read_text(encoding="utf-8-sig"))
-    except (OSError, json.JSONDecodeError):
-        return APP_VERSION
-    version = payload.get("current_version")
-    if isinstance(version, str) and version:
-        return version
-    return APP_VERSION
 
 
 def _read_json_file(path: Path) -> dict | None:
@@ -216,101 +177,6 @@ def _current_app_manifest(version: str | None = None) -> dict:
         "min_supported_data_schema_version": MIN_SUPPORTED_DATA_SCHEMA_VERSION,
         "max_supported_data_schema_version": MAX_SUPPORTED_DATA_SCHEMA_VERSION,
     }
-
-
-def _version_manifest(version: str, version_dir: Path | None = None) -> dict | None:
-    candidates: list[Path] = []
-    if version_dir is not None:
-        candidates.append(version_dir / PORTABLE_RELEASE_MANIFEST_NAME)
-    candidates.append(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME)
-
-    for candidate in candidates:
-        manifest = _read_json_file(candidate)
-        if not manifest:
-            continue
-        manifest_version = manifest.get("app_version")
-        if not manifest_version or manifest_version == version:
-            return manifest
-
-    if version == APP_VERSION and version == _current_installed_version():
-        return _current_app_manifest(version)
-    return None
-
-
-def _data_compatibility(manifest: dict | None, target_version: str | None = None) -> DataCompatibilityRead:
-    current_version = _current_data_schema_version()
-    target_schema_version = _manifest_int(manifest, "data_schema_version")
-    min_supported = _manifest_int(manifest, "min_supported_data_schema_version")
-    max_supported = _manifest_int(manifest, "max_supported_data_schema_version")
-    display_version = target_version or (manifest.get("app_version") if manifest else None) or "目标版本"
-
-    if current_version is None:
-        return DataCompatibilityRead(
-            status="unknown",
-            current_data_schema_version=None,
-            target_data_schema_version=target_schema_version,
-            min_supported_data_schema_version=min_supported,
-            max_supported_data_schema_version=max_supported,
-            message="当前数据库缺少数据结构版本信息，已禁止自动安装或切换以避免数据风险。",
-        )
-
-    if target_schema_version is None or min_supported is None or max_supported is None:
-        return DataCompatibilityRead(
-            status="unknown",
-            current_data_schema_version=current_version,
-            target_data_schema_version=target_schema_version,
-            min_supported_data_schema_version=min_supported,
-            max_supported_data_schema_version=max_supported,
-            message=f"{display_version} 缺少数据兼容性信息，已禁止自动安装或切换以避免旧程序打开新数据。",
-        )
-
-    if min_supported <= current_version <= max_supported:
-        return DataCompatibilityRead(
-            status="compatible",
-            current_data_schema_version=current_version,
-            target_data_schema_version=target_schema_version,
-            min_supported_data_schema_version=min_supported,
-            max_supported_data_schema_version=max_supported,
-            message=f"当前数据结构 v{current_version} 在 {display_version} 支持范围 v{min_supported}-v{max_supported} 内。",
-        )
-
-    return DataCompatibilityRead(
-        status="incompatible",
-        current_data_schema_version=current_version,
-        target_data_schema_version=target_schema_version,
-        min_supported_data_schema_version=min_supported,
-        max_supported_data_schema_version=max_supported,
-        message=(
-            f"当前数据结构 v{current_version} 不在 {display_version} 支持范围 "
-            f"v{min_supported}-v{max_supported} 内，已禁止自动安装或切换。"
-        ),
-    )
-
-
-def _require_data_compatible(compatibility: DataCompatibilityRead) -> None:
-    if compatibility.status != "compatible":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=compatibility.message)
-
-
-def _write_current_version(
-    version: str,
-    previous_version: str | None,
-    timestamp_key: str = "updated_at",
-    manifest: dict | None = None,
-) -> None:
-    current_payload = {
-        "current_version": version,
-        "previous_version": previous_version,
-        timestamp_key: _utc_now().isoformat(),
-    }
-    version_manifest = manifest or _current_app_manifest(version)
-    for key in ("data_schema_version", "min_supported_data_schema_version", "max_supported_data_schema_version"):
-        value = _manifest_int(version_manifest, key)
-        if value is not None:
-            current_payload[key] = value
-    temp_current = APP_ROOT / f"{CURRENT_VERSION_FILE}.tmp"
-    temp_current.write_text(json.dumps(current_payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    temp_current.replace(APP_ROOT / CURRENT_VERSION_FILE)
 
 
 def _path_inside(root: Path, *parts: str) -> Path:
@@ -1628,190 +1494,10 @@ def check_database_integrity(db: Session | None = None) -> DatabaseIntegrityChec
     )
 
 
-def list_installed_versions(current_version: str | None = None) -> list[InstalledVersionRead]:
-    versions_root = APP_ROOT / VERSIONS_DIR_NAME
-    if not versions_root.is_dir():
-        return []
-
-    current = current_version if current_version is not None else _current_installed_version()
-    versions: list[InstalledVersionRead] = []
-    for version_dir in versions_root.iterdir():
-        if not version_dir.is_dir():
-            continue
-        version = version_dir.name
-        executable_path = version_dir / APP_EXE_NAME
-        try:
-            modified_at = datetime.fromtimestamp(version_dir.stat().st_mtime).isoformat()
-        except OSError:
-            modified_at = None
-        manifest = _version_manifest(version, version_dir)
-        versions.append(
-            InstalledVersionRead(
-                version=version,
-                version_dir=version_dir.as_posix(),
-                executable_path=executable_path.as_posix(),
-                executable_exists=executable_path.is_file(),
-                current=version == current,
-                modified_at=modified_at,
-                data_compatibility=_data_compatibility(manifest, version),
-            )
-        )
-
-    versions.sort(key=lambda item: (not item.current, item.modified_at or "", item.version), reverse=False)
-    return versions
-
-
-def delete_installed_version(version: str, confirm_delete: bool) -> VersionDeleteRead:
-    if not confirm_delete:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除版本需要二次确认")
-    if not _is_portable_install():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能删除版本")
-
-    target_version = _safe_version(version)
-    current_version = _current_installed_version()
-    if target_version == current_version:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不能删除当前正在使用的版本")
-
-    versions_root = APP_ROOT / VERSIONS_DIR_NAME
-    target_version_dir = _path_inside(versions_root, target_version)
-    if not target_version_dir.is_dir():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
-
-    deleted_path = target_version_dir.as_posix()
-    try:
-        shutil.rmtree(target_version_dir)
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除版本失败：{exc}") from exc
-    return VersionDeleteRead(deleted=True, version=target_version, deleted_path=deleted_path)
-
-
-def cleanup_old_installed_versions(confirm_cleanup: bool) -> VersionCleanupRead:
-    if not confirm_cleanup:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理旧版本需要二次确认")
-    if not _is_portable_install():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能清理版本")
-
-    current_version = _current_installed_version()
-    deleted_versions = [
-        delete_installed_version(version.version, confirm_delete=True)
-        for version in list_installed_versions(current_version)
-        if not version.current
-    ]
-    return VersionCleanupRead(deleted_versions=deleted_versions)
-
-
-def list_update_staging_packages() -> list[UpdateStagingPackageRead]:
-    if not UPDATE_STAGING_ROOT.is_dir():
-        return []
-
-    expired_before = time() - UPDATE_STAGING_RETENTION_DAYS * 24 * 60 * 60
-    packages: list[UpdateStagingPackageRead] = []
-    try:
-        staging_entries = list(UPDATE_STAGING_ROOT.iterdir())
-    except OSError:
-        return []
-
-    for preview_dir in staging_entries:
-        if not preview_dir.is_dir() or not UPDATE_PREVIEW_ID_PATTERN.fullmatch(preview_dir.name):
-            continue
-        package_path = preview_dir / "release.zip"
-        if not package_path.is_file():
-            continue
-        try:
-            package_stat = package_path.stat()
-        except OSError:
-            continue
-
-        manifest = None
-        valid = False
-        try:
-            manifest = _validate_update_package(package_path)
-            valid = True
-        except Exception as exc:  # A damaged or partial upload remains manually removable.
-            logger.debug("Unable to validate update staging package %s: %s", package_path, exc)
-
-        packages.append(
-            UpdateStagingPackageRead(
-                preview_id=preview_dir.name,
-                app_version=manifest.get("app_version") if manifest else None,
-                size_bytes=package_stat.st_size,
-                modified_at=datetime.fromtimestamp(package_stat.st_mtime).isoformat(),
-                valid=valid,
-                expired=package_stat.st_mtime < expired_before,
-            )
-        )
-
-    packages.sort(key=lambda item: item.modified_at or "", reverse=True)
-    return packages
-
-
-def get_update_staging_info() -> UpdateStagingInfoRead:
-    packages = list_update_staging_packages()
-    return UpdateStagingInfoRead(
-        retention_days=UPDATE_STAGING_RETENTION_DAYS,
-        total_count=len(packages),
-        total_size_bytes=sum(item.size_bytes for item in packages),
-        packages=packages,
-    )
-
-
-def delete_update_staging_package(preview_id: str, confirm_delete: bool) -> UpdateStagingDeleteRead:
-    if not confirm_delete:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="删除更新暂存包需要二次确认")
-
-    safe_id = _safe_update_preview_id(preview_id)
-    preview_dir = _path_inside(UPDATE_STAGING_ROOT, safe_id)
-    package_path = preview_dir / "release.zip"
-    if not preview_dir.is_dir() or not package_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="更新暂存包不存在")
-
-    deleted_path = preview_dir.as_posix()
-    try:
-        shutil.rmtree(preview_dir)
-    except OSError as exc:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"删除更新暂存包失败：{exc}") from exc
-    return UpdateStagingDeleteRead(deleted=True, preview_id=safe_id, deleted_path=deleted_path)
-
-
-def cleanup_selected_update_staging(preview_ids: list[str], confirm_cleanup: bool) -> UpdateStagingCleanupRead:
-    if not confirm_cleanup:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="清理更新暂存包需要二次确认")
-    if not preview_ids:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="请至少选择一个更新暂存包")
-
-    safe_ids: list[str] = []
-    for preview_id in preview_ids:
-        safe_id = _safe_update_preview_id(preview_id)
-        if safe_id not in safe_ids:
-            safe_ids.append(safe_id)
-
-    deleted_packages: list[UpdateStagingDeleteRead] = []
-    failed_packages: list[UpdateStagingCleanupFailureRead] = []
-    for safe_id in safe_ids:
-        try:
-            deleted_packages.append(delete_update_staging_package(safe_id, confirm_delete=True))
-        except HTTPException as exc:
-            failed_packages.append(UpdateStagingCleanupFailureRead(preview_id=safe_id, message=str(exc.detail)))
-
-    return UpdateStagingCleanupRead(
-        deleted_packages=deleted_packages,
-        failed_packages=failed_packages,
-    )
-
-
 def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
-    current_version = _current_installed_version()
-    current_version_dir = None
-    if current_version:
-        current_version_dir = (APP_ROOT / VERSIONS_DIR_NAME / current_version).as_posix()
     return MaintenanceInfoRead(
         app_version=APP_VERSION,
         app_root=APP_ROOT.as_posix(),
-        portable_install=_is_portable_install(),
-        current_version=current_version,
-        current_version_dir=current_version_dir,
-        launcher_path=(APP_ROOT / APP_EXE_NAME).as_posix(),
-        installed_versions=list_installed_versions(current_version),
         data_dir=DATA_DIR.as_posix(),
         database_path=DATABASE_PATH.as_posix(),
         uploads_dir=UPLOAD_ROOT.as_posix(),
@@ -1820,7 +1506,6 @@ def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
         database_exists=DATABASE_PATH.exists(),
         uploads_exists=UPLOAD_ROOT.exists(),
         backups=list_backups(),
-        update_staging=get_update_staging_info(),
         qr_engine=get_qr_engine_diagnostics(db),
         browser_runtime=get_browser_runtime_diagnostics(),
         log_file=get_log_file_diagnostics(),
@@ -2140,235 +1825,6 @@ def execute_restore(preview_id: str, confirm_restore: bool) -> RestoreExecuteRea
     )
 
 
-def _read_update_manifest(archive: zipfile.ZipFile) -> dict:
-    names = archive.namelist()
-    for name in names:
-        _safe_archive_name(name)
-
-    manifest_name = PORTABLE_RELEASE_MANIFEST_NAME
-    if manifest_name not in names:
-        nested_manifest = f"{APP_DIR_NAME}/{PORTABLE_RELEASE_MANIFEST_NAME}"
-        if nested_manifest in names:
-            manifest_name = nested_manifest
-        else:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新包缺少 portable-release.json")
-
-    try:
-        manifest = json.loads(archive.read(manifest_name).decode("utf-8-sig"))
-    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="portable-release.json 格式无效") from exc
-    if manifest.get("schema_version") != UPDATE_SCHEMA_VERSION:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新包版本不支持")
-    if manifest.get("package_type") != "reimbursement_portable_release":
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="不是有效的便携发布更新包")
-    if manifest.get("app_dir") != APP_DIR_NAME:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新包应用目录不匹配")
-    _safe_version(manifest.get("app_version"))
-    return manifest
-
-
-def _validate_update_package(package_path: Path) -> dict:
-    try:
-        archive = zipfile.ZipFile(package_path)
-    except zipfile.BadZipFile as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新包不是有效 ZIP 文件") from exc
-    try:
-        manifest = _read_update_manifest(archive)
-        names = set(archive.namelist())
-        version = _safe_version(manifest.get("app_version"))
-        required = {
-            f"{APP_DIR_NAME}/{APP_EXE_NAME}",
-            f"{APP_DIR_NAME}/{CURRENT_VERSION_FILE}",
-            f"{APP_DIR_NAME}/{PORTABLE_RELEASE_MANIFEST_NAME}",
-            f"{APP_DIR_NAME}/{VERSIONS_DIR_NAME}/{version}/{APP_EXE_NAME}",
-        }
-        missing = sorted(required - names)
-        if missing:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"更新包缺少文件：{missing[0]}")
-        return manifest
-    finally:
-        archive.close()
-
-
-def _preview_update_from_manifest(preview_id: str, package_path: Path, manifest: dict) -> UpdatePreviewRead:
-    version = _safe_version(manifest.get("app_version"))
-    files_total = 0
-    with zipfile.ZipFile(package_path) as archive:
-        files_total = sum(1 for item in archive.infolist() if not item.is_dir())
-    return UpdatePreviewRead(
-        preview_id=preview_id,
-        app_version=version,
-        package_format=str(manifest.get("package_type")),
-        files_total=files_total,
-        size_bytes=package_path.stat().st_size,
-        version_dir=f"{VERSIONS_DIR_NAME}/{version}",
-        executable_path=f"{VERSIONS_DIR_NAME}/{version}/{APP_EXE_NAME}",
-        data_compatibility=_data_compatibility(manifest, version),
-    )
-
-
-def create_update_preview(upload_file: UploadFile) -> UpdatePreviewRead:
-    preview_id = uuid4().hex
-    preview_dir = UPDATE_STAGING_ROOT / preview_id
-    preview_dir.mkdir(parents=True, exist_ok=False)
-    package_path = preview_dir / "release.zip"
-    with package_path.open("wb") as target:
-        shutil.copyfileobj(upload_file.file, target)
-
-    manifest = _validate_update_package(package_path)
-    return _preview_update_from_manifest(preview_id, package_path, manifest)
-
-
-def _update_preview_package(preview_id: str) -> tuple[Path, dict]:
-    safe_id = _safe_update_preview_id(preview_id)
-    package_path = _path_inside(UPDATE_STAGING_ROOT, safe_id, "release.zip")
-    if not package_path.exists():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="更新预览不存在或已过期")
-    manifest = _validate_update_package(package_path)
-    return package_path, manifest
-
-
-def _extract_update_payload(package_path: Path, manifest: dict, target_root: Path) -> None:
-    version = _safe_version(manifest.get("app_version"))
-    allowed_root_files = {
-        APP_EXE_NAME,
-        CURRENT_VERSION_FILE,
-        PORTABLE_RELEASE_MANIFEST_NAME,
-        "README.md",
-        "zip-upgrade-guide.md",
-        "upgrade_zip_release.ps1",
-    }
-    version_prefix = PurePosixPath(APP_DIR_NAME, VERSIONS_DIR_NAME, version)
-    app_prefix = f"{APP_DIR_NAME}/"
-
-    with zipfile.ZipFile(package_path) as archive:
-        for item in archive.infolist():
-            if item.is_dir():
-                continue
-            safe_name = _safe_archive_name(item.filename)
-            if safe_name == PORTABLE_RELEASE_MANIFEST_NAME:
-                continue
-            if not safe_name.startswith(app_prefix):
-                continue
-
-            relative = PurePosixPath(safe_name).relative_to(APP_DIR_NAME)
-            if len(relative.parts) == 1 and relative.parts[0] in allowed_root_files:
-                target = _path_inside(target_root, relative.as_posix())
-            elif PurePosixPath(APP_DIR_NAME, *relative.parts).is_relative_to(version_prefix):
-                target = _path_inside(target_root, relative.as_posix())
-            else:
-                continue
-            _write_archive_file(archive, safe_name, target)
-
-
-def execute_update(preview_id: str, confirm_update: bool) -> UpdateExecuteRead:
-    if not confirm_update:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="安装更新需要二次确认")
-    if not _is_portable_install():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能执行程序内更新")
-
-    safe_preview_id = _safe_update_preview_id(preview_id)
-    package_path, manifest = _update_preview_package(safe_preview_id)
-    version = _safe_version(manifest.get("app_version"))
-    previous_version = _current_installed_version()
-    target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / version
-    if target_version_dir.exists():
-        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=f"版本目录已存在：{target_version_dir}。请使用已安装版本切换。")
-    data_compatibility = _data_compatibility(manifest, version)
-    _require_data_compatible(data_compatibility)
-
-    work_root = _path_inside(UPDATE_STAGING_ROOT, safe_preview_id, "work")
-    extracted_root = work_root / "extracted"
-    try:
-        if work_root.exists():
-            shutil.rmtree(work_root)
-        extracted_root.mkdir(parents=True, exist_ok=True)
-        _extract_update_payload(package_path, manifest, extracted_root)
-
-        extracted_version_dir = extracted_root / VERSIONS_DIR_NAME / version
-        extracted_exe = extracted_version_dir / APP_EXE_NAME
-        if not extracted_exe.is_file():
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="更新包未包含可执行程序")
-
-        pre_update_backup = create_backup(reason="pre_update")
-        (APP_ROOT / VERSIONS_DIR_NAME).mkdir(parents=True, exist_ok=True)
-        shutil.move(str(extracted_version_dir), str(target_version_dir))
-        (target_version_dir / PORTABLE_RELEASE_MANIFEST_NAME).write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-
-        for name in (APP_EXE_NAME, PORTABLE_RELEASE_MANIFEST_NAME, "README.md", "zip-upgrade-guide.md", "upgrade_zip_release.ps1"):
-            source = extracted_root / name
-            if source.exists() and source.is_file():
-                shutil.copy2(source, APP_ROOT / name)
-
-        _write_current_version(version, previous_version, timestamp_key="updated_at", manifest=manifest)
-    finally:
-        try:
-            shutil.rmtree(work_root)
-        except OSError:
-            pass
-
-    try:
-        shutil.rmtree(_path_inside(UPDATE_STAGING_ROOT, safe_preview_id))
-    except OSError as exc:
-        logger.warning("更新已安装，但无法删除更新暂存包 %s：%s", safe_preview_id, exc)
-
-    return UpdateExecuteRead(
-        installed=True,
-        app_version=version,
-        previous_version=previous_version,
-        pre_update_backup=pre_update_backup,
-        restart_required=True,
-        version_dir=(APP_ROOT / VERSIONS_DIR_NAME / version).as_posix(),
-        data_compatibility=data_compatibility,
-    )
-
-
-def switch_installed_version(version: str, confirm_switch: bool) -> VersionSwitchRead:
-    if not confirm_switch:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="切换版本需要二次确认")
-    if not _is_portable_install():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行目录不是便携式安装根目录，不能切换版本")
-
-    target_version = _safe_version(version)
-    previous_version = _current_installed_version()
-    target_version_dir = APP_ROOT / VERSIONS_DIR_NAME / target_version
-    target_exe = target_version_dir / APP_EXE_NAME
-    if not target_version_dir.is_dir():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"版本目录不存在：{target_version_dir}")
-    if not target_exe.is_file():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"版本目录缺少可执行程序：{target_exe}")
-    if previous_version == target_version:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="目标版本已经是当前版本")
-    manifest = _version_manifest(target_version, target_version_dir)
-    data_compatibility = _data_compatibility(manifest, target_version)
-    _require_data_compatible(data_compatibility)
-
-    pre_switch_backup = create_backup(reason="pre_version_switch")
-    _write_current_version(target_version, previous_version, timestamp_key="switched_at", manifest=manifest)
-    return VersionSwitchRead(
-        switched=True,
-        app_version=target_version,
-        previous_version=previous_version,
-        pre_switch_backup=pre_switch_backup,
-        restart_required=True,
-        version_dir=target_version_dir.as_posix(),
-        data_compatibility=data_compatibility,
-    )
-
-
-def request_application_restart() -> RestartRead:
-    if not _desktop_file_dialog_enabled() or not _is_portable_install():
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="当前运行方式不支持程序内重启")
-    launcher_path = APP_ROOT / APP_EXE_NAME
-    if not launcher_path.is_file():
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="未找到程序启动器，无法重启")
-    desktop_restart.schedule_application_restart(launcher_path, app_root=APP_ROOT)
-    return RestartRead(restart_scheduled=True, launcher_path=launcher_path.as_posix())
-
-
 def _environment_payload() -> dict:
     return {
         "python_version": sys.version,
@@ -2394,7 +1850,6 @@ def _diagnostic_bool(value: bool | None) -> str:
 
 def _diagnostics_summary_text(diagnostics: dict) -> bytes:
     paths = diagnostics.get("paths") or {}
-    state = diagnostics.get("state") or {}
     database_check = diagnostics.get("database_check") or {}
     qr_engine = diagnostics.get("qr_engine") or {}
     browser = diagnostics.get("browser_runtime") or {}
@@ -2412,10 +1867,7 @@ def _diagnostics_summary_text(diagnostics: dict) -> bytes:
         "",
         f"生成时间: {diagnostics.get('generated_at') or '-'}",
         f"程序版本: {diagnostics.get('app_version') or '-'}",
-        f"当前版本: {state.get('current_version') or '-'}",
-        f"便携安装: {_diagnostic_bool(state.get('portable_install'))}",
         f"安装根目录: {paths.get('app_root') or '-'}",
-        f"当前版本目录: {state.get('current_version_dir') or '-'}",
         f"数据目录: {paths.get('data_dir') or '-'}",
         f"数据库路径: {paths.get('database_path') or '-'}",
         f"日志路径: {log_file.get('path') or paths.get('logs_dir') or '-'}",
@@ -2462,9 +1914,6 @@ def _diagnostics_payload(db: Session | None = None) -> dict:
             "logs_dir": info.logs_dir,
         },
         "state": {
-            "portable_install": info.portable_install,
-            "current_version": info.current_version,
-            "current_version_dir": info.current_version_dir,
             "database_exists": info.database_exists,
             "uploads_exists": info.uploads_exists,
             "backups_total": len(info.backups),
