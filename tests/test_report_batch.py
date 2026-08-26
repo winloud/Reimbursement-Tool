@@ -233,6 +233,8 @@ def test_batch_status_allows_cross_status_updates_and_skips_same_or_missing(monk
     assert checked.status == "checked"
     assert submitted.status == "checked"
     assert reimbursed.status == "checked"
+    assert submitted.report_date is None
+    assert reimbursed.report_date is None
     assert snapshot_reasons == ["pre_batch_status_rollback"]
 
 

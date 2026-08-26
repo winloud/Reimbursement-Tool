@@ -886,17 +886,20 @@ export default function ReportEdit() {
     try {
       const res = await updateReportStatus(saved.reportId, target);
       if (res.success) {
+        const nextReportDate = res.data?.report_date || "";
+        const nextForm = { ...form, report_date: nextReportDate };
         setStatus(res.data.status);
         if (Array.isArray(res.data?.occupied_dates)) {
           setOwnedOccupiedDates(getReportOccupiedDates(res.data));
         }
-        if (res.data.report_date) {
-          setForm((current) => ({ ...current, report_date: res.data.report_date }));
-          setDefaults((current) => ({ ...current, report_date: res.data.report_date }));
-        }
+        setForm((current) => ({ ...current, report_date: nextReportDate }));
+        setDefaults((current) => ({ ...current, report_date: nextReportDate }));
+        lastSavedPayloadRef.current = JSON.stringify(
+          buildReportPayload({ form: nextForm, trips, expenseItems }),
+        );
         setOccupancySemanticBaseline(
           buildReportOccupancySemanticKey({
-            form: { ...form, report_date: res.data.report_date || form.report_date },
+            form: nextForm,
             trips,
           }),
         );

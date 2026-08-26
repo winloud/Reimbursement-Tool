@@ -1,5 +1,5 @@
+from datetime import date, datetime
 from decimal import Decimal
-from datetime import date
 
 import pytest
 from fastapi import HTTPException
@@ -482,11 +482,14 @@ def test_list_reports_defaults_to_trip_start_date_desc(db):
             trips=[TripWrite(sort_order=1, depart_month=6, depart_day=20, arrive_month=6, arrive_day=21)],
         ),
     )
+    recent_blank_draft = create_report(db, ReportCreate(purpose="仅填写出差事由"))
+    recent_blank_draft.created_at = datetime(2026, 7, 2, 9, 0)
+    db.commit()
 
     items, total = list_reports(db, page=1, page_size=10)
 
-    assert total == 3
-    assert [item.id for item in items] == [late_trip.id, early_trip.id, no_trip.id]
+    assert total == 4
+    assert [item.id for item in items] == [recent_blank_draft.id, late_trip.id, early_trip.id, no_trip.id]
 
 
 def test_list_reports_filters_previous_year_december_trip_from_january_report(db):

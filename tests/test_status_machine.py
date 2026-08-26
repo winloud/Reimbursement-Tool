@@ -80,18 +80,19 @@ def test_update_report_status_full_legal_path(monkeypatch, db):
     assert snapshot_reasons == ["pre_status_rollback", "pre_status_rollback", "pre_status_rollback"]
 
 
-def test_marking_submitted_refreshes_report_date_every_time(db):
+def test_marking_submitted_refreshes_report_date_and_rollback_clears_it(db):
     original_date = date(2026, 1, 2)
     report = create_report(db, ReportCreate(report_date=original_date, purpose="提交日期测试"))
 
-    update_report_status(db, report.id, "checked")
+    checked = update_report_status(db, report.id, "checked")
+    assert checked.report_date is None
     submitted = update_report_status(db, report.id, "printed")
     assert submitted.report_date == date.today()
 
     submitted.report_date = original_date
     db.commit()
     checked = update_report_status(db, report.id, "checked")
-    assert checked.report_date == original_date
+    assert checked.report_date is None
     resubmitted = update_report_status(db, report.id, "printed")
     assert resubmitted.report_date == date.today()
 

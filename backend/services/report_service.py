@@ -1080,8 +1080,13 @@ def _datetime_sort_value(value: datetime | None) -> float:
 
 
 def _report_trip_start_desc_key(report: ExpenseReport) -> tuple[int, int, float]:
+    provisional_date = (
+        report.created_at.date()
+        if report.report_date is None and report.created_at is not None
+        else None
+    )
     return (
-        _date_sort_value(report.trip_start_date),
+        _date_sort_value(report.trip_start_date or provisional_date),
         _date_sort_value(report.report_date),
         _datetime_sort_value(report.created_at),
     )
@@ -1360,6 +1365,8 @@ def apply_report_status(
     report.status = target_status
     if target_status == "printed":
         report.report_date = submitted_on or date.today()
+    elif REPORT_STATUS_ORDER[target_status] < REPORT_STATUS_ORDER["printed"]:
+        report.report_date = None
 
 
 def update_report_status(db: Session, report_id: int, target_status: ReportStatus) -> ExpenseReport:

@@ -564,11 +564,22 @@ export default function RegularReportEdit() {
     try {
       const response = await updateReportStatus(saved.reportId, target);
       if (!response.success) throw new Error(response.message || "状态更新失败");
+      const nextReportDate = response.data?.report_date || "";
+      const nextForm = { ...form, report_date: nextReportDate };
+      const nextPayload = buildRegularReportPayload({
+        form: nextForm,
+        mode,
+        items,
+        invoices,
+        attachments,
+      });
+      const nextPayloadKey = JSON.stringify(nextPayload);
       setStatus(response.data?.status || target);
-      if (response.data?.report_date) {
-        setForm((current) => ({ ...current, report_date: response.data.report_date }));
-        setDefaults((current) => ({ ...current, report_date: response.data.report_date }));
-      }
+      setForm((current) => ({ ...current, report_date: nextReportDate }));
+      setDefaults((current) => ({ ...current, report_date: nextReportDate }));
+      lastSavedPayloadRef.current = nextPayloadKey;
+      latestPayloadRef.current = nextPayload;
+      latestPayloadKeyRef.current = nextPayloadKey;
       setSaveState("saved");
       setToast("状态已更新");
     } catch (statusError) {
