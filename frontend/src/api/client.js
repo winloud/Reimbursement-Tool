@@ -11,7 +11,10 @@ export const apiClient = axios.create({
 
 // 阶段 4：在 Tauri 环境下用 sidecar 的 api_base_url 与会话令牌替换默认值。
 // 浏览器开发模式无令牌（后端放行），baseURL 仍由 VITE_API_BASE_URL 决定。
-// 不阻塞模块加载：已有请求会在拦截器里等令牌就绪；首屏通常已触发 init。
+//
+// 请求拦截器在模块加载时同步注册，内部 await runtimeConfigReady，
+// 确保首屏请求不会在配置就绪前发出。initRuntimeConfig 在 main.jsx 渲染前完成；
+// 即便用户绕过渲染，拦截器也会把请求挂到配置就绪后再放行。
 let runtimeConfigReady = null;
 let sessionToken = "";
 export const initRuntimeConfig = () => {
@@ -21,18 +24,27 @@ export const initRuntimeConfig = () => {
         apiClient.defaults.baseURL = config.api_base_url.replace(/\/$/, "");
       }
       sessionToken = config.session_token || "";
-      apiClient.interceptors.request.use((requestConfig) => {
-        if (sessionToken) {
-          requestConfig.headers = requestConfig.headers || {};
-          requestConfig.headers["X-Session-Token"] = sessionToken;
-        }
-        return requestConfig;
-      });
       return config;
     });
   }
   return runtimeConfigReady;
 };
+
+// 同步注册请求拦截器：每个请求 await 配置就绪后再注入令牌。
+// 配置加载失败时 await 会抛错，请求失败——此时 sidecar 未就绪，属启动错误。
+apiClient.interceptors.request.use(async (requestConfig) => {
+  if (!runtimeConfigReady) initRuntimeConfig();
+  try {
+    await runtimeConfigReady;
+  } catch {
+    // 配置加载失败：令牌缺失，放行请求让其按原逻辑失败，避免永久卡死后续请求。
+  }
+  if (sessionToken) {
+    requestConfig.headers = requestConfig.headers || {};
+    requestConfig.headers["X-Session-Token"] = sessionToken;
+  }
+  return requestConfig;
+});
 
 // 立即触发一次；Tauri 下异步等待 sidecar 就绪，浏览器下几乎同步返回。
 initRuntimeConfig();
@@ -341,12 +353,35 @@ export const triggerBackendDownload = async (prepared) => {
   if (!downloadUrl) throw new Error("下载链接无效，请重新生成");
 
   if (!isInTauriEnvironment()) {
-    const { triggerBrowserDownload } = await import("../utils/browserDownload");
+    const { triggerBrowserDownload } = await import("../utils/browserDownload.js");
     triggerBrowserDownload(downloadUrl);
     return { browser: true };
   }
 
   return saveBackendDownload(downloadUrl, filename);
+};
+
+/**
+ * 保存直接文件流端点（备份 ZIP、诊断包）到磁盘。
+ * 与 triggerBackendDownload 的区别：这里不走 prepare 描述符，而是直接给定端点 URL。
+ * Tauri 下走原生保存对话框（Rust 注入会话令牌取字节）；浏览器下用 fetchBlob 取回 blob
+ * 再走 saveBlobDownload，保持浏览器模式原有行为。
+ * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
+ *
+ * @param url 资源端点相对/绝对 URL
+ * @param filename 保存对话框默认文件名
+ * @param fetchBlob 浏览器回退用的取 blob 函数，返回 { blob, filename }
+ */
+export const saveBackendResource = async (url, filename, fetchBlob) => {
+  if (!url) throw new Error("下载链接无效，请重新生成");
+
+  if (!isInTauriEnvironment()) {
+    const { saveBlobDownload } = await import("../utils/browserDownload.js");
+    saveBlobDownload(await fetchBlob());
+    return { browser: true };
+  }
+
+  return saveBackendDownload(url, filename);
 };
 
 export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {

@@ -130,19 +130,44 @@ pub async fn save_backend_download(
         .await
         .map_err(|e| format!("读取下载内容失败: {e}"))?;
 
-    // 写临时文件后原子改名，避免半写文件覆盖已有数据。
+    // 写临时文件后先备份旧文件、再提交新文件，失败时恢复旧文件，保证覆盖不丢数据。
     let tmp_path = target.with_extension(format!(
         "{}.downloading",
         target.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
     ));
     std::fs::write(&tmp_path, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
-    if target.exists() {
-        let _ = std::fs::remove_file(&target);
+
+    let backup_path = std::path::PathBuf::from(format!("{}.bak", target.to_string_lossy()));
+    let had_old = target.exists();
+    if had_old {
+        if backup_path.exists() {
+            let _ = std::fs::remove_file(&backup_path);
+        }
+        std::fs::rename(&target, &backup_path)
+            .map_err(|e| format!("备份旧文件失败: {e}"))?;
     }
-    std::fs::rename(&tmp_path, &target).map_err(|e| {
+
+    if let Err(rename_err) = std::fs::rename(&tmp_path, &target) {
+        // 提交失败：尝试恢复旧文件，并清理临时文件。
+        let restore_msg = if had_old {
+            match std::fs::rename(&backup_path, &target) {
+                Ok(()) => "已恢复旧文件".to_string(),
+                Err(restore_err) => format!(
+                    "恢复旧文件也失败: {restore_err}，原文件备份在 {}",
+                    backup_path.display()
+                ),
+            }
+        } else {
+            "无旧文件可恢复".to_string()
+        };
         let _ = std::fs::remove_file(&tmp_path);
-        format!("原子改名失败: {e}")
-    })?;
+        return Err(format!("提交新文件失败: {rename_err}（{restore_msg}）"));
+    }
+
+    // 提交成功，删除备份。
+    if had_old {
+        let _ = std::fs::remove_file(&backup_path);
+    }
 
     Ok(SavedFile {
         saved_path: target.to_string_lossy().into_owned(),

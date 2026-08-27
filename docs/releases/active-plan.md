@@ -20,6 +20,11 @@
 - 本轮包含：Tauri 桌面壳与发行体系整体迁移，详见 `docs/decisions/0009-tauri-nsis-applocaldata.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
 - 本轮不包含：Authenticode 代码签名（首期不做，保留 SmartScreen 风险说明）；差分更新；Linux 服务器部署同步（未明确版本号和发布前验证前不主动同步或部署）。
 
+## 待补缺口（阶段 5+）
+
+- 生产 sidecar 打包：新增 PyInstaller onedir spec 与构建步骤，产物以 Tauri `externalBin` 装入 NSIS，`resolve_sidecar_command` 生产路径切换为 Tauri sidecar API 启动打包产物；当前 `python sidecar_app.py` 回退仅保留为开发兜底（见 `src-tauri/src/sidecar.rs` 模块注释与 `tauri.conf.json`）。
+- 运行数据目录与首次迁移：spawn 前解析并创建 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，经 `REIMBURSEMENT_APP_ROOT` 注入 sidecar；首次迁移在 sidecar 导入后端模块前完成或确定启用目录（详见 ADR 0009 首次迁移清单）。
+
 ## 验收条件
 
 - [ ] 阶段 2 门槛：Tauri 启动真实 Python sidecar，窗口显示业务界面，正常关闭/崩溃/更新不遗留后台进程。

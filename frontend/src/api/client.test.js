@@ -15,6 +15,7 @@ import {
   prepareReportPdfDownload,
   previewRailTickets,
   getStatsSummary,
+  saveBackendResource,
   uploadInvoice,
   uploadReportAttachment,
 } from "./client.js";
@@ -237,5 +238,60 @@ describe("api client release defaults", () => {
     } finally {
       apiClient.defaults.adapter = originalAdapter;
     }
+  });
+});
+
+describe("saveBackendResource browser fallback", () => {
+  it("fetches the blob and drives a browser download when not in Tauri", async () => {
+    const originalDocument = globalThis.document;
+    const originalSetTimeout = globalThis.setTimeout;
+    const createCalls = [];
+    // saveBlobDownload 需要 document.createElement('a') 与 body.appendChild，
+    // 以及 URL.createObjectURL/revokeObjectURL。这里装最小 fake 让其走完整流程。
+    const fakeLink = { click() {}, remove() {} };
+    globalThis.document = {
+      createElement: (tag) => {
+        assert.equal(tag, "a");
+        return fakeLink;
+      },
+      body: { appendChild() {} },
+    };
+    globalThis.setTimeout = (cb) => {
+      createCalls.push("scheduled");
+      // 不立即触发 revoke，避免副作用；返回假 id 即可。
+      return 0;
+    };
+    const originalCreateObjectURL = URL.createObjectURL;
+    const originalRevokeObjectURL = URL.revokeObjectURL;
+    URL.createObjectURL = () => {
+      createCalls.push("blob:url");
+      return "blob:save-backend-resource";
+    };
+    URL.revokeObjectURL = () => {};
+
+    let fetched = 0;
+    const fetchBlob = async () => {
+      fetched += 1;
+      return { blob: new Blob(["backup"], { type: "application/zip" }), filename: "backup.zip" };
+    };
+
+    try {
+      const result = await saveBackendResource("/api/maintenance/backups/b.zip/download", "backup.zip", fetchBlob);
+      assert.equal(result.browser, true);
+      assert.equal(fetched, 1);
+      assert.deepEqual(createCalls, ["blob:url", "scheduled"]);
+    } finally {
+      globalThis.document = originalDocument;
+      globalThis.setTimeout = originalSetTimeout;
+      URL.createObjectURL = originalCreateObjectURL;
+      URL.revokeObjectURL = originalRevokeObjectURL;
+    }
+  });
+
+  it("rejects when url is missing", async () => {
+    await assert.rejects(
+      () => saveBackendResource("", "x.zip", async () => ({ blob: new Blob([]), filename: "x.zip" })),
+      /下载链接无效/,
+    );
   });
 });

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import App from "./App";
+import { initRuntimeConfig } from "./api/client";
 
 const theme = createTheme({
   palette: {
@@ -173,12 +174,16 @@ const theme = createTheme({
   },
 });
 
-ReactDOM.createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <BrowserRouter>
-      <ThemeProvider theme={theme}>
-        <App />
-      </ThemeProvider>
-    </BrowserRouter>
-  </React.StrictMode>,
-);
+// 渲染前等待运行时配置就绪，确保首屏请求已有 sidecar baseURL 与会话令牌。
+// 配置加载失败也照常渲染，让应用显示启动错误而非白屏。
+initRuntimeConfig().finally(() => {
+  ReactDOM.createRoot(document.getElementById("root")).render(
+    <React.StrictMode>
+      <BrowserRouter>
+        <ThemeProvider theme={theme}>
+          <App />
+        </ThemeProvider>
+      </BrowserRouter>
+    </React.StrictMode>,
+  );
+});

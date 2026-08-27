@@ -7,6 +7,18 @@
 //
 // 开发模式下通过环境变量 REIMBURSEMENT_SIDECAR_CMD 指定启动命令
 // （例如 "python sidecar_app.py --port 0"）；打包后由 Tauri sidecar 机制运行 onedir exe。
+//
+// TODO(阶段 5+) 生产 sidecar 打包：当前 resolve_sidecar_command 在无开发环境变量时
+// 回退到 `python sidecar_app.py`，仅用于开发/测试。生产安装包既无 Python 也无源码，
+// 需新增 PyInstaller onedir spec 与构建步骤，将产物以 Tauri externalBin 装入 NSIS，
+// 并由 Tauri sidecar API 启动打包产物；届时此处 python 回退应保留为开发兜底或移除。
+// tauri.conf.json 当前未配置 externalBin，该装入工作是阶段 5+ 的内容。
+//
+// TODO(阶段 5+) 运行数据目录：spawn 前需解析并创建
+// `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，经 REIMBURSEMENT_APP_ROOT
+// 注入 sidecar，使数据库/附件/日志离开安装目录。首次迁移须在 sidecar 导入后端模块
+// 之前完成或确定启用目录（详见 ADR 0009 首次迁移清单）。当前开发模式回退到源码根
+// 是已知的临时状态。
 
 use std::collections::HashMap;
 use serde::Deserialize;
@@ -49,7 +61,9 @@ pub fn spawn_and_wait(
         session_token.clone(),
     );
     envs.insert("REIMBURSEMENT_APP_VERSION".to_string(), app_version.clone());
-    // REIMBURSEMENT_APP_ROOT 在阶段 5 数据迁移确定后注入；阶段 2 用默认（源码根）。
+    // TODO(阶段 5+) 数据迁移确定后，在此解析并创建 app_local_data_dir()/runtime，
+    // 通过 REIMBURSEMENT_APP_ROOT 注入 sidecar；首次迁移须在 sidecar 导入后端模块之前
+    // 完成或确定启用目录。当前开发模式用默认（源码根），是已知临时状态。
 
     let (mut rx, child) = app
         .shell()
@@ -62,8 +76,10 @@ pub fn spawn_and_wait(
     eprintln!("sidecar spawned pid={}", child.pid());
 
     // 阻塞等待 ready JSON，带超时。setup 是同步上下文，用 block_on 跑异步 recv。
+    // 任何错误出口都先 kill child 再返回，避免遗留后台 Python 进程
+    // （Job Object 要等本函数成功返回后由 lib.rs 绑定，此处失败时尚未绑定）。
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(READY_TIMEOUT_SECS);
-    let api_base_url = block_on(async {
+    let ready_result = block_on(async {
         loop {
             if std::time::Instant::now() >= deadline {
                 return Err("sidecar 启动超时未输出 ready JSON".to_string());
@@ -92,7 +108,16 @@ pub fn spawn_and_wait(
                 Err(_) => continue,
             }
         }
-    })?;
+    });
+
+    let api_base_url = match ready_result {
+        Ok(url) => url,
+        Err(e) => {
+            // spawn 已成功但就绪等待失败：显式终止子进程，避免遗留后台进程。
+            let _ = child.kill();
+            return Err(e);
+        }
+    };
 
     Ok((
         RuntimeConfig {
@@ -106,6 +131,9 @@ pub fn spawn_and_wait(
 
 /// 解析 sidecar 启动命令。优先用环境变量，回退到开发默认（python 源码）。
 /// REIMBURSEMENT_SIDECAR_CMD 用空格分割，首段为程序，其余为参数。
+///
+/// TODO(阶段 5+) 生产环境将切换为 Tauri sidecar API 启动 PyInstaller onedir 打包产物
+/// （见模块顶部注释与 ADR 0009）；此处 `python sidecar_app.py` 回退仅保留为开发兜底。
 fn resolve_sidecar_command() -> Result<(String, Vec<String>), String> {
     if let Ok(cmd) = std::env::var("REIMBURSEMENT_SIDECAR_CMD") {
         let parts: Vec<String> = cmd.split_whitespace().map(String::from).collect();

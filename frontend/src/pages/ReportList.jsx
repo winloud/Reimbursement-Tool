@@ -293,6 +293,7 @@ export default function ReportList() {
       }
       const saveResult = await triggerBackendDownload(result);
       if (saveResult?.error) throw new Error(saveResult.error);
+      if (saveResult?.cancelled) return;
       if (reportIds?.length) {
         setBatchResult({
           severity: "success",
@@ -334,6 +335,7 @@ export default function ReportList() {
       }
       const saveResult = await triggerBackendDownload(res);
       if (saveResult?.error) throw new Error(saveResult.error);
+      if (saveResult?.cancelled) return;
     } catch (err) {
       setError(errorMessage(err, "下载失败"));
     } finally {
@@ -353,6 +355,7 @@ export default function ReportList() {
       }
       const saveResult = await triggerBackendDownload(res);
       if (saveResult?.error) throw new Error(saveResult.error);
+      if (saveResult?.cancelled) return;
       setBatchResult({
         severity: "success",
         message: `已生成 ${selectedIds.length} 张报销单 PDF，请在下载窗口选择保存位置。`,

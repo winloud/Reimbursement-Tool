@@ -13,12 +13,12 @@ import {
   getReportPdfPreview,
   getSettings,
   prepareReportPdfDownload,
+  triggerBackendDownload,
   updateReport,
   updateReportStatus,
   uploadReportAttachment,
   uploadInvoice,
 } from "../api/client";
-import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   buildCustomExpenseCategory,
   buildReportOccupancySemanticKey,
@@ -954,7 +954,9 @@ export default function ReportEdit() {
       if (!res.success || !res.data?.download_url) {
         throw new Error(res.message || "生成下载链接失败");
       }
-      triggerBrowserDownload(res.data.download_url);
+      const saveResult = await triggerBackendDownload(res);
+      if (saveResult?.error) throw new Error(saveResult.error);
+      if (saveResult?.cancelled) return;
       await loadForEdit({ quiet: true, reportId: saved.reportId });
       setToast("PDF 已生成，请在下载窗口选择保存位置");
     } catch (err) {
