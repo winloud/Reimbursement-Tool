@@ -17,10 +17,10 @@ import {
   prepareReportPdfDownload,
   purgeReport,
   restoreReport,
+  triggerBackendDownload,
   updateReportStatus,
 } from "../api/client";
 import { DEFAULT_REPORT_FILTERS } from "../api/reportFilters";
-import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   formatBatchPdfFailureMessage,
   isReportStatusVisible,
@@ -291,7 +291,8 @@ export default function ReportList() {
       if (!result.success || !result.data?.download_url) {
         throw new Error(result.message || "生成下载链接失败");
       }
-      triggerBrowserDownload(result.data.download_url);
+      const saveResult = await triggerBackendDownload(result);
+      if (saveResult?.error) throw new Error(saveResult.error);
       if (reportIds?.length) {
         setBatchResult({
           severity: "success",
@@ -331,7 +332,8 @@ export default function ReportList() {
       if (!res.success || !res.data?.download_url) {
         throw new Error(res.message || "生成下载链接失败");
       }
-      triggerBrowserDownload(res.data.download_url);
+      const saveResult = await triggerBackendDownload(res);
+      if (saveResult?.error) throw new Error(saveResult.error);
     } catch (err) {
       setError(errorMessage(err, "下载失败"));
     } finally {
@@ -349,7 +351,8 @@ export default function ReportList() {
       if (!res.success || !res.data?.download_url) {
         throw new Error(res.message || "生成批量下载链接失败");
       }
-      triggerBrowserDownload(res.data.download_url);
+      const saveResult = await triggerBackendDownload(res);
+      if (saveResult?.error) throw new Error(saveResult.error);
       setBatchResult({
         severity: "success",
         message: `已生成 ${selectedIds.length} 张报销单 PDF，请在下载窗口选择保存位置。`,

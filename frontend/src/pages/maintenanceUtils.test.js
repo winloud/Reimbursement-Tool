@@ -6,15 +6,10 @@ import {
   databaseCheckSeverity,
   databaseCheckSummary,
   databaseIssueSummary,
-  defaultUpdateStagingSelection,
   formatFileSize,
-  formatUpdateStagingTime,
-  getMaintenanceUpdateAction,
   latestBackup,
   qrEngineSummary,
   restorePreviewSummary,
-  selectedUpdateStagingSummary,
-  updatePreviewSummary,
   yesNo,
 } from "./maintenanceUtils.js";
 
@@ -52,85 +47,6 @@ test("restorePreviewSummary includes key restore contents", () => {
     }),
     "3 个文件，2.0 KB，包含数据库，2 个附件文件，1 个运行时文件",
   );
-});
-
-test("updatePreviewSummary includes version and package size", () => {
-  assert.equal(
-    updatePreviewSummary({
-      app_version: "1.2.0",
-      files_total: 10,
-      size_bytes: 3 * 1024 * 1024,
-    }),
-    "版本 1.2.0，10 个文件，3.0 MB",
-  );
-});
-
-test("maintenance update action keeps one primary action across the update flow", () => {
-  const base = { portableInstall: true };
-  assert.deepEqual(getMaintenanceUpdateAction(base), {
-    key: "choose",
-    label: "选择更新 ZIP",
-    interactive: true,
-  });
-  assert.equal(getMaintenanceUpdateAction({ ...base, busy: "update-preview", hasSelectedFile: true }).key, "previewing");
-  assert.equal(
-    getMaintenanceUpdateAction({ ...base, hasSelectedFile: true, hasPreview: true, previewCompatible: true }).key,
-    "install",
-  );
-  assert.equal(
-    getMaintenanceUpdateAction({ ...base, hasPreview: true, previewCompatible: true, confirmation: "install" }).key,
-    "confirm-install",
-  );
-  assert.equal(getMaintenanceUpdateAction({ ...base, busy: "update" }).key, "installing");
-  assert.equal(getMaintenanceUpdateAction({ ...base, restartRequired: true }).key, "restart");
-});
-
-test("maintenance update action handles invalid and installed packages", () => {
-  const base = { portableInstall: true, hasSelectedFile: true, hasPreview: true };
-  assert.equal(getMaintenanceUpdateAction(base).key, "reselect");
-  assert.equal(
-    getMaintenanceUpdateAction({
-      ...base,
-      previewCompatible: true,
-      versionInstalled: true,
-      versionCompatible: true,
-    }).key,
-    "switch",
-  );
-  assert.equal(
-    getMaintenanceUpdateAction({
-      ...base,
-      previewCompatible: true,
-      versionInstalled: true,
-      versionCurrent: true,
-      versionCompatible: true,
-    }).key,
-    "current",
-  );
-  assert.equal(
-    getMaintenanceUpdateAction({
-      ...base,
-      previewCompatible: true,
-      versionInstalled: true,
-      versionCompatible: true,
-      confirmation: "switch",
-    }).key,
-    "confirm-switch",
-  );
-  assert.equal(getMaintenanceUpdateAction({}).key, "unavailable");
-});
-
-test("update staging helpers default to expired packages and summarize selected size", () => {
-  const packages = [
-    { preview_id: "old", expired: true, size_bytes: 1024 },
-    { preview_id: "recent", expired: false, size_bytes: 2048 },
-  ];
-  assert.deepEqual(defaultUpdateStagingSelection(packages), ["old"]);
-  assert.deepEqual(selectedUpdateStagingSummary(packages, ["old", "recent"]), {
-    count: 2,
-    size_bytes: 3072,
-  });
-  assert.equal(formatUpdateStagingTime("2026-08-20T12:34:56"), "2026-08-20 12:34:56");
 });
 
 test("diagnostic summaries format runtime states", () => {

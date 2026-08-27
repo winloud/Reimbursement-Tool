@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use tauri::Manager;
 use tauri_plugin_shell::process::CommandChild;
 
+mod download;
 mod job;
 mod sidecar;
 
@@ -18,8 +19,9 @@ struct AppState {
 }
 
 /// 共享的 RuntimeConfig，供前端通过 get_runtime_config 命令读取。
+/// download 模块的认证下载命令也读这里取会话令牌。
 #[derive(Default)]
-struct SharedRuntimeConfig(Mutex<Option<sidecar::RuntimeConfig>>);
+pub(crate) struct SharedRuntimeConfig(pub(crate) Mutex<Option<sidecar::RuntimeConfig>>);
 
 #[tauri::command]
 fn get_runtime_config(state: tauri::State<'_, SharedRuntimeConfig>) -> sidecar::RuntimeConfig {
@@ -36,6 +38,7 @@ fn get_runtime_config(state: tauri::State<'_, SharedRuntimeConfig>) -> sidecar::
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 单实例：再次启动时把已有窗口提到前台。
@@ -78,7 +81,11 @@ pub fn run() {
             window.show()?;
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![get_runtime_config])
+        .invoke_handler(tauri::generate_handler![
+            get_runtime_config,
+            download::fetch_authenticated_blob,
+            download::save_backend_download
+        ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
         .run({

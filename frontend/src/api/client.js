@@ -1,13 +1,51 @@
 import axios from "axios";
 import { buildReportExportPayload, buildReportQueryParams } from "./reportFilters.js";
+import { isInTauriEnvironment, loadRuntimeConfig, saveBackendDownload } from "./tauriBridge.js";
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "";
 
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+});
+
+// 阶段 4：在 Tauri 环境下用 sidecar 的 api_base_url 与会话令牌替换默认值。
+// 浏览器开发模式无令牌（后端放行），baseURL 仍由 VITE_API_BASE_URL 决定。
+// 不阻塞模块加载：已有请求会在拦截器里等令牌就绪；首屏通常已触发 init。
+let runtimeConfigReady = null;
+let sessionToken = "";
+export const initRuntimeConfig = () => {
+  if (!runtimeConfigReady) {
+    runtimeConfigReady = loadRuntimeConfig().then((config) => {
+      if (isInTauriEnvironment() && config.api_base_url) {
+        apiClient.defaults.baseURL = config.api_base_url.replace(/\/$/, "");
+      }
+      sessionToken = config.session_token || "";
+      apiClient.interceptors.request.use((requestConfig) => {
+        if (sessionToken) {
+          requestConfig.headers = requestConfig.headers || {};
+          requestConfig.headers["X-Session-Token"] = sessionToken;
+        }
+        return requestConfig;
+      });
+      return config;
+    });
+  }
+  return runtimeConfigReady;
+};
+
+// 立即触发一次；Tauri 下异步等待 sidecar 就绪，浏览器下几乎同步返回。
+initRuntimeConfig();
+
+// 浏览器模式下，prepared download 的相对 URL 需补全为绝对路径供 <a> 下载使用；
+// Tauri 模式下保持相对路径，由 save_backend_download 命令在 Rust 侧用 api_base_url 拼接。
 const resolveApiDownloadUrl = (downloadUrl) => {
-  if (!downloadUrl || !API_BASE_URL || /^https?:\/\//i.test(downloadUrl)) {
+  if (!downloadUrl || isInTauriEnvironment() || /^https?:\/\//i.test(downloadUrl)) {
     return downloadUrl;
   }
-  return `${API_BASE_URL.replace(/\/$/, "")}/${downloadUrl.replace(/^\//, "")}`;
+  const base = (apiClient.defaults.baseURL || API_BASE_URL).replace(/\/$/, "");
+  if (!base) return downloadUrl;
+  return `${base}/${downloadUrl.replace(/^\//, "")}`;
 };
 
 const resolvePreparedDownload = (responseData) => ({
@@ -18,11 +56,6 @@ const resolvePreparedDownload = (responseData) => ({
         download_url: resolveApiDownloadUrl(responseData.data.download_url),
       }
     : responseData?.data,
-});
-
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
 });
 
 export const getHealth = async () => {
@@ -145,53 +178,6 @@ export const previewMaintenanceRestoreFromBackupDialog = async () => {
 
 export const executeMaintenanceRestore = async (payload) => {
   const response = await apiClient.post("/api/maintenance/restore/execute", payload);
-  return response.data;
-};
-
-export const previewMaintenanceUpdate = async (file) => {
-  const formData = new FormData();
-  formData.append("file", file);
-  const response = await apiClient.post("/api/maintenance/updates/preview", formData, {
-    headers: { "Content-Type": "multipart/form-data" },
-    timeout: 120000,
-  });
-  return response.data;
-};
-
-export const executeMaintenanceUpdate = async (payload) => {
-  const response = await apiClient.post("/api/maintenance/updates/execute", payload, { timeout: 120000 });
-  return response.data;
-};
-
-export const cleanupMaintenanceUpdateStaging = async (previewIds) => {
-  const response = await apiClient.post(
-    "/api/maintenance/updates/staging/cleanup",
-    { preview_ids: previewIds, confirm_cleanup: true },
-    { timeout: 120000 },
-  );
-  return response.data;
-};
-
-export const switchMaintenanceVersion = async (payload) => {
-  const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
-  return response.data;
-};
-
-export const deleteMaintenanceVersion = async (version) => {
-  const response = await apiClient.delete(`/api/maintenance/versions/${encodeURIComponent(version)}`, {
-    data: { confirm_delete: true },
-    timeout: 120000,
-  });
-  return response.data;
-};
-
-export const cleanupMaintenanceVersions = async () => {
-  const response = await apiClient.post("/api/maintenance/versions/cleanup", { confirm_cleanup: true }, { timeout: 120000 });
-  return response.data;
-};
-
-export const restartMaintenanceApp = async () => {
-  const response = await apiClient.post("/api/maintenance/restart", null, { timeout: 5000 });
   return response.data;
 };
 
@@ -342,6 +328,25 @@ export const downloadReportBatchPdf = async (reportIds) => {
 export const prepareReportBatchPdfDownload = async (reportIds) => {
   const response = await apiClient.post("/api/reports/batch/pdf/prepare", { report_ids: reportIds });
   return resolvePreparedDownload(response.data);
+};
+
+/**
+ * 保存 prepared-download 描述符指向的内容到磁盘。
+ * Tauri 下走原生保存对话框（Rust 注入会话令牌取字节）；浏览器下回退到 <a> 下载。
+ * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
+ */
+export const triggerBackendDownload = async (prepared) => {
+  const downloadUrl = prepared?.data?.download_url;
+  const filename = prepared?.data?.filename || "download";
+  if (!downloadUrl) throw new Error("下载链接无效，请重新生成");
+
+  if (!isInTauriEnvironment()) {
+    const { triggerBrowserDownload } = await import("../utils/browserDownload");
+    triggerBrowserDownload(downloadUrl);
+    return { browser: true };
+  }
+
+  return saveBackendDownload(downloadUrl, filename);
 };
 
 export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {

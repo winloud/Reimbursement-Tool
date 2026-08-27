@@ -11,37 +11,22 @@ import {
 import {
   checkMaintenanceDatabase,
   cleanupMaintenanceBackups,
-  cleanupMaintenanceUpdateStaging,
-  cleanupMaintenanceVersions,
   createMaintenanceBackup,
   deleteMaintenanceBackup,
-  deleteMaintenanceVersion,
   downloadMaintenanceBackup,
   downloadMaintenanceDiagnostics,
-  executeMaintenanceUpdate,
   executeMaintenanceRestore,
   getMaintenanceInfo,
-  previewMaintenanceUpdate,
   previewMaintenanceRestore,
   previewMaintenanceRestoreFromBackupDialog,
-  restartMaintenanceApp,
-  switchMaintenanceVersion,
 } from "../api/client";
 import { saveBlobDownload } from "../utils/browserDownload";
-import {
-  defaultUpdateStagingSelection,
-  formatFileSize,
-  getMaintenanceUpdateAction,
-  latestBackup,
-  selectedUpdateStagingSummary,
-} from "./maintenanceUtils";
+import { formatFileSize, latestBackup } from "./maintenanceUtils";
 import {
   MaintenanceBackupSection,
   MaintenanceDiagnosticsSection,
-  MaintenanceUpdateSection,
   cardContentSx,
   cardSx,
-  dataCompatibilityMessage,
 } from "./MaintenanceSections";
 
 const getApiErrorMessage = (err, fallback) =>
@@ -54,65 +39,23 @@ const shouldFallbackToBrowserFilePicker = (err) => {
 
 export default function MaintenancePanel() {
   const fileInputRef = useRef(null);
-  const updateFileInputRef = useRef(null);
-  const updateStagingSelectionInitializedRef = useRef(false);
   const [info, setInfo] = useState(null);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState("");
   const [globalError, setGlobalError] = useState("");
   const [backupError, setBackupError] = useState("");
   const [restoreError, setRestoreError] = useState("");
-  const [updateError, setUpdateError] = useState("");
   const [diagnosticsError, setDiagnosticsError] = useState("");
   const [toast, setToast] = useState("");
   const [restoreFile, setRestoreFile] = useState(null);
   const [restorePreview, setRestorePreview] = useState(null);
-  const [updateFile, setUpdateFile] = useState(null);
-  const [updatePreview, setUpdatePreview] = useState(null);
-  const [updateResult, setUpdateResult] = useState(null);
-  const [versionSwitchResult, setVersionSwitchResult] = useState(null);
-  const [updateConfirmation, setUpdateConfirmation] = useState("");
   const [selectedBackupId, setSelectedBackupId] = useState("");
-  const [selectedVersion, setSelectedVersion] = useState("");
-  const [selectedUpdateStagingIds, setSelectedUpdateStagingIds] = useState([]);
   const [databaseCheck, setDatabaseCheck] = useState(null);
 
   const backups = info?.backups || [];
   const backup = latestBackup(info?.backups);
   const selectedBackup = selectedBackupId ? backups.find((item) => item.backup_id === selectedBackupId) : null;
   const backupSummary = backup ? `${backup.filename} · ${formatFileSize(backup.size_bytes)}` : "暂无备份";
-  const installedVersions = info?.installed_versions || [];
-  const switchableVersions = installedVersions.filter((version) => version.executable_exists && !version.current);
-  const selectedVersionRecord = selectedVersion
-    ? installedVersions.find((version) => version.version === selectedVersion)
-    : null;
-  const selectedVersionCompatibility = selectedVersionRecord?.data_compatibility;
-  const selectedVersionCurrent = Boolean(selectedVersionRecord?.current);
-  const selectedVersionCompatible = selectedVersionCompatibility?.status === "compatible";
-  const selectedVersionDeletable = Boolean(selectedVersionRecord && !selectedVersionRecord.current);
-  const oldVersionCleanupAvailable = installedVersions.some((version) => !version.current);
-  const updateVersionRecord = updatePreview ? installedVersions.find((version) => version.version === updatePreview.app_version) : null;
-  const updateVersionInstalled = Boolean(updateVersionRecord?.executable_exists);
-  const updateVersionCurrent = Boolean(updateVersionRecord?.current);
-  const updatePreviewCompatibility = updatePreview?.data_compatibility;
-  const updatePreviewCompatible = updatePreviewCompatibility?.status === "compatible";
-  const updateVersionCompatible = updateVersionRecord?.data_compatibility?.status === "compatible";
-  const updateStagingPackages = info?.update_staging?.packages || [];
-  const selectedUpdateStagingSummaryValue = selectedUpdateStagingSummary(updateStagingPackages, selectedUpdateStagingIds);
-  const updateStagingCleanupAvailable = selectedUpdateStagingSummaryValue.count > 0;
-  const updateRestartRequired = Boolean(updateResult?.restart_required || versionSwitchResult?.restart_required);
-  const updateAction = getMaintenanceUpdateAction({
-    portableInstall: Boolean(info?.portable_install),
-    busy,
-    hasSelectedFile: Boolean(updateFile),
-    hasPreview: Boolean(updatePreview),
-    previewCompatible: updatePreviewCompatible,
-    versionInstalled: updateVersionInstalled,
-    versionCurrent: updateVersionCurrent,
-    versionCompatible: updateVersionCompatible,
-    restartRequired: updateRestartRequired,
-    confirmation: updateConfirmation,
-  });
 
   const loadInfo = async ({ initial = false } = {}) => {
     if (initial) {
@@ -128,30 +71,10 @@ export default function MaintenancePanel() {
         return false;
       }
       setInfo(res.data);
-      const nextUpdateStagingPackages = res.data?.update_staging?.packages || [];
-      const shouldInitializeUpdateStagingSelection = !updateStagingSelectionInitializedRef.current;
-      if (shouldInitializeUpdateStagingSelection) {
-        updateStagingSelectionInitializedRef.current = true;
-      }
-      setSelectedUpdateStagingIds((previous) => {
-        const availableIds = new Set(nextUpdateStagingPackages.map((item) => item.preview_id));
-        if (shouldInitializeUpdateStagingSelection) {
-          return defaultUpdateStagingSelection(nextUpdateStagingPackages);
-        }
-        return previous.filter((previewId) => availableIds.has(previewId));
-      });
       const nextBackups = res.data?.backups || [];
       setSelectedBackupId((previous) =>
         nextBackups.some((backupItem) => backupItem.backup_id === previous) ? previous : nextBackups[0]?.backup_id || "",
       );
-      const nextSwitchableVersions = (res.data?.installed_versions || []).filter((version) => version.executable_exists && !version.current);
-      const nextInstalledVersions = res.data?.installed_versions || [];
-      setSelectedVersion((previous) => {
-        if (nextInstalledVersions.some((version) => version.version === previous)) {
-          return previous;
-        }
-        return nextSwitchableVersions[0]?.version || nextInstalledVersions[0]?.version || "";
-      });
       return true;
     } catch (err) {
       const message = getApiErrorMessage(err, "加载数据维护信息失败");
@@ -300,12 +223,6 @@ export default function MaintenancePanel() {
     }
   };
 
-  const handleChooseUpdateFile = () => {
-    if (busy) return;
-    setUpdateConfirmation("");
-    updateFileInputRef.current?.click();
-  };
-
   const handleRestoreFileChange = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = "";
@@ -354,238 +271,6 @@ export default function MaintenancePanel() {
     }
   };
 
-  const handleUpdateFileChange = async (event) => {
-    const file = event.target.files?.[0];
-    event.target.value = "";
-    if (!file) return;
-    setUpdateFile(file);
-    setUpdatePreview(null);
-    setUpdateResult(null);
-    setVersionSwitchResult(null);
-    setUpdateConfirmation("");
-    setBusy("update-preview");
-    setUpdateError("");
-    try {
-      const res = await previewMaintenanceUpdate(file);
-      if (!res.success) {
-        setUpdateError(res.message || "更新包预览失败");
-        return;
-      }
-      setUpdatePreview(res.data);
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "更新包预览失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handleExecuteUpdate = async () => {
-    if (!updatePreview || busy) return;
-    setUpdateConfirmation("");
-    setBusy("update");
-    setUpdateError("");
-    try {
-      const res = await executeMaintenanceUpdate({
-        preview_id: updatePreview.preview_id,
-        confirm_update: true,
-      });
-      if (!res.success) {
-        setUpdateError(res.message || "安装更新失败");
-        return;
-      }
-      setUpdateResult(res.data);
-      setVersionSwitchResult(null);
-      setUpdateFile(null);
-      setUpdatePreview(null);
-      await loadInfo();
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "安装更新失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handleToggleUpdateStaging = (previewId) => {
-    setSelectedUpdateStagingIds((previous) =>
-      previous.includes(previewId) ? previous.filter((item) => item !== previewId) : [...previous, previewId],
-    );
-  };
-
-  const handleCleanupUpdateStaging = async () => {
-    if (!updateStagingCleanupAvailable) return;
-    const selectedIds = selectedUpdateStagingIds.filter((previewId) =>
-      updateStagingPackages.some((item) => item.preview_id === previewId),
-    );
-    const summary = selectedUpdateStagingSummary(updateStagingPackages, selectedIds);
-    const confirmed = window.confirm(
-      `将删除选中的 ${summary.count} 个更新暂存包（${formatFileSize(summary.size_bytes)}）。不会影响版本、数据库、附件或备份。确认删除？`,
-    );
-    if (!confirmed) return;
-    setBusy("update-staging-cleanup");
-    setUpdateError("");
-    try {
-      const res = await cleanupMaintenanceUpdateStaging(selectedIds);
-      if (!res.success) {
-        setUpdateError(res.message || "清理更新暂存包失败");
-        return;
-      }
-      const deletedIds = res.data?.deleted_packages?.map((item) => item.preview_id) || [];
-      const failedPackages = res.data?.failed_packages || [];
-      if (updatePreview && deletedIds.includes(updatePreview.preview_id)) {
-        setUpdateFile(null);
-        setUpdatePreview(null);
-        setUpdateConfirmation("");
-      }
-      setToast(`更新暂存包已清理：${deletedIds.length} 个`);
-      if (failedPackages.length > 0) {
-        setUpdateError(`有 ${failedPackages.length} 个更新暂存包清理失败，请刷新后重试。`);
-      }
-      await loadInfo();
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "清理更新暂存包失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const executeVersionSwitch = async (version) => {
-    if (!version) return;
-    const versionRecord = installedVersions.find((item) => item.version === version);
-    if (versionRecord?.data_compatibility?.status && versionRecord.data_compatibility.status !== "compatible") {
-      setUpdateError(dataCompatibilityMessage(versionRecord.data_compatibility));
-      return;
-    }
-    setUpdateConfirmation("");
-    setBusy("version-switch");
-    setUpdateError("");
-    try {
-      const res = await switchMaintenanceVersion({
-        version,
-        confirm_switch: true,
-      });
-      if (!res.success) {
-        setUpdateError(res.message || "切换版本失败");
-        return;
-      }
-      setVersionSwitchResult(res.data);
-      setUpdateResult(null);
-      await loadInfo();
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "切换版本失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handleSwitchVersion = async (version = selectedVersion) => {
-    if (!version || busy) return;
-    const versionRecord = installedVersions.find((item) => item.version === version);
-    if (versionRecord?.data_compatibility?.status && versionRecord.data_compatibility.status !== "compatible") {
-      setUpdateError(dataCompatibilityMessage(versionRecord.data_compatibility));
-      return;
-    }
-    const confirmed = window.confirm(`将切换到已安装版本 ${version}，切换前会自动创建完整备份。确认切换？`);
-    if (!confirmed) return;
-    await executeVersionSwitch(version);
-  };
-
-  const handleDeleteVersion = async () => {
-    if (!selectedVersionRecord || selectedVersionRecord.current) return;
-    const confirmed = window.confirm(`将删除已安装版本 ${selectedVersionRecord.version}，此操作不能撤销。确认删除？`);
-    if (!confirmed) return;
-    setBusy("version-delete");
-    setUpdateError("");
-    try {
-      const res = await deleteMaintenanceVersion(selectedVersionRecord.version);
-      if (!res.success) {
-        setUpdateError(res.message || "删除版本失败");
-        return;
-      }
-      setToast(`版本已删除：${selectedVersionRecord.version}`);
-      setVersionSwitchResult(null);
-      setUpdateResult(null);
-      await loadInfo();
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "删除版本失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handleCleanupVersions = async () => {
-    if (!oldVersionCleanupAvailable) return;
-    const confirmed = window.confirm("将保留当前版本，并删除所有旧版本目录。确认清理？");
-    if (!confirmed) return;
-    setBusy("version-cleanup");
-    setUpdateError("");
-    try {
-      const res = await cleanupMaintenanceVersions();
-      if (!res.success) {
-        setUpdateError(res.message || "清理旧版本失败");
-        return;
-      }
-      const deletedCount = res.data?.deleted_versions?.length || 0;
-      setToast(`旧版本已清理：${deletedCount} 个`);
-      setVersionSwitchResult(null);
-      setUpdateResult(null);
-      await loadInfo();
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "清理旧版本失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handleRestartApp = async () => {
-    if (busy) return;
-    setBusy("restart");
-    setUpdateError("");
-    try {
-      const res = await restartMaintenanceApp();
-      if (!res.success) {
-        setUpdateError(res.message || "重启失败");
-        return;
-      }
-      setToast("正在重启程序...");
-      window.setTimeout(() => window.close(), 500);
-    } catch (err) {
-      setUpdateError(getApiErrorMessage(err, "重启失败"));
-    } finally {
-      setBusy("");
-    }
-  };
-
-  const handlePrimaryUpdateAction = async () => {
-    if (!updateAction.interactive || busy) return;
-    if (["choose", "reselect"].includes(updateAction.key)) {
-      handleChooseUpdateFile();
-      return;
-    }
-    if (updateAction.key === "install") {
-      setUpdateConfirmation("install");
-      return;
-    }
-    if (updateAction.key === "confirm-install") {
-      await handleExecuteUpdate();
-      return;
-    }
-    if (updateAction.key === "switch") {
-      setUpdateConfirmation("switch");
-      return;
-    }
-    if (updateAction.key === "confirm-switch") {
-      await executeVersionSwitch(updatePreview?.app_version);
-      return;
-    }
-    if (updateAction.key === "restart") {
-      await handleRestartApp();
-    }
-  };
-
-  const handleCancelUpdateConfirmation = () => {
-    if (!busy) setUpdateConfirmation("");
-  };
-
   return (
     <Stack spacing={2}>
       {globalError && <Alert severity="error">{globalError}</Alert>}
@@ -601,45 +286,6 @@ export default function MaintenancePanel() {
         </Card>
       ) : (
         <Stack spacing={2}>
-          <MaintenanceUpdateSection
-            busy={busy}
-            info={info}
-            installedVersions={installedVersions}
-            selectedVersion={selectedVersion}
-            selectedVersionCurrent={selectedVersionCurrent}
-            selectedVersionCompatibility={selectedVersionCompatibility}
-            selectedVersionCompatible={selectedVersionCompatible}
-            selectedVersionDeletable={selectedVersionDeletable}
-            oldVersionCleanupAvailable={oldVersionCleanupAvailable}
-            updateVersionRecord={updateVersionRecord}
-            updateVersionInstalled={updateVersionInstalled}
-            updateVersionCurrent={updateVersionCurrent}
-            updatePreview={updatePreview}
-            updatePreviewCompatibility={updatePreviewCompatibility}
-            updateVersionCompatible={updateVersionCompatible}
-            updateStagingPackages={updateStagingPackages}
-            selectedUpdateStagingIds={selectedUpdateStagingIds}
-            selectedUpdateStagingSummary={selectedUpdateStagingSummaryValue}
-            updateStagingCleanupAvailable={updateStagingCleanupAvailable}
-            updateFile={updateFile}
-            updateResult={updateResult}
-            versionSwitchResult={versionSwitchResult}
-            updateError={updateError}
-            updateAction={updateAction}
-            updateConfirmation={updateConfirmation}
-            updateFileInputRef={updateFileInputRef}
-            onSelectVersion={setSelectedVersion}
-            onChooseUpdateFile={handleChooseUpdateFile}
-            onUpdateFileChange={handleUpdateFileChange}
-            onPrimaryUpdateAction={handlePrimaryUpdateAction}
-            onCancelUpdateConfirmation={handleCancelUpdateConfirmation}
-            onSwitchVersion={handleSwitchVersion}
-            onDeleteVersion={handleDeleteVersion}
-            onCleanupVersions={handleCleanupVersions}
-            onToggleUpdateStaging={handleToggleUpdateStaging}
-            onCleanupUpdateStaging={handleCleanupUpdateStaging}
-          />
-
           <MaintenanceBackupSection
             busy={busy}
             backupError={backupError}
