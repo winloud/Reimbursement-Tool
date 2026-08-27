@@ -26,6 +26,16 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/winloud/Reimbursement-Tool/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVDQkY3QjZGRTA3RjVGNUUKUldSZVgzL2diM3UvWE1Hekp2NG9yV2V3VDEwNXVKQlBzU1hrQkFkMGYrZEF6dVdtb0l0SGlRd3AK"
+    }
+  },
   "bundle": {
     "active": true,
     "targets": ["nsis"],

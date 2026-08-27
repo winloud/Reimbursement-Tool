@@ -9,12 +9,13 @@ mod download;
 mod job;
 mod migration;
 mod sidecar;
+mod updater;
 
 /// 持有 sidecar 子进程句柄与 Job Object。
 /// 正常退出时显式 kill child；崩溃/强杀时 Job Object 句柄随进程释放，
 /// 内核自动 kill 绑定的 sidecar。
-struct AppState {
-    sidecar_child: Mutex<Option<CommandChild>>,
+pub(crate) struct AppState {
+    pub(crate) sidecar_child: Mutex<Option<CommandChild>>,
     #[allow(dead_code)]
     sidecar_job: Mutex<Option<job::SidecarJob>>,
 }
@@ -123,6 +124,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_window_state::Builder::new().build())
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             // 单实例：再次启动时把已有窗口提到前台。
@@ -160,6 +162,8 @@ pub fn run() {
             migration::choose_legacy_root,
             migration::initialize_runtime,
             start_sidecar_after_init,
+            updater::check_for_update,
+            updater::install_update,
             download::fetch_authenticated_blob,
             download::save_backend_download
         ])

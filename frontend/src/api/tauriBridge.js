@@ -115,3 +115,31 @@ export const saveBackendDownload = async (relativePath, suggestedFilename) => {
     return { error: message };
   }
 };
+
+/// 检查更新。浏览器模式返回不可用占位。
+/// 返回 { available, version, current_version, current_data_schema,
+///   min_data_schema, max_data_schema, data_compatible, notes, message }。
+export const checkForUpdate = async () => {
+  if (!isTauriEnvironment()) {
+    return {
+      available: false,
+      version: "",
+      current_version: "",
+      current_data_schema: 0,
+      min_data_schema: 0,
+      max_data_schema: 0,
+      data_compatible: true,
+      notes: "",
+      message: "浏览器模式不支持更新检查",
+    };
+  }
+  return safeInvoke("check_for_update");
+};
+
+/// 安装更新。返回 { success, error, backup_path }。
+export const installUpdate = async () => {
+  if (!isTauriEnvironment()) {
+    return { success: false, error: "浏览器模式不支持更新", backup_path: "" };
+  }
+  return safeInvoke("install_update");
+};

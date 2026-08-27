@@ -28,6 +28,7 @@ import {
   cardContentSx,
   cardSx,
 } from "./MaintenanceSections";
+import MaintenanceUpdateSection from "./MaintenanceUpdateSection";
 
 const getApiErrorMessage = (err, fallback) =>
   err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
@@ -296,6 +297,8 @@ export default function MaintenancePanel() {
         </Card>
       ) : (
         <Stack spacing={2}>
+          <MaintenanceUpdateSection />
+
           <MaintenanceBackupSection
             busy={busy}
             backupError={backupError}
