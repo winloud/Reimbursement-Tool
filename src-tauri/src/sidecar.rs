@@ -1,9 +1,14 @@
 // Sidecar 进程管理（阶段 2）。
 //
-// 由 Tauri 在 setup 中启动 Python API sidecar，解析其 stdout 的 ready JSON，
-// 拿到 api_base_url 后注入前端。进程生命周期由 Tauri 管理：
+// 由 Tauri 在 setup 或迁移完成后启动 Python API sidecar，解析其 stdout 的
+// ready JSON，拿到 api_base_url 后注入前端。进程生命周期由 Tauri 管理：
 // - 正常关闭：Tauri 退出时 kill sidecar（见 lib.rs 的 ExitRequested）。
-// - 崩溃/更新：后续阶段用 Windows Job Object 保证回收（见阶段 2 收尾）。
+// - 崩溃/更新：Windows Job Object 保证回收（见 job.rs）。
+//
+// 阶段 5 起，spawn 前通过 REIMBURSEMENT_APP_ROOT 注入 runtime 目录
+// （%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime，见 migration.rs），
+// 使 sidecar 的数据库/附件/日志离开安装目录。开发模式下若 runtime 不存在
+// 则不注入，sidecar 回退到源码根。
 //
 // 开发模式下通过环境变量 REIMBURSEMENT_SIDECAR_CMD 指定启动命令
 // （例如 "python sidecar_app.py --port 0"）；打包后由 Tauri sidecar 机制运行 onedir exe。
@@ -13,12 +18,6 @@
 // 需新增 PyInstaller onedir spec 与构建步骤，将产物以 Tauri externalBin 装入 NSIS，
 // 并由 Tauri sidecar API 启动打包产物；届时此处 python 回退应保留为开发兜底或移除。
 // tauri.conf.json 当前未配置 externalBin，该装入工作是阶段 5+ 的内容。
-//
-// TODO(阶段 5+) 运行数据目录：spawn 前需解析并创建
-// `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，经 REIMBURSEMENT_APP_ROOT
-// 注入 sidecar，使数据库/附件/日志离开安装目录。首次迁移须在 sidecar 导入后端模块
-// 之前完成或确定启用目录（详见 ADR 0009 首次迁移清单）。当前开发模式回退到源码根
-// 是已知的临时状态。
 
 use std::collections::HashMap;
 use serde::Deserialize;
@@ -61,9 +60,13 @@ pub fn spawn_and_wait(
         session_token.clone(),
     );
     envs.insert("REIMBURSEMENT_APP_VERSION".to_string(), app_version.clone());
-    // TODO(阶段 5+) 数据迁移确定后，在此解析并创建 app_local_data_dir()/runtime，
-    // 通过 REIMBURSEMENT_APP_ROOT 注入 sidecar；首次迁移须在 sidecar 导入后端模块之前
-    // 完成或确定启用目录。当前开发模式用默认（源码根），是已知临时状态。
+    // 阶段 5：把 runtime 目录经 REIMBURSEMENT_APP_ROOT 注入 sidecar，
+    // 使数据库/附件/日志落到 %LOCALAPPDATA%\com.winloud.reimbursementtool\runtime，
+    // 离开安装目录。runtime 已由迁移/新建流程就绪（见 migration.rs）；
+    // 开发模式下若 runtime 不存在则不注入，sidecar 回退到源码根（开发兜底）。
+    if let Some(runtime_root) = crate::migration::runtime_root_for_sidecar(app) {
+        envs.insert("REIMBURSEMENT_APP_ROOT".to_string(), runtime_root);
+    }
 
     let (mut rx, child) = app
         .shell()

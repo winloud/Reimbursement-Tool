@@ -44,6 +44,44 @@ export const loadRuntimeConfig = async () => {
 
 export const getRuntimeConfig = () => cachedRuntimeConfig;
 
+/// 查询 runtime 初始化状态。
+/// 返回 "ready" | "needs_init" | "error:<msg>" | "unknown" | "browser"。
+/// 浏览器模式返回 "browser"（无需迁移，直接走业务界面）。
+export const getRuntimeInitStatus = async () => {
+  if (!isTauriEnvironment()) return "browser";
+  try {
+    return await safeInvoke("get_runtime_init_status");
+  } catch {
+    return "unknown";
+  }
+};
+
+/// 弹原生对话框选旧便携根，返回预检结果 { path, valid, reason, found_entries }。
+/// 浏览器模式返回 null。
+export const chooseLegacyRoot = async () => {
+  if (!isTauriEnvironment()) return null;
+  return safeInvoke("choose_legacy_root");
+};
+
+/// 初始化 runtime：legacy_root 为 null 时新建空白数据，否则从旧目录迁移。
+/// 返回 { success, runtime_path, error, migrated, migrated_entries }。
+export const initializeRuntime = async (legacyRoot) => {
+  if (!isTauriEnvironment()) {
+    // 浏览器模式无 runtime 概念，直接返回成功占位。
+    return { success: true, runtime_path: "", error: "", migrated: false, migrated_entries: [] };
+  }
+  return safeInvoke("initialize_runtime", { legacyRoot });
+};
+
+/// 迁移/新建完成后启动 sidecar，返回 runtime 目录路径。
+/// 成功后清除缓存的 runtime config，让后续 get_runtime_config 拿到 sidecar 真实配置。
+export const startSidecarAfterInit = async (legacyRoot) => {
+  if (!isTauriEnvironment()) return "";
+  const runtimePath = await safeInvoke("start_sidecar_after_init", { legacyRoot });
+  cachedRuntimeConfig = null; // 让 loadRuntimeConfig 重新拉取 sidecar 配置
+  return runtimePath;
+};
+
 /// 取回认证资源的字节并构造 blob URL，供 <img src> / window.open 使用。
 /// 浏览器模式下直接拼接 URL 返回（后端无令牌放行）。
 export const fetchAuthenticatedBlobUrl = async (relativePath) => {

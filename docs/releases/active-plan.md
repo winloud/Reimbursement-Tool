@@ -23,7 +23,6 @@
 ## 待补缺口（阶段 5+）
 
 - 生产 sidecar 打包：新增 PyInstaller onedir spec 与构建步骤，产物以 Tauri `externalBin` 装入 NSIS，`resolve_sidecar_command` 生产路径切换为 Tauri sidecar API 启动打包产物；当前 `python sidecar_app.py` 回退仅保留为开发兜底（见 `src-tauri/src/sidecar.rs` 模块注释与 `tauri.conf.json`）。
-- 运行数据目录与首次迁移：spawn 前解析并创建 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，经 `REIMBURSEMENT_APP_ROOT` 注入 sidecar；首次迁移在 sidecar 导入后端模块前完成或确定启用目录（详见 ADR 0009 首次迁移清单）。
 
 ## 验收条件
 
