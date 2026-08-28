@@ -4,7 +4,6 @@ import json
 import logging
 import os
 import platform
-import re
 import shutil
 import sqlite3
 import sys
@@ -35,7 +34,6 @@ from backend.schemas.maintenance import (
     BackupDeleteRead,
     DatabaseIntegrityCheckRead,
     DatabaseIntegrityIssueRead,
-    DiagnosticBrowserRuntimeRead,
     DiagnosticLogFileRead,
     DiagnosticQrEngineRead,
     MaintenanceInfoRead,
@@ -54,27 +52,12 @@ from backend.services.invoice_qr_runtime import (
 )
 from backend.services.settings_service import get_or_create_settings
 
-try:
-    from desktop_dependencies import find_chromium_browser, is_webview2_available
-except Exception:  # pragma: no cover - desktop helpers may be unavailable on some hosts
-    find_chromium_browser = None
-    is_webview2_available = None
-
 BACKUP_SCHEMA_VERSION = 1
-UPDATE_SCHEMA_VERSION = 1
-UPDATE_STAGING_RETENTION_DAYS = 7
 BACKUP_ROOT = DATA_DIR / "backups"
 RESTORE_STAGING_ROOT = DATA_DIR / "restore_staging"
-UPDATE_STAGING_ROOT = DATA_DIR / "update_staging"
 VENDOR_ROOT = APP_ROOT / "vendor"
 MANIFEST_NAME = "backup-manifest.json"
-PORTABLE_RELEASE_MANIFEST_NAME = "portable-release.json"
-APP_DIR_NAME = "报销管理"
-APP_EXE_NAME = "报销管理.exe"
-CURRENT_VERSION_FILE = "current-version.json"
-VERSIONS_DIR_NAME = "versions"
 LOG_TAIL_BYTES = 200 * 1024
-UPDATE_PREVIEW_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 VALID_REPORT_STATUSES = set(REPORT_STATUS_VALUES)
 VALID_EXPENSE_CATEGORIES = {
@@ -124,10 +107,6 @@ def _safe_preview_id(preview_id: str) -> str:
     if not preview_id or any(part in preview_id for part in ("/", "\\", "..")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="无效的预览 ID")
     return preview_id
-
-
-def _is_portable_install() -> bool:
-    return (APP_ROOT / CURRENT_VERSION_FILE).is_file() and (APP_ROOT / VERSIONS_DIR_NAME).is_dir()
 
 
 def _read_json_file(path: Path) -> dict | None:
@@ -380,11 +359,9 @@ def _json_config_file_payload(path: Path) -> dict:
 
 
 def _runtime_config_payload() -> dict:
+    # v2.0.0 起安装与版本切换由 Tauri/NSIS 负责，运行配置只剩窗口状态（见 ADR 0009）。
     return {
-        "portable_install": _is_portable_install(),
         "files": {
-            CURRENT_VERSION_FILE: _json_config_file_payload(APP_ROOT / CURRENT_VERSION_FILE),
-            PORTABLE_RELEASE_MANIFEST_NAME: _json_config_file_payload(APP_ROOT / PORTABLE_RELEASE_MANIFEST_NAME),
             "window-state.json": _json_config_file_payload(APP_ROOT / "window-state.json"),
         },
     }
@@ -416,39 +393,6 @@ def get_qr_engine_diagnostics(db: Session | None = None) -> DiagnosticQrEngineRe
         opencv_runtime_dir=OPENCV_RUNTIME_DIR.as_posix(),
         opencv_model_files_complete=runtime_manifest is not None and not missing_models,
         opencv_model_files_missing=missing_models,
-    )
-
-
-def get_browser_runtime_diagnostics() -> DiagnosticBrowserRuntimeRead:
-    error = None
-    webview2_available = False
-    chromium = None
-    try:
-        if is_webview2_available is not None:
-            webview2_available = bool(is_webview2_available())
-        if find_chromium_browser is not None:
-            chromium = find_chromium_browser()
-    except Exception as exc:
-        error = str(exc)
-
-    chromium_name = chromium[0] if chromium else None
-    chromium_path = chromium[1].as_posix() if chromium else None
-    if chromium_name == "Google Chrome":
-        preferred_runtime = "Google Chrome app-mode"
-    elif webview2_available:
-        preferred_runtime = "Microsoft Edge WebView2"
-    elif chromium_name:
-        preferred_runtime = f"{chromium_name} app-mode"
-    else:
-        preferred_runtime = "unavailable"
-
-    return DiagnosticBrowserRuntimeRead(
-        webview2_available=webview2_available,
-        chromium_available=chromium is not None,
-        chromium_name=chromium_name,
-        chromium_path=chromium_path,
-        preferred_runtime=preferred_runtime,
-        error=error,
     )
 
 
@@ -1507,7 +1451,6 @@ def get_maintenance_info(db: Session | None = None) -> MaintenanceInfoRead:
         uploads_exists=UPLOAD_ROOT.exists(),
         backups=list_backups(),
         qr_engine=get_qr_engine_diagnostics(db),
-        browser_runtime=get_browser_runtime_diagnostics(),
         log_file=get_log_file_diagnostics(),
     )
 
@@ -1852,7 +1795,6 @@ def _diagnostics_summary_text(diagnostics: dict) -> bytes:
     paths = diagnostics.get("paths") or {}
     database_check = diagnostics.get("database_check") or {}
     qr_engine = diagnostics.get("qr_engine") or {}
-    browser = diagnostics.get("browser_runtime") or {}
     log_file = diagnostics.get("log_file") or {}
     log_size = int(log_file.get("size_bytes") or 0)
     log_truncated = bool(log_size > LOG_TAIL_BYTES)
@@ -1860,8 +1802,6 @@ def _diagnostics_summary_text(diagnostics: dict) -> bytes:
     log_truncated_suffix = "，诊断包仅包含尾部日志" if log_truncated else ""
     opencv_version = qr_engine.get("opencv_package_version")
     opencv_version_suffix = f"，版本 {opencv_version}" if opencv_version else ""
-    chromium_path = browser.get("chromium_path")
-    chromium_path_suffix = f"，{chromium_path}" if chromium_path else ""
     lines = [
         "报销管理诊断摘要",
         "",
@@ -1880,10 +1820,6 @@ def _diagnostics_summary_text(diagnostics: dict) -> bytes:
         f"OpenCV runtime: {_diagnostic_bool(qr_engine.get('opencv_runtime_installed'))}"
         f"{opencv_version_suffix}",
         f"OpenCV 模型完整: {_diagnostic_bool(qr_engine.get('opencv_model_files_complete'))}",
-        f"浏览器/WebView2: {browser.get('preferred_runtime') or '-'}",
-        f"WebView2 可用: {_diagnostic_bool(browser.get('webview2_available'))}",
-        f"Chromium: {browser.get('chromium_name') or '-'}"
-        f"{chromium_path_suffix}",
         "",
         "数据库检查",
         f"状态: {database_check.get('status') or '-'}",
@@ -1920,7 +1856,6 @@ def _diagnostics_payload(db: Session | None = None) -> dict:
         },
         "database_check": check_database_integrity(db).model_dump(),
         "qr_engine": info.qr_engine.model_dump() if info.qr_engine else None,
-        "browser_runtime": info.browser_runtime.model_dump() if info.browser_runtime else None,
         "log_file": info.log_file.model_dump() if info.log_file else None,
         "settings": settings,
         "runtime_config": _runtime_config_payload(),

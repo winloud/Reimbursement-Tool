@@ -1,6 +1,6 @@
-# Tauri NSIS 安装包构建脚本（阶段 7）。
+﻿# Tauri NSIS 安装包构建脚本。
 #
-# 取代旧 build_release.ps1 的便携 ZIP 逻辑。流程：
+# 取代已删除的便携 ZIP 构建链路（见 ADR 0009）。流程：
 #   1. 同步版本号到 Cargo.toml 与 tauri.conf.json（避免 feed 与二进制版本不一致）。
 #   2. PyInstaller 用 reimbursement_sidecar.spec 打 onedir 产物到 dist/reimbursement-sidecar。
 #   3. 复制 onedir 产物到 src-tauri/resources/reimbursement-sidecar（Tauri bundle.resources 装入点）。

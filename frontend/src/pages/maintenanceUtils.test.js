@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
-  browserRuntimeSummary,
   databaseCheckSeverity,
   databaseCheckSummary,
   databaseIssueSummary,
@@ -59,13 +58,5 @@ test("diagnostic summaries format runtime states", () => {
       opencv_runtime_installed: true,
     }),
     "OpenCV WeChatQRCode，OpenCV runtime 已安装",
-  );
-  assert.equal(
-    browserRuntimeSummary({
-      preferred_runtime: "Google Chrome app-mode",
-      chromium_name: "Google Chrome",
-      webview2_available: true,
-    }),
-    "Google Chrome app-mode，Google Chrome，WebView2 可用",
   );
 });

@@ -20,13 +20,10 @@ import CleaningServicesIcon from "@mui/icons-material/CleaningServices";
 import DeleteOutlineIcon from "@mui/icons-material/DeleteOutline";
 import DescriptionIcon from "@mui/icons-material/Description";
 import DownloadIcon from "@mui/icons-material/Download";
-import RestartAltIcon from "@mui/icons-material/RestartAlt";
 import RestoreIcon from "@mui/icons-material/Restore";
 import StorageIcon from "@mui/icons-material/Storage";
-import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import {
-  browserRuntimeSummary,
   databaseCheckSeverity,
   databaseCheckSummary,
   databaseIssueSummary,
@@ -382,7 +379,6 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
                   : "-"
               }
             />
-            <InfoRow label="浏览器/WebView2" value={browserRuntimeSummary(info?.browser_runtime)} />
           </Box>
 
           <Box sx={{ minWidth: 0 }}>

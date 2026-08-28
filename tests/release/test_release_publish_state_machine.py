@@ -27,6 +27,9 @@ def run(
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # PowerShell 的错误信息按控制台代码页输出（中文 Windows 上是 GBK），
+        # 严格 utf-8 解码会让 stdout/stderr 变成 None。断言只看关键字，替换即可。
+        errors="replace",
         env=env,
     )
 
@@ -81,11 +84,7 @@ def create_release_repo(tmp_path: Path) -> Path:
 
 报销管理 V1.2.4 是测试版本。
 
-报销管理-v1.2.4-20260713.zip
-V1.2.4 使用便携式安装根目录
-versions\\1.2.4\\
-从旧版 ZIP 迁移到 V1.2.4 时
-解压 V1.2.4 ZIP
+报销管理_1.2.4_x64-setup.exe
 V1.2.4 主包默认不包含兼容运行时。
 """,
     )

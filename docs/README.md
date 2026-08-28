@@ -11,7 +11,7 @@
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
 - 发布流程：release-process.md
-- 固定验证入口：[scripts/verify.ps1](../scripts/verify.ps1)（`Backend`、`Frontend`、`Release`、`All`）
+- 固定验证入口：[scripts/verify.ps1](../scripts/verify.ps1)（`Backend`、`Frontend`、`Release`、`Desktop`、`All`）
 
 ## 版本文档
 - releases/
@@ -38,5 +38,4 @@
 
 ## 开发与调试
 - 本地开发服务启动/重启：[dev-server.md](dev-server.md)
-- ZIP 本地安装、升级和备份指南：[zip-upgrade-guide.md](zip-upgrade-guide.md)
 - 提交与协作规范：[contributing.md](contributing.md)

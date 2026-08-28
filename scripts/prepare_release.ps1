@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$ReleaseDate = "",
     [switch]$SkipTests,
@@ -116,8 +116,8 @@ Assert-FileContains `
     -Description "README release title"
 Assert-FileContains `
     -Path "README.md" `
-    -Pattern "报销管理-v$EscapedVersion-$ReleaseDate\.zip" `
-    -Description "README release ZIP example"
+    -Pattern "报销管理_$EscapedVersion`_x64-setup\.exe" `
+    -Description "README installer example"
 Assert-FileContains `
     -Path "backend/app_metadata.py" `
     -Pattern "DEFAULT_APP_VERSION\s*=\s*`"$EscapedVersion`"" `
@@ -179,4 +179,4 @@ if ($existingLocalTag) {
 
 Write-Host ""
 Write-Host "Release preflight passed for $TagName."
-Write-Host "Fast path: commit release files, create $TagName, then push branch and tag so GitHub Actions builds the formal ZIP."
+Write-Host "Fast path: commit release files, create $TagName, then push branch and tag so GitHub Actions builds the formal NSIS installer."

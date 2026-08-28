@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import os
-import sys
-from pathlib import Path
 
 
 DEFAULT_APP_VERSION = "1.4.1"
 
 
 def resolve_app_version() -> str:
+    # v2.0.0 起版本号由 Tauri 通过 REIMBURSEMENT_APP_VERSION 注入（见 ADR 0009）；
+    # 旧便携版从 versions/<version>/ 目录名推断的路径已随 ZIP 链路一并删除。
     configured_version = os.environ.get("REIMBURSEMENT_APP_VERSION")
     if configured_version:
         return configured_version
-    if getattr(sys, "frozen", False):
-        executable_dir = Path(sys.executable).resolve().parent
-        if executable_dir.parent.name == "versions":
-            return executable_dir.name
     return DEFAULT_APP_VERSION
 
 

@@ -10,23 +10,19 @@
 
 ## 目标
 
-- [ ] 用 Tauri 取代 `desktop_app.py` 桌面壳，Tauri 管窗口、安装、更新和进程生命周期。
-- [ ] 现有 Python 后端改为 PyInstaller API sidecar（只提供 API，不携带前端和 pywebview）。
-- [ ] 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，提供从旧便携版迁移。
-- [ ] 更新改用 GitHub Releases `latest.json` + 签名 NSIS + `passive` 安装模式。
+- [x] 用 Tauri 取代 `desktop_app.py` 桌面壳，Tauri 管窗口、安装、更新和进程生命周期。
+- [x] 现有 Python 后端改为 PyInstaller API sidecar（只提供 API，不携带前端和 pywebview）。
+- [x] 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，提供从旧便携版迁移。
+- [x] 更新改用 GitHub Releases `latest.json` + 签名 NSIS + `passive` 安装模式。
 
 ## 范围
 
 - 本轮包含：Tauri 桌面壳与发行体系整体迁移，详见 `docs/decisions/0009-tauri-nsis-applocaldata.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
 - 本轮不包含：Authenticode 代码签名（首期不做，保留 SmartScreen 风险说明）；差分更新；Linux 服务器部署同步（未明确版本号和发布前验证前不主动同步或部署）。
 
-## 待补缺口（阶段 5+）
-
-- 生产 sidecar 打包：新增 PyInstaller onedir spec 与构建步骤，产物以 Tauri `bundle.resources` 装入 NSIS（onedir 是目录，非单 exe，故不用 externalBin），`resolve_sidecar_command` 生产路径切换为通过 `resource_dir()` 定位 `reimbursement-sidecar.exe` 并由 Tauri 启动；当前 `python sidecar_app.py` 回退仅保留为开发兜底（见 `src-tauri/src/sidecar.rs` 模块注释与 `tauri.conf.json`）。
-
 ## 验收条件
 
-- [ ] 阶段 2 门槛：Tauri 启动真实 Python sidecar，窗口显示业务界面，正常关闭/崩溃/更新不遗留后台进程。
+- [x] 阶段 2 门槛：Tauri 启动真实 Python sidecar，窗口显示业务界面，正常关闭/崩溃/更新不遗留后台进程。
 - [ ] 数据迁移：实际便携目录副本迁移后核对库行数、附件哈希、备份和设置一致；失败可重试，旧目录不变。
 - [ ] 下载：PDF、批量 ZIP、数据导出、备份、诊断包覆盖保存成功、取消、重名、不可写路径及非法后端路径。
 - [ ] 安装矩阵：Windows 10/11 x64；在线包有/无 WebView2；离线包断网无 WebView2 干净环境；卸载重装不删 AppLocalData 数据。

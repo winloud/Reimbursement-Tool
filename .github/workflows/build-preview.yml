@@ -22,8 +22,9 @@ permissions:
 
 jobs:
   preview:
-    name: Build preview ZIP artifact
+    name: Build preview NSIS artifact
     runs-on: windows-latest
+    timeout-minutes: 90
 
     steps:
       - name: Checkout
@@ -89,14 +90,11 @@ jobs:
           }
 
           $previewId = "preview-$releaseDate-$serial"
-          $previewVersion = "$version-$previewId"
           $artifactBaseName = "reimbursement-tool-v$version-$previewId"
 
           "PREVIEW_TARGET_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "PREVIEW_SERIAL=$serial" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "RELEASE_DATE=$releaseDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "PREVIEW_ID=$previewId" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
-          "PREVIEW_VERSION=$previewVersion" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
           "ARTIFACT_BASE_NAME=$artifactBaseName" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
           "artifact_name=$artifactBaseName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
@@ -117,14 +115,36 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tauri-preview-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: tauri-preview-${{ runner.os }}-
+
+      - name: Install Tauri CLI
+        shell: pwsh
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri --version
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
 
-      - name: Install backend test dependencies
+      - name: Install backend dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements-dev.txt
+          python -m pip install -r backend/requirements-packaging.txt
 
       - name: Run backend tests
         run: python -m pytest -q
@@ -133,22 +153,31 @@ jobs:
         run: npm test
         working-directory: frontend
 
-      - name: Build preview ZIP
+      - name: Run desktop shell checks
         shell: pwsh
         run: |
-          if (-not [string]::IsNullOrWhiteSpace($env:PREVIEW_TARGET_VERSION)) {
-            & .\scripts\build_release.ps1 `
-              -PreviewBuild `
-              -PreviewSerial $env:PREVIEW_SERIAL `
-              -ReleaseDate $env:RELEASE_DATE `
-              -Version $env:PREVIEW_TARGET_VERSION
+          & .\scripts\verify.ps1 -Profile Desktop
+          if (-not $?) {
+            throw "Desktop verification profile failed."
           }
-          else {
-            & .\scripts\build_release.ps1 `
-              -PreviewBuild `
-              -PreviewSerial $env:PREVIEW_SERIAL `
-              -ReleaseDate $env:RELEASE_DATE
+
+      - name: Build preview NSIS
+        shell: pwsh
+        env:
+          TAURI_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # 预览包同样签名，便于验证 updater 升级路径；未配置密钥时构建脚本跳过签名。
+          if ($env:TAURI_PRIVATE_KEY_B64) {
+            [System.IO.File]::WriteAllBytes(
+              "$env:GITHUB_WORKSPACE\.tauri-key",
+              [System.Convert]::FromBase64String($env:TAURI_PRIVATE_KEY_B64)
+            )
+            $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:GITHUB_WORKSPACE\.tauri-key"
           }
+          & .\scripts\build_tauri_release.ps1 `
+            -Version $env:PREVIEW_TARGET_VERSION `
+            -ReleaseDate $env:RELEASE_DATE
           if ($LASTEXITCODE -ne 0) {
             throw "Preview build failed with exit code $LASTEXITCODE."
           }
@@ -157,12 +186,12 @@ jobs:
         id: prepare
         shell: pwsh
         run: |
-          $previewZip = Get-ChildItem -LiteralPath "release" -Filter "*.zip" |
-            Where-Object { $_.Name -like "*$env:PREVIEW_ID*" -and $_.Name -notlike "reimbursement-tool-*" } |
-            Sort-Object LastWriteTime -Descending |
+          $nsisDir = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release\bundle\nsis"
+          $setupExe = Get-ChildItem -LiteralPath $nsisDir -Filter "*-setup.exe" |
+            Where-Object { $_.Name -notlike "*.sig" } |
             Select-Object -First 1
-          if (-not $previewZip) {
-            throw "Preview ZIP was not generated for $env:PREVIEW_ID."
+          if (-not $setupExe) {
+            throw "Preview NSIS setup exe was not generated for $env:PREVIEW_ID."
           }
 
           $payloadRoot = Join-Path "release" "preview-artifact-payload"
@@ -170,13 +199,23 @@ jobs:
             Remove-Item -LiteralPath $payloadRoot -Recurse -Force
           }
           New-Item -ItemType Directory -Path $payloadRoot -Force | Out-Null
-          Expand-Archive -LiteralPath $previewZip.FullName -DestinationPath $payloadRoot -Force
 
-          $manifest = Get-ChildItem -LiteralPath $payloadRoot -Filter "portable-release.json" -Recurse |
-            Select-Object -First 1
-          if (-not $manifest) {
-            throw "Expanded preview artifact payload is missing portable-release.json."
+          # 预览包名带 preview id，避免与正式资产混淆。
+          $previewName = "{0}-{1}-setup.exe" -f $env:ARTIFACT_BASE_NAME, "x64"
+          Copy-Item -LiteralPath $setupExe.FullName -Destination (Join-Path $payloadRoot $previewName)
+          $sigPath = "$($setupExe.FullName).sig"
+          if (Test-Path -LiteralPath $sigPath) {
+            Copy-Item -LiteralPath $sigPath -Destination (Join-Path $payloadRoot "$previewName.sig")
           }
+          foreach ($feedName in @("latest.json", "data-compat.json")) {
+            $feedPath = Join-Path $env:GITHUB_WORKSPACE "dist-feed\$feedName"
+            if (Test-Path -LiteralPath $feedPath) {
+              Copy-Item -LiteralPath $feedPath -Destination (Join-Path $payloadRoot $feedName)
+            }
+          }
+
+          $sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $setupExe.FullName).Hash.ToLowerInvariant()
+          "$sha256  $previewName" | Set-Content -LiteralPath (Join-Path $payloadRoot "SHA256SUMS.txt") -Encoding ascii
 
           "artifact_path=release/preview-artifact-payload/*" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
           "artifact_name=$env:ARTIFACT_BASE_NAME" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8

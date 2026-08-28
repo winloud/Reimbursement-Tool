@@ -57,10 +57,13 @@ def test_release_workflow_verifies_reused_runtime_and_emits_integrity_assets():
     assert "Runtime ZIP is missing runtime.json" in workflow
     assert "Runtime manifest version or platform does not match" in workflow
     assert "Runtime manifest does not declare required model file" in workflow
-    assert "Runtime cv2 directory has no files" in workflow
-    assert "Runtime numpy directory has no files" in workflow
-    assert 'Set-Content -LiteralPath "release\\release-manifest.json"' in workflow
-    assert 'Set-Content -LiteralPath "release\\SHA256SUMS.txt"' in workflow
+    assert 'Runtime cv2 directory has no files' in workflow
+    assert 'Runtime numpy directory has no files' in workflow
+    # 安装包名含中文，manifest 与 checksum 必须写无 BOM UTF-8（ascii 会写成 ?）。
+    assert 'New-Object System.Text.UTF8Encoding($false)' in workflow
+    assert 'release\\release-manifest.json' in workflow
+    assert 'release\\SHA256SUMS.txt' in workflow
+    assert '-Encoding ascii' not in workflow
     assert "tag = $env:RELEASE_TAG" in workflow
     assert "commit = $env:RELEASE_COMMIT" in workflow
     assert "size = $_.Length" in workflow
@@ -70,12 +73,11 @@ def test_release_workflow_verifies_reused_runtime_and_emits_integrity_assets():
 def test_release_workflow_drafts_new_release_and_preserves_unrelated_assets():
     workflow = workflow_text()
 
-    assert "gh release create $tag @assetPaths --draft" in workflow
+    assert "gh release create $tag @($assets.FullName) --draft" in workflow
     assert "gh release edit $tag --draft=false" in workflow
-    assert "gh release upload $tag @assetPaths --clobber" in workflow
-    assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
-    assert 'Get-Item -LiteralPath "release\\release-manifest.json"' in workflow
-    assert 'Get-Item -LiteralPath "release\\SHA256SUMS.txt"' in workflow
+    assert "gh release upload $tag @($assets.FullName) --clobber" in workflow
+    assert 'Set-Content -LiteralPath "release\\release-manifest.json"' not in workflow
+    assert "*-setup.exe" in workflow
     assert "repos/$env:GITHUB_REPOSITORY/releases/assets/" not in workflow
     assert "gh api -X DELETE" not in workflow
     assert "--force" not in workflow
@@ -92,7 +94,7 @@ def test_release_workflow_yaml_and_powershell_blocks_parse(tmp_path: Path):
         for step in workflow["jobs"]["release"]["steps"]
         if step.get("shell") == "pwsh" and "run" in step
     ]
-    assert len(blocks) == 7
+    assert len(blocks) == 10
 
     for index, block in enumerate(blocks):
         script_path = tmp_path / f"workflow-step-{index}.ps1"
@@ -108,5 +110,6 @@ def test_release_workflow_yaml_and_powershell_blocks_parse(tmp_path: Path):
             capture_output=True,
             text=True,
             encoding="utf-8",
+            errors="replace",
         )
         assert result.returncode == 0, result.stdout + result.stderr

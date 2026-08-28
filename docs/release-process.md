@@ -28,7 +28,7 @@ powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyy
 
 更新包与 feed 上传到 GitHub Release（tag 对应），`tauri.conf.json` 的 `plugins.updater.endpoints` 指向 `latest.json`，客户端自动验签安装。私钥保存在本地安全位置 + GitHub Secrets，公钥写入 `tauri.conf.json`，私钥永不入仓库。
 
-旧便携 ZIP 流程（`build_release.ps1` / `release_publish.ps1` / `validate_release_asset.ps1`）在阶段 8 清理。
+旧便携 ZIP 流程（`build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 多版本目录、`portable-release.json`）已在阶段 8 删除。`validate_release_asset.ps1` 改为校验已发布 Release 上的 NSIS 安装包、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
 
 ## 当前计划生命周期
 
@@ -64,7 +64,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 - 不带 `-Publish`：准备版本文件、冻结 active plan、创建下一轮 active plan 并运行预检；不提交、不创建 tag、不 push。
 - `-Publish`：从当前状态安全续跑，直至 workflow 和 GitHub Release 校验完成。
 - `-AllowUntracked`：可选；只忽略未跟踪文件，已跟踪文件变更仍按发布状态规则检查。
-- `-DownloadReleaseAssetForValidation`：可选；默认不下载主 ZIP，只下载小型 `release-manifest.json` 和 `SHA256SUMS.txt` 做完整性校验；需要模拟最终用户下载时再启用远端 ZIP 深校验。
+- `-DownloadReleaseAssetForValidation`：可选；默认不下载 NSIS 安装包，只下载小型 `release-manifest.json`、`SHA256SUMS.txt`、`latest.json` 和 `data-compat.json` 做完整性校验；需要模拟最终用户下载时再启用远端安装包深校验。
 - `-ReleaseBranch main`：可选，默认 `main`；仅在仓库正式发布分支更名时调整。
 - `-SkipTests`：只用于临时烟测或测试已由其他可信流程完成的场景；正式发布默认不使用。
 
@@ -91,7 +91,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 - 推送严格匹配 `vX.Y.Z` 的 tag。
 - 手工触发并传入既有 `tag`，用于从原 tag commit 重建或修复 Release 资产。
 
-工作流必须确认 tag commit 属于 `origin/main`，从 `CHANGELOG.md` 对应版本标题读取发布日期，并为同一 tag 设置并发锁和超时。新 Release 先作为 draft 创建；测试、构建、ZIP 内容校验、`release-manifest.json` 和 `SHA256SUMS.txt` 全部成功后再公开。重跑已有 Release 只覆盖本次目标资产，不删除额外资产。
+工作流必须确认 tag commit 属于 `origin/main`，从 `CHANGELOG.md` 对应版本标题读取发布日期，并为同一 tag 设置并发锁和超时。新 Release 先作为 draft 创建；测试、桌面壳检查、NSIS 构建、本地产物校验、`release-manifest.json` 和 `SHA256SUMS.txt` 全部成功后再公开。重跑已有 Release 只覆盖本次目标资产，不删除额外资产。
 
 OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须校验下载文件的 SHA256 和 ZIP 内容；校验失败时重新构建，不能只依赖文件名和非零大小。
 
@@ -101,21 +101,22 @@ OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须�
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile Release
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\verify.ps1 -Profile Desktop
 ```
 
-发布后按需复验 Release 资产；`-MetadataOnly` 不下载主 ZIP，但会下载 manifest 和 checksum 两个小型完整性资产：
+发布后按需复验 Release 资产；`-MetadataOnly` 不下载 NSIS 安装包，但会下载 manifest、checksum 和 updater feed 四个小型完整性资产：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -MetadataOnly
 ```
 
-校验本地 ZIP 内容：
+校验本地 NSIS 构建产物与 feed：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_release_asset.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -ZipPath release\报销管理-vX.Y.Z-yyyymmdd.zip
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\validate_tauri_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
 ```
 
-需要模拟用户从 GitHub 下载时，省略 `-MetadataOnly` 和 `-ZipPath` 进行远端深校验。耗时采集和比较保持为独立命令：
+需要模拟用户从 GitHub 下载安装包时，省略 `-MetadataOnly` 进行远端深校验。耗时采集和比较保持为独立命令：
 
 ```powershell
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\collect_release_metrics.ps1 -RunId <run-id> -CompareRunId <baseline-run-id> -Format Markdown
@@ -145,12 +146,12 @@ git push origin vX.Y.Z
 
 如果 tag 已存在，必须先验证其 SHA；不要移动或覆盖。Release 成功后无需再补一次机器状态提交。
 
-## 本地正式 ZIP
+## 本地正式安装包
 
-GitHub tag workflow 的资产是正式交付物。本地只有在验证本机 PyInstaller 输出、程序内更新包行为或 GitHub Actions 暂不可用时才生成正式 ZIP：
+GitHub tag workflow 的资产是正式交付物。本地只有在验证本机 sidecar 打包、NSIS 安装行为、updater 升级路径或 GitHub Actions 暂不可用时才生成正式安装包：
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd -SkipDependencyInstall -ReuseReleaseVenv
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_tauri_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
 ```
 
-本地 ZIP 必须留在 `release/`，不提交 Git；同名正式 ZIP 不自动覆盖，只能由用户明确处理。
+本地产物留在 `src-tauri\target\release\bundle\nsis` 和 `dist-feed\`，不提交 Git。

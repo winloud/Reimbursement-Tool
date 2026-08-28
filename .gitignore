@@ -11,13 +11,12 @@ build/
 dist/
 *.egg-info/
 
-# PyInstaller release artifacts
+# PyInstaller sidecar artifacts
 *.spec.bak
-dist/报销管理/
-dist/报销管理/data/
-dist/报销管理/uploads/
-dist/报销管理/logs/
+dist/reimbursement-sidecar/
 /release/
+/dist-feed/
+/src-tauri/resources/
 
 # Virtual environments
 .venv/
@@ -44,11 +43,9 @@ data/*.db
 data/import_staging/
 data/backups/
 data/restore_staging/
-data/update_staging/
 
 # Local desktop runtime artifacts
 logs/
-browser-profile/
 window-state.json
 
 # Backend uploads

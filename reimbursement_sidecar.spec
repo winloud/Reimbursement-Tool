@@ -1,12 +1,13 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-# Tauri sidecar spec（阶段 7）。
+# Tauri sidecar spec。
 #
 # 入口 sidecar_app.py：只提供 HTTP API，不携带前端和 pywebview。
 # 前端由 Tauri 打包（frontend/dist），不进 PyInstaller 产物。
-# 打包后以 Tauri externalBin 装入 NSIS，由 Tauri sidecar API 启动。
+# onedir 产物经 Tauri bundle.resources 装入 NSIS，由 Rust 端 spawn 启动。
 #
-# 与 reimbursement_tool.spec（旧桌面壳，阶段 8 删除）的区别：
+# 旧 reimbursement_tool.spec（desktop_app.py 桌面壳）与 reimbursement_launcher.spec
+# 已在阶段 8 随便携 ZIP 链路删除。本 spec 相对旧壳的差异：
 # - 入口：sidecar_app.py（非 desktop_app.py）
 # - datas：移除 frontend/dist（前端由 Tauri 打包）
 # - hiddenimports：移除 webview.*（不依赖 pywebview）

@@ -48,18 +48,24 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "scripts/extract_changelog_section.py" in workflow
     assert "gh release create" in workflow
     assert "release-notes.md" in workflow
-    assert "BuildOpenCvRuntime = $true" in workflow
+    assert "build_tauri_release.ps1" in workflow
+    assert "validate_tauri_release.ps1" in workflow
+    assert "verify.ps1 -Profile Desktop" in workflow
+    assert "build_opencv_runtime.ps1" in workflow
     assert "ReleaseDate = $env:RELEASE_DATE" in workflow
-    assert "Validate local release ZIP" in workflow
-    assert "-ZipPath $mainZip.FullName" in workflow
+    assert "Validate Tauri release" in workflow
     assert "if (-not $?)" in workflow
     assert "--metadata-output release-metadata.json" in workflow
     assert '$metadata.release_date' in workflow
-    assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
+    assert "*-setup.exe" in workflow
+    assert "dist-feed" in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
     assert "release-manifest.json" in workflow
     assert "SHA256SUMS.txt" in workflow
     assert "releases/assets/$($asset.id)" not in workflow
+    # 便携 ZIP 发布链路已删除。
+    assert "build_release.ps1" not in workflow
+    assert "BuildOpenCvRuntime" not in workflow
 
 
 def test_preview_workflow_manually_builds_artifact_without_publishing_release():
@@ -73,16 +79,18 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
     assert "China Standard Time" in workflow
     assert "actions: read" in workflow
     assert "actions/artifacts?per_page=100" in workflow
-    assert "-PreviewBuild" in workflow
-    assert "-PreviewSerial" in workflow
-    assert "Expand-Archive -LiteralPath $previewZip.FullName" in workflow
-    assert "Expanded preview artifact payload is missing portable-release.json." in workflow
+    assert "build_tauri_release.ps1" in workflow
+    assert "verify.ps1 -Profile Desktop" in workflow
+    assert "Preview NSIS setup exe was not generated" in workflow
     assert "artifact_path=release/preview-artifact-payload/*" in workflow
     assert "actions/upload-artifact@v7" in workflow
     assert "retention-days: 14" in workflow
     assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow
     assert "gh release create" not in workflow
     assert "contents: read" in workflow
+    # 便携 ZIP 预览链路已删除。
+    assert "build_release.ps1" not in workflow
+    assert "portable-release.json" not in workflow
 
 
 def test_release_publish_script_covers_release_governance_flow():
@@ -134,26 +142,25 @@ def test_release_process_documents_main_first_release_flow():
     assert "git push origin <branch>" not in document
 
 
-def test_release_asset_validator_checks_portable_zip_contract():
+def test_release_asset_validator_checks_nsis_and_updater_feed_contract():
     script = (Path(__file__).resolve().parents[2] / "scripts" / "validate_release_asset.ps1").read_text(
         encoding="utf-8"
     )
 
-    assert "reimbursement-tool-v$Version-$ReleaseDate.zip" in script
     assert "Invoke-ReleaseAssetDownload" in script
     assert "MetadataOnly" in script
-    assert "ZipPath" in script
     assert "github_release_metadata" in script
-    assert "local_zip" in script
-    assert "portable-release.json" in script
-    assert "current-version.json" in script
-    assert "versions/$Version" in script
-    assert "data_schema_version" in script
-    assert "min_supported_data_schema_version" in script
-    assert "/data/" in script
-    assert "/uploads/" in script
-    assert "/logs/" in script
+    assert "-setup.exe" in script
+    assert "Updater signature asset is missing" in script
+    assert "latest.json" in script
+    assert "data-compat.json" in script
+    assert "windows-x86_64" in script
+    assert "min_data_schema_version" in script
     assert "opencv-wechat-runtime-*.zip" in script
+    # 便携 ZIP 契约已删除。
+    assert "portable-release.json" not in script
+    assert "current-version.json" not in script
+    assert "ZipPath" not in script
 
 
 def test_release_metrics_collector_outputs_json_and_markdown():

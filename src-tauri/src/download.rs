@@ -131,11 +131,21 @@ pub async fn save_backend_download(
         .map_err(|e| format!("读取下载内容失败: {e}"))?;
 
     // 写临时文件后先备份旧文件、再提交新文件，失败时恢复旧文件，保证覆盖不丢数据。
+    commit_downloaded_file(&bytes, &target)?;
+
+    Ok(SavedFile {
+        saved_path: target.to_string_lossy().into_owned(),
+    })
+}
+
+/// 原子落盘：临时文件 → 备份旧文件 → 改名提交 → 删除备份。
+/// 提交失败时恢复旧文件并清理临时文件，保证覆盖保存不会把原文件弄丢。
+fn commit_downloaded_file(bytes: &[u8], target: &std::path::Path) -> Result<(), String> {
     let tmp_path = target.with_extension(format!(
         "{}.downloading",
         target.extension().and_then(|e| e.to_str()).unwrap_or("tmp")
     ));
-    std::fs::write(&tmp_path, &bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
+    std::fs::write(&tmp_path, bytes).map_err(|e| format!("写入临时文件失败: {e}"))?;
 
     let backup_path = std::path::PathBuf::from(format!("{}.bak", target.to_string_lossy()));
     let had_old = target.exists();
@@ -143,14 +153,13 @@ pub async fn save_backend_download(
         if backup_path.exists() {
             let _ = std::fs::remove_file(&backup_path);
         }
-        std::fs::rename(&target, &backup_path)
-            .map_err(|e| format!("备份旧文件失败: {e}"))?;
+        std::fs::rename(target, &backup_path).map_err(|e| format!("备份旧文件失败: {e}"))?;
     }
 
-    if let Err(rename_err) = std::fs::rename(&tmp_path, &target) {
+    if let Err(rename_err) = std::fs::rename(&tmp_path, target) {
         // 提交失败：尝试恢复旧文件，并清理临时文件。
         let restore_msg = if had_old {
-            match std::fs::rename(&backup_path, &target) {
+            match std::fs::rename(&backup_path, target) {
                 Ok(()) => "已恢复旧文件".to_string(),
                 Err(restore_err) => format!(
                     "恢复旧文件也失败: {restore_err}，原文件备份在 {}",
@@ -168,10 +177,7 @@ pub async fn save_backend_download(
     if had_old {
         let _ = std::fs::remove_file(&backup_path);
     }
-
-    Ok(SavedFile {
-        saved_path: target.to_string_lossy().into_owned(),
-    })
+    Ok(())
 }
 
 /// 拼接相对/绝对 URL。
@@ -186,7 +192,21 @@ fn resolve_url(api_base_url: &str, url: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::resolve_url;
+    use super::{commit_downloaded_file, resolve_url};
+    use std::fs;
+    use std::path::PathBuf;
+
+    /// 每个测试线程用独立目录，避免并发互扰。
+    fn workdir(tag: &str) -> PathBuf {
+        let thread_id = format!("{:?}", std::thread::current().id());
+        let dir = std::env::temp_dir().join(format!(
+            "reimbursement-download-{tag}-{}",
+            thread_id.replace(['(', ')'], "-")
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
 
     #[test]
     fn resolve_url_keeps_absolute_url() {
@@ -214,5 +234,62 @@ mod tests {
             resolve_url("http://127.0.0.1:5000", "/api/report-attachments/3/file"),
             "http://127.0.0.1:5000/api/report-attachments/3/file"
         );
+    }
+
+    #[test]
+    fn commit_writes_new_file_and_leaves_no_temp_artifacts() {
+        let dir = workdir("new");
+        let target = dir.join("report.pdf");
+
+        commit_downloaded_file(b"pdf-bytes", &target).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"pdf-bytes");
+        let leftovers: Vec<String> = fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name != "report.pdf")
+            .collect();
+        assert!(leftovers.is_empty(), "残留中间文件: {leftovers:?}");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_overwrites_existing_file_and_removes_backup() {
+        let dir = workdir("overwrite");
+        let target = dir.join("report.pdf");
+        fs::write(&target, b"old-bytes").unwrap();
+
+        commit_downloaded_file(b"new-bytes", &target).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"new-bytes");
+        assert!(
+            !dir.join("report.pdf.bak").exists(),
+            "提交成功后备份文件必须删除"
+        );
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_reports_error_when_target_directory_is_missing() {
+        let dir = workdir("missing");
+        let target = dir.join("nope").join("report.pdf");
+
+        let err = commit_downloaded_file(b"bytes", &target).unwrap_err();
+
+        assert!(err.contains("写入临时文件失败"), "实际错误: {err}");
+        assert!(!target.exists());
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn commit_handles_target_without_extension() {
+        let dir = workdir("noext");
+        let target = dir.join("payload");
+
+        commit_downloaded_file(b"raw", &target).unwrap();
+
+        assert_eq!(fs::read(&target).unwrap(), b"raw");
+        let _ = fs::remove_dir_all(&dir);
     }
 }

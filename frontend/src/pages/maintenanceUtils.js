@@ -40,15 +40,6 @@ export const restorePreviewSummary = (preview) => {
 
 export const yesNo = (value) => (value ? "可用" : "不可用");
 
-export const browserRuntimeSummary = (runtime) => {
-  if (!runtime) return "-";
-  const parts = [runtime.preferred_runtime || "-"];
-  if (runtime.chromium_name) parts.push(runtime.chromium_name);
-  if (runtime.webview2_available) parts.push("WebView2 可用");
-  if (runtime.error) parts.push(`检测异常：${runtime.error}`);
-  return parts.join("，");
-};
-
 export const qrEngineSummary = (qrEngine) => {
   if (!qrEngine) return "-";
   const parts = [qrEngine.selected_engine_label || qrEngine.selected_engine || "-"];

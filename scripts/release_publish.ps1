@@ -214,7 +214,7 @@ function Test-ReleasePrepared {
     if (-not (Test-FileContains -RelativePath "README.md" -Pattern "报销管理 V$escapedVersion 发布说明")) {
         return $false
     }
-    if (-not (Test-FileContains -RelativePath "README.md" -Pattern "报销管理-v$escapedVersion-$ReleaseDate\.zip")) {
+    if (-not (Test-FileContains -RelativePath "README.md" -Pattern "报销管理_$escapedVersion`_x64-setup\.exe")) {
         return $false
     }
     if (-not (Test-FileContains -RelativePath "backend/app_metadata.py" -Pattern "DEFAULT_APP_VERSION\s*=\s*`"$escapedVersion`"")) {
@@ -280,11 +280,7 @@ function Update-Readme {
     $text = Replace-Required -Text $text -Pattern "# 报销管理 V\d+\.\d+\.\d+ 发布说明" -Replacement "# 报销管理 V$Version 发布说明" -Description "README title"
     $text = Replace-Required -Text $text -Pattern "发布日期：\d{4}-\d{2}-\d{2}" -Replacement "发布日期：$ReleaseDateDisplay" -Description "README release date"
     $text = Replace-Required -Text $text -Pattern "报销管理 V\d+\.\d+\.\d+ 是" -Replacement "报销管理 V$Version 是" -Description "README positioning version"
-    $text = Replace-Required -Text $text -Pattern "报销管理-v\d+\.\d+\.\d+-\d{8}\.zip" -Replacement "报销管理-v$Version-$ReleaseDate.zip" -Description "README ZIP example"
-    $text = Replace-Required -Text $text -Pattern "V\d+\.\d+\.\d+ 使用便携式安装根目录" -Replacement "V$Version 使用便携式安装根目录" -Description "README portable version"
-    $text = Replace-Required -Text $text -Pattern "versions\\\d+\.\d+\.\d+\\" -Replacement "versions\$Version\" -Description "README version directory"
-    $text = Replace-Required -Text $text -Pattern "从旧版 ZIP 迁移到 V\d+\.\d+\.\d+ 时" -Replacement "从旧版 ZIP 迁移到 V$Version 时" -Description "README upgrade version"
-    $text = Replace-Required -Text $text -Pattern "解压 V\d+\.\d+\.\d+ ZIP" -Replacement "解压 V$Version ZIP" -Description "README unzip version"
+    $text = Replace-Required -Text $text -Pattern "报销管理_\d+\.\d+\.\d+_x64-setup\.exe" -Replacement "报销管理_${Version}_x64-setup.exe" -Description "README installer example"
     $text = Replace-Required -Text $text -Pattern "V\d+\.\d+\.\d+ 主包默认" -Replacement "V$Version 主包默认" -Description "README QR version"
     Write-TextFile -Path $path -Text $text
 }

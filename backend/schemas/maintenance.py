@@ -24,15 +24,6 @@ class DiagnosticQrEngineRead(BaseModel):
     opencv_model_files_missing: list[str] = Field(default_factory=list)
 
 
-class DiagnosticBrowserRuntimeRead(BaseModel):
-    webview2_available: bool = False
-    chromium_available: bool = False
-    chromium_name: str | None = None
-    chromium_path: str | None = None
-    preferred_runtime: str
-    error: str | None = None
-
-
 class DiagnosticLogFileRead(BaseModel):
     path: str
     exists: bool = False
@@ -74,7 +65,6 @@ class MaintenanceInfoRead(BaseModel):
     uploads_exists: bool
     backups: list[BackupRead] = Field(default_factory=list)
     qr_engine: DiagnosticQrEngineRead | None = None
-    browser_runtime: DiagnosticBrowserRuntimeRead | None = None
     log_file: DiagnosticLogFileRead | None = None
 
 

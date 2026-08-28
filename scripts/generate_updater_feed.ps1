@@ -1,4 +1,4 @@
-# 生成 tauri-plugin-updater 的 feed 文件（latest.json + data-compat.json）。
+﻿# 生成 tauri-plugin-updater 的 feed 文件（latest.json + data-compat.json）。
 #
 # 用法：发布流程在 tauri build 产出 NSIS 更新包并用 tauri signer 签名后调用本脚本。
 #   powershell -File scripts/generate_updater_feed.ps1 `

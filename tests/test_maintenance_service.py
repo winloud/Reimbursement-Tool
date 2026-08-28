@@ -42,7 +42,6 @@ def configure_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[s
         "vendor": app_root / "vendor",
         "backups": data_dir / "backups",
         "restore_staging": data_dir / "restore_staging",
-        "update_staging": data_dir / "update_staging",
     }
     monkeypatch.setattr(maintenance_service, "APP_ROOT", paths["app_root"])
     monkeypatch.setattr(maintenance_service, "DATA_DIR", paths["data_dir"])
@@ -52,7 +51,6 @@ def configure_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> dict[s
     monkeypatch.setattr(maintenance_service, "VENDOR_ROOT", paths["vendor"])
     monkeypatch.setattr(maintenance_service, "BACKUP_ROOT", paths["backups"])
     monkeypatch.setattr(maintenance_service, "RESTORE_STAGING_ROOT", paths["restore_staging"])
-    monkeypatch.setattr(maintenance_service, "UPDATE_STAGING_ROOT", paths["update_staging"])
     return paths
 
 
@@ -435,8 +433,6 @@ def test_restore_dialog_preview_returns_unselected_when_cancelled(
 
 def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     paths = configure_runtime(monkeypatch, tmp_path)
-    monkeypatch.setattr(maintenance_service, "is_webview2_available", lambda: True)
-    monkeypatch.setattr(maintenance_service, "find_chromium_browser", lambda: ("Google Chrome", tmp_path / "chrome.exe"))
     monkeypatch.setattr(maintenance_service, "get_installed_opencv_runtime", lambda: None)
     monkeypatch.setattr(maintenance_service, "wechat_model_paths", lambda: {})
     write_database(paths["database"], "backup")
@@ -448,8 +444,8 @@ def test_maintenance_info_reports_runtime_paths_and_backups(monkeypatch: pytest.
     assert info.database_path == paths["database"].as_posix()
     assert info.backups[0].backup_id == backup.backup_id
     assert info.qr_engine.selected_engine == "zxing"
-    assert info.browser_runtime.webview2_available is True
-    assert info.browser_runtime.chromium_name == "Google Chrome"
+    # 浏览器/WebView2 诊断随 Chrome app-mode / pywebview 回退链路一并删除。
+    assert not hasattr(info, "browser_runtime")
 
 
 def test_database_integrity_check_reports_business_and_attachment_issues(
@@ -530,19 +526,13 @@ def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ):
     paths = configure_runtime(monkeypatch, tmp_path)
-    monkeypatch.setattr(maintenance_service, "is_webview2_available", lambda: False)
-    monkeypatch.setattr(maintenance_service, "find_chromium_browser", lambda: None)
     monkeypatch.setattr(maintenance_service, "get_installed_opencv_runtime", lambda: {"opencv_package_version": "4.10.0.84"})
     monkeypatch.setattr(maintenance_service, "wechat_model_paths", lambda: {})
     write_database(paths["database"], "private data")
     (paths["uploads"] / "1").mkdir(parents=True)
     (paths["uploads"] / "1" / "invoice.pdf").write_bytes(b"private invoice")
-    (paths["app_root"] / "current-version.json").write_text(
-        json.dumps({"current_version": "1.2.0-preview-20260624-001"}),
-        encoding="utf-8",
-    )
-    (paths["app_root"] / "portable-release.json").write_text(
-        json.dumps({"app_version": "1.2.0-preview-20260624-001"}),
+    (paths["app_root"] / "window-state.json").write_text(
+        json.dumps({"x": 120, "y": 80, "width": 1280, "height": 860}),
         encoding="utf-8",
     )
     paths["logs"].mkdir(parents=True)
@@ -564,14 +554,11 @@ def test_diagnostics_package_contains_logs_config_env_and_excludes_user_data(
         assert "uploads/1/invoice.pdf" not in names
         diagnostics = json.loads(archive.read("diagnostics.json").decode("utf-8"))
         assert diagnostics["qr_engine"]["opencv_runtime_installed"] is True
-        assert diagnostics["browser_runtime"]["preferred_runtime"] == "unavailable"
-        assert diagnostics["runtime_config"]["files"]["current-version.json"]["content"]["current_version"] == (
-            "1.2.0-preview-20260624-001"
-        )
+        # 便携安装指针与浏览器运行时诊断随 ZIP 链路一并删除。
+        assert "browser_runtime" not in diagnostics
+        assert set(diagnostics["runtime_config"]["files"]) == {"window-state.json"}
         runtime_config = json.loads(archive.read("config/runtime.json").decode("utf-8"))
-        assert runtime_config["files"]["portable-release.json"]["content"]["app_version"] == (
-            "1.2.0-preview-20260624-001"
-        )
+        assert runtime_config["files"]["window-state.json"]["content"]["width"] == 1280
         summary = archive.read("summary.txt").decode("utf-8")
         assert "诊断包内容" in summary
         assert "不包含: data/expense.db、uploads/ 附件、备份 ZIP。" in summary

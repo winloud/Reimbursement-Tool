@@ -11,14 +11,10 @@
 // 则不注入，sidecar 回退到源码根。
 //
 // 开发模式下通过环境变量 REIMBURSEMENT_SIDECAR_CMD 指定启动命令
-// （例如 "python sidecar_app.py --port 0"）；打包后由 Tauri sidecar 机制运行 onedir exe。
-//
-// TODO(阶段 5+) 生产 sidecar 打包：当前 resolve_sidecar_command 在无开发环境变量时
-// 回退到 `python sidecar_app.py`，仅用于开发/测试。生产安装包既无 Python 也无源码，
-// 由 resolve_sidecar_command 解析 resource_dir()/reimbursement-sidecar/
-// reimbursement-sidecar.exe（PyInstaller onedir 产物经 bundle.resources 装入 NSIS）。
-// 构建脚本（阶段 7）负责把 onedir 产物放到 src-tauri/resources/reimbursement-sidecar/
-// 供 cargo tauri build 打包。python 回退保留为开发兜底。
+// （例如 "python sidecar_app.py --port 0"）；打包后由 resolve_sidecar_command 解析
+// resource_dir()/reimbursement-sidecar/reimbursement-sidecar.exe（PyInstaller onedir
+// 产物经 bundle.resources 装入 NSIS，见 scripts/build_tauri_release.ps1）。
+// 两者都不可用时回退到 `python sidecar_app.py`，仅作开发兜底。
 
 use std::collections::HashMap;
 use serde::Deserialize;
@@ -93,10 +89,8 @@ pub fn spawn_and_wait(
                 Ok(Some(CommandEvent::Stdout(bytes))) => {
                     let line = String::from_utf8_lossy(&bytes);
                     eprintln!("sidecar stdout: {line}");
-                    if let Ok(ready) = serde_json::from_str::<SidecarReady>(line.trim()) {
-                        if ready.event == "ready" {
-                            return Ok(ready.api_base_url);
-                        }
+                    if let Some(url) = parse_ready_line(&line) {
+                        return Ok(url);
                     }
                 }
                 Ok(Some(CommandEvent::Stderr(bytes))) => {
@@ -134,6 +128,31 @@ pub fn spawn_and_wait(
     ))
 }
 
+/// 解析 sidecar stdout 的一行，命中 ready 握手时返回 api_base_url。
+///
+/// sidecar 约定 stdout 只输出这一行 JSON（uvicorn 日志重定向到文件），
+/// 但 PyInstaller 引导或杀软注入偶尔会插入额外输出，因此非 JSON 行按噪声忽略，
+/// 非 ready 事件也不接受，避免把中间状态误当就绪。
+fn parse_ready_line(line: &str) -> Option<String> {
+    let ready: SidecarReady = serde_json::from_str(line.trim()).ok()?;
+    if ready.event != "ready" {
+        return None;
+    }
+    if ready.api_base_url.is_empty() {
+        return None;
+    }
+    Some(ready.api_base_url)
+}
+
+/// 解析开发模式的 REIMBURSEMENT_SIDECAR_CMD，按空白分割为 (程序, 参数)。
+fn parse_sidecar_command_env(cmd: &str) -> Result<(String, Vec<String>), String> {
+    let parts: Vec<String> = cmd.split_whitespace().map(String::from).collect();
+    let (program, args) = parts
+        .split_first()
+        .ok_or_else(|| "REIMBURSEMENT_SIDECAR_CMD 不能为空".to_string())?;
+    Ok((program.clone(), args.to_vec()))
+}
+
 /// 解析 sidecar 启动命令。优先级：
 /// 1. 环境变量 REIMBURSEMENT_SIDECAR_CMD（开发模式，空格分割，首段为程序）。
 /// 2. 打包产物：resource_dir()/reimbursement-sidecar/reimbursement-sidecar.exe
@@ -141,12 +160,7 @@ pub fn spawn_and_wait(
 /// 3. 开发兜底：python sidecar_app.py（源码根）。
 fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String>), String> {
     if let Ok(cmd) = std::env::var("REIMBURSEMENT_SIDECAR_CMD") {
-        let parts: Vec<String> = cmd.split_whitespace().map(String::from).collect();
-        if parts.is_empty() {
-            return Err("REIMBURSEMENT_SIDECAR_CMD 不能为空".into());
-        }
-        let (program, args) = parts.split_first().unwrap();
-        return Ok((program.clone(), args.to_vec()));
+        return parse_sidecar_command_env(&cmd);
     }
 
     // 生产：解析打包进 NSIS 的 PyInstaller onedir exe。
@@ -164,4 +178,61 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
         "python".to_string(),
         vec!["sidecar_app.py".to_string(), "--port".into(), "0".into()],
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{parse_ready_line, parse_sidecar_command_env};
+
+    #[test]
+    fn parse_ready_line_accepts_ready_handshake() {
+        let line = r#"{"event":"ready","api_base_url":"http://127.0.0.1:51234"}"#;
+        assert_eq!(
+            parse_ready_line(line).as_deref(),
+            Some("http://127.0.0.1:51234")
+        );
+        // 前后空白与换行由 sidecar 的 write+flush 带入，必须容忍。
+        assert_eq!(
+            parse_ready_line("  {\"event\":\"ready\",\"api_base_url\":\"http://127.0.0.1:1\"}\n")
+                .as_deref(),
+            Some("http://127.0.0.1:1")
+        );
+    }
+
+    #[test]
+    fn parse_ready_line_ignores_noise_and_non_ready_events() {
+        assert_eq!(parse_ready_line(""), None);
+        assert_eq!(parse_ready_line("INFO: booting uvicorn"), None);
+        assert_eq!(
+            parse_ready_line(r#"{"event":"starting","api_base_url":"http://127.0.0.1:1"}"#),
+            None
+        );
+        // 缺字段或空 URL 都不算就绪，否则前端会拿到空 base URL。
+        assert_eq!(parse_ready_line(r#"{"event":"ready"}"#), None);
+        assert_eq!(
+            parse_ready_line(r#"{"event":"ready","api_base_url":""}"#),
+            None
+        );
+    }
+
+    #[test]
+    fn parse_sidecar_command_env_splits_program_and_args() {
+        let (program, args) = parse_sidecar_command_env("python sidecar_app.py --port 0").unwrap();
+        assert_eq!(program, "python");
+        assert_eq!(args, vec!["sidecar_app.py", "--port", "0"]);
+
+        let (program, args) = parse_sidecar_command_env("  python   sidecar_app.py  ").unwrap();
+        assert_eq!(program, "python");
+        assert_eq!(args, vec!["sidecar_app.py"]);
+
+        let (program, args) = parse_sidecar_command_env("sidecar.exe").unwrap();
+        assert_eq!(program, "sidecar.exe");
+        assert!(args.is_empty());
+    }
+
+    #[test]
+    fn parse_sidecar_command_env_rejects_empty_value() {
+        assert!(parse_sidecar_command_env("").is_err());
+        assert!(parse_sidecar_command_env("   ").is_err());
+    }
 }

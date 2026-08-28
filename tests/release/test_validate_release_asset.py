@@ -17,8 +17,12 @@ VERSION = "1.2.5"
 TAG = f"v{VERSION}"
 RELEASE_DATE = "20260713"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
-MAIN_NAME = f"reimbursement-tool-v{VERSION}-{RELEASE_DATE}.zip"
+INSTALLER_NAME = f"报销管理_{VERSION}_x64-setup.exe"
+SIGNATURE_NAME = f"{INSTALLER_NAME}.sig"
+LATEST_NAME = "latest.json"
+COMPAT_NAME = "data-compat.json"
 RUNTIME_NAME = "opencv-wechat-runtime-4.10.0.zip"
+UPDATE_URL = f"https://github.com/winloud/Reimbursement-Tool/releases/download/{TAG}/{INSTALLER_NAME}"
 
 
 def sha256(data: bytes) -> str:
@@ -29,29 +33,56 @@ def write_json(path: Path, value: object) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
-def create_gh_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path]:
+def create_gh_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path, Path]:
     fixture_dir = tmp_path / "fixture"
     fixture_dir.mkdir(parents=True)
-    main_bytes = b"main release zip placeholder"
+    installer_bytes = b"nsis installer placeholder"
+    signature_bytes = b"untrusted comment: signature\nRWReX3/gb3u/XPLACEHOLDER\n"
     runtime_bytes = b"opencv runtime zip placeholder"
-    (fixture_dir / MAIN_NAME).write_bytes(main_bytes)
+    (fixture_dir / INSTALLER_NAME).write_bytes(installer_bytes)
+    (fixture_dir / SIGNATURE_NAME).write_bytes(signature_bytes)
     (fixture_dir / RUNTIME_NAME).write_bytes(runtime_bytes)
+
+    latest_path = fixture_dir / LATEST_NAME
+    write_json(
+        latest_path,
+        {
+            "version": VERSION,
+            "pub_date": "2026-07-13T00:00:00Z",
+            "platforms": {
+                "windows-x86_64": {
+                    "signature": "RWReX3/gb3u/XPLACEHOLDER",
+                    "url": UPDATE_URL,
+                }
+            },
+        },
+    )
+    compat_path = fixture_dir / COMPAT_NAME
+    write_json(compat_path, {"min_data_schema_version": 7, "max_data_schema_version": 7})
+
+    asset_files = [
+        (INSTALLER_NAME, installer_bytes),
+        (SIGNATURE_NAME, signature_bytes),
+        (LATEST_NAME, latest_path.read_bytes()),
+        (COMPAT_NAME, compat_path.read_bytes()),
+        (RUNTIME_NAME, runtime_bytes),
+    ]
 
     manifest = {
         "tag": TAG,
         "commit": COMMIT,
         "release_date": "2026-07-13",
         "assets": [
-            {"name": MAIN_NAME, "size": len(main_bytes), "sha256": sha256(main_bytes)},
-            {"name": RUNTIME_NAME, "size": len(runtime_bytes), "sha256": sha256(runtime_bytes)},
+            {"name": name, "size": len(payload), "sha256": sha256(payload)}
+            for name, payload in asset_files
         ],
     }
     manifest_path = fixture_dir / "release-manifest.json"
     write_json(manifest_path, manifest)
     checksums_path = fixture_dir / "SHA256SUMS.txt"
     checksums_path.write_text(
-        f"{sha256(main_bytes)}  {MAIN_NAME}\n{sha256(runtime_bytes)}  {RUNTIME_NAME}\n",
-        encoding="ascii",
+        "".join(f"{sha256(payload)}  {name}\n" for name, payload in asset_files),
+        encoding="utf-8",
     )
 
     release = {
@@ -61,8 +92,10 @@ def create_gh_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path]
         "isPrerelease": False,
         "publishedAt": "2026-07-13T00:00:00Z",
         "assets": [
-            {"name": MAIN_NAME, "size": len(main_bytes), "digest": f"sha256:{sha256(main_bytes)}"},
-            {"name": RUNTIME_NAME, "size": len(runtime_bytes), "digest": f"sha256:{sha256(runtime_bytes)}"},
+            {"name": name, "size": len(payload), "digest": f"sha256:{sha256(payload)}"}
+            for name, payload in asset_files
+        ]
+        + [
             {
                 "name": manifest_path.name,
                 "size": manifest_path.stat().st_size,
@@ -95,6 +128,7 @@ log_path = Path(os.environ["GH_RELEASE_DOWNLOAD_LOG"])
 if args == ["--version"]:
     print("gh version 2.99.0")
 elif args[:2] == ["release", "view"]:
+    sys.stdout.reconfigure(encoding="utf-8")
     print((fixture_dir / "release.json").read_text(encoding="utf-8"))
 elif args[:2] == ["release", "download"]:
     pattern = args[args.index("--pattern") + 1]
@@ -117,7 +151,8 @@ else:
     env["PATH"] = str(stub_dir) + os.pathsep + env["PATH"]
     env["GH_RELEASE_FIXTURE_DIR"] = str(fixture_dir)
     env["GH_RELEASE_DOWNLOAD_LOG"] = str(download_log)
-    return env, release_path, manifest_path, checksums_path
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env, release_path, manifest_path, checksums_path, latest_path
 
 
 def refresh_asset_metadata(release_path: Path, asset_path: Path) -> None:
@@ -131,6 +166,31 @@ def refresh_asset_metadata(release_path: Path, asset_path: Path) -> None:
     else:
         raise AssertionError(f"asset missing from fixture: {asset_path.name}")
     write_json(release_path, release)
+
+
+def refresh_integrity_artifacts(fixture_dir: Path, release_path: Path) -> None:
+    """改动被 manifest 覆盖的资产后，重算 manifest / SHA256SUMS / release 元数据。
+
+    否则完整性校验会先于被测断言失败（例如改 latest.json 只想触发 feed 校验，
+    却先撞上 "GitHub digest mismatch"）。
+    """
+    manifest_path = fixture_dir / "release-manifest.json"
+    checksums_path = fixture_dir / "SHA256SUMS.txt"
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    for record in manifest["assets"]:
+        payload = (fixture_dir / record["name"]).read_bytes()
+        record["size"] = len(payload)
+        record["sha256"] = sha256(payload)
+        refresh_asset_metadata(release_path, fixture_dir / record["name"])
+
+    write_json(manifest_path, manifest)
+    checksums_path.write_text(
+        "".join(f"{record['sha256']}  {record['name']}\n" for record in manifest["assets"]),
+        encoding="utf-8",
+    )
+    refresh_asset_metadata(release_path, manifest_path)
+    refresh_asset_metadata(release_path, checksums_path)
 
 
 def invoke_validator(
@@ -167,13 +227,16 @@ def invoke_validator(
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # PowerShell 的错误信息按控制台代码页输出（中文 Windows 上是 GBK），
+        # 严格 utf-8 解码会让 stdout/stderr 变成 None。断言只看关键字，替换即可。
+        errors="replace",
         env=env,
     )
     return result, output_path
 
 
 def test_metadata_only_downloads_only_integrity_assets_and_returns_summary(tmp_path: Path):
-    env, _, _, _ = create_gh_fixture(tmp_path)
+    env, *_ = create_gh_fixture(tmp_path)
 
     result, output_path = invoke_validator(tmp_path, env)
 
@@ -183,36 +246,62 @@ def test_metadata_only_downloads_only_integrity_assets_and_returns_summary(tmp_p
     assert payload["release_health_verified"] is True
     assert payload["is_draft"] is False
     assert payload["is_prerelease"] is False
+    assert [installer["name"] for installer in payload["installers"]] == [INSTALLER_NAME]
+    assert payload["signatures"] == [SIGNATURE_NAME]
+    assert payload["updater_feed"]["latest_version"] == VERSION
+    assert payload["updater_feed"]["update_asset_name"] == INSTALLER_NAME
+    assert payload["updater_feed"]["min_data_schema_version"] == 7
     assert payload["integrity"]["checked"] is True
     assert payload["integrity"]["manifest"]["commit"] == COMMIT
     assert payload["integrity"]["manifest"]["release_date"] == "2026-07-13"
-    assert payload["integrity"]["release_assets_verified"] == 2
-    assert payload["integrity"]["github_digest_checks_verified"] == 4
-    assert payload["integrity"]["main_zip_downloaded"] is False
+    # 安装包 + 签名 + latest.json + data-compat.json + OpenCV runtime。
+    assert payload["integrity"]["release_assets_verified"] == 5
+    assert payload["integrity"]["github_digest_checks_verified"] == 7
+    assert payload["integrity"]["installer_downloaded"] is False
     assert (tmp_path / "downloads.log").read_text(encoding="utf-8").splitlines() == [
         "release-manifest.json",
         "SHA256SUMS.txt",
+        LATEST_NAME,
+        COMPAT_NAME,
     ]
 
 
-def test_metadata_only_ignores_extra_runtime_assets_not_declared_by_manifest(tmp_path: Path):
-    env, release_path, _, _ = create_gh_fixture(tmp_path)
+def test_rejects_installer_without_updater_signature(tmp_path: Path):
+    env, release_path, *_ = create_gh_fixture(tmp_path)
     release = json.loads(release_path.read_text(encoding="utf-8"))
-    release["assets"].append(
-        {
-            "name": "opencv-wechat-runtime-opencv-legacy-win_amd64.zip",
-            "size": 123,
-            "digest": f"sha256:{'a' * 64}",
-        }
-    )
+    release["assets"] = [asset for asset in release["assets"] if asset["name"] != SIGNATURE_NAME]
     write_json(release_path, release)
 
-    result, output_path = invoke_validator(tmp_path, env)
+    result, _ = invoke_validator(tmp_path, env)
 
-    assert result.returncode == 0, result.stdout + result.stderr
-    payload = json.loads(output_path.read_text(encoding="utf-8"))
-    assert [asset["name"] for asset in payload["opencv_runtime_assets"]] == [RUNTIME_NAME]
-    assert payload["integrity"]["verified_runtime_asset_names"] == [RUNTIME_NAME]
+    assert result.returncode != 0
+    assert "Updater signature asset is missing" in result.stdout + result.stderr
+
+
+def test_rejects_feed_version_mismatch(tmp_path: Path):
+    env, release_path, _, _, latest_path = create_gh_fixture(tmp_path)
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["version"] = "9.9.9"
+    write_json(latest_path, latest)
+    refresh_integrity_artifacts(tmp_path / "fixture", release_path)
+
+    result, _ = invoke_validator(tmp_path, env)
+
+    assert result.returncode != 0
+    assert "latest.json version is 9.9.9" in result.stdout + result.stderr
+
+
+def test_rejects_feed_url_pointing_at_another_tag(tmp_path: Path):
+    env, release_path, _, _, latest_path = create_gh_fixture(tmp_path)
+    latest = json.loads(latest_path.read_text(encoding="utf-8"))
+    latest["platforms"]["windows-x86_64"]["url"] = UPDATE_URL.replace(TAG, "v9.9.9")
+    write_json(latest_path, latest)
+    refresh_integrity_artifacts(tmp_path / "fixture", release_path)
+
+    result, _ = invoke_validator(tmp_path, env)
+
+    assert result.returncode != 0
+    assert "does not point at v1.2.5" in result.stdout + result.stderr
 
 
 @pytest.mark.parametrize(
@@ -226,7 +315,7 @@ def test_metadata_only_ignores_extra_runtime_assets_not_declared_by_manifest(tmp
     ],
 )
 def test_rejects_unhealthy_release_metadata(tmp_path: Path, field: str, value: object, message: str):
-    env, release_path, _, _ = create_gh_fixture(tmp_path)
+    env, release_path, *_ = create_gh_fixture(tmp_path)
     release = json.loads(release_path.read_text(encoding="utf-8"))
     release[field] = value
     write_json(release_path, release)
@@ -238,7 +327,7 @@ def test_rejects_unhealthy_release_metadata(tmp_path: Path, field: str, value: o
 
 
 def test_rejects_missing_integrity_asset(tmp_path: Path):
-    env, release_path, _, _ = create_gh_fixture(tmp_path)
+    env, release_path, *_ = create_gh_fixture(tmp_path)
     release = json.loads(release_path.read_text(encoding="utf-8"))
     release["assets"] = [asset for asset in release["assets"] if asset["name"] != "SHA256SUMS.txt"]
     write_json(release_path, release)
@@ -260,7 +349,7 @@ def test_rejects_missing_integrity_asset(tmp_path: Path):
 def test_rejects_manifest_identity_mismatch(
     tmp_path: Path, manifest_field: str, value: str, message: str
 ):
-    env, release_path, manifest_path, _ = create_gh_fixture(tmp_path)
+    env, release_path, manifest_path, _, _ = create_gh_fixture(tmp_path)
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     manifest[manifest_field] = value
     write_json(manifest_path, manifest)
@@ -273,15 +362,15 @@ def test_rejects_manifest_identity_mismatch(
 
 
 def test_rejects_manifest_checksum_and_github_digest_mismatches(tmp_path: Path):
-    env, release_path, _, checksums_path = create_gh_fixture(tmp_path)
-    checksums_path.write_text(f"{'0' * 64}  {MAIN_NAME}\n", encoding="ascii")
+    env, release_path, _, checksums_path, _ = create_gh_fixture(tmp_path)
+    checksums_path.write_text(f"{'0' * 64}  {INSTALLER_NAME}\n", encoding="utf-8")
     refresh_asset_metadata(release_path, checksums_path)
 
     checksum_result, _ = invoke_validator(tmp_path, env)
     assert checksum_result.returncode != 0
     assert "entry count does not match" in checksum_result.stdout + checksum_result.stderr
 
-    env, release_path, _, _ = create_gh_fixture(tmp_path / "digest")
+    env, release_path, _, _, _ = create_gh_fixture(tmp_path / "digest")
     release = json.loads(release_path.read_text(encoding="utf-8"))
     release["assets"][0]["digest"] = f"sha256:{'f' * 64}"
     write_json(release_path, release)
@@ -310,6 +399,7 @@ def test_rejects_non_strict_semver_before_calling_github(tmp_path: Path):
         capture_output=True,
         text=True,
         encoding="utf-8",
+        errors="replace",
     )
 
     assert result.returncode != 0

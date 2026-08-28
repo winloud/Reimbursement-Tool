@@ -1,8 +1,9 @@
-# 校验 Tauri NSIS 发布产物（阶段 7）。
+﻿# 校验 Tauri NSIS 本地构建产物。
 #
-# 取代旧 validate_release_asset.ps1 的 ZIP 校验：校验 NSIS setup exe 存在、
-# 签名文件存在、latest.json 与 data-compat.json 格式与字段完整、
+# 校验 NSIS setup exe 存在、签名文件存在、latest.json 与 data-compat.json 格式与字段完整、
 # 签名与更新包匹配（签名内容由 tauri signer 生成，此处校验非空与基本格式）。
+#
+# 发布后校验 GitHub Release 上的公开资产用 scripts/validate_release_asset.ps1。
 
 param(
     [Parameter(Mandatory = $true)][string]$Version,

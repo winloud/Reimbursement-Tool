@@ -24,7 +24,7 @@ def test_frontend_exposes_one_canonical_test_command():
 def test_verify_entrypoint_has_only_explicit_profiles():
     script = (ROOT / "scripts" / "verify.ps1").read_text(encoding="utf-8-sig")
 
-    assert '[ValidateSet("Backend", "Frontend", "Release", "All")]' in script
+    assert '[ValidateSet("Backend", "Frontend", "Release", "Desktop", "All")]' in script
     assert '-ArgumentList @("-m", "pytest", "-q", "tests/release")' in script
     assert '-ArgumentList @("test")' in script
     assert '-ArgumentList @("run", "build")' in script
@@ -33,6 +33,36 @@ def test_verify_entrypoint_has_only_explicit_profiles():
     assert "test_release_publish_state_machine.py" not in script
     assert "diff --name-only" not in script
     assert "status --porcelain" not in script
+
+
+def test_desktop_profile_runs_rust_tests_clippy_and_config_checks():
+    script = (ROOT / "scripts" / "verify.ps1").read_text(encoding="utf-8-sig")
+
+    assert '-ArgumentList @("test", "--lib")' in script
+    assert '-ArgumentList @("clippy", "--all-targets", "--", "-D", "warnings")' in script
+    assert "com.winloud.reimbursementtool" in script
+    assert "currentUser" in script
+    assert "resources/reimbursement-sidecar" in script
+    assert "plugins.updater" in script or "$config.plugins.updater" in script
+    # All 档位必须包含 Desktop，避免桌面壳回归只在专档位里被发现。
+    all_branch = script.split('"All" {', 1)[1]
+    assert "Invoke-DesktopVerification" in all_branch
+
+
+def test_powershell_scripts_with_non_ascii_carry_a_utf8_bom():
+    """Windows PowerShell 5.1 把无 BOM 的 UTF-8 脚本按 ANSI 代码页解码。
+
+    中文 Windows 上这会把脚本里的中文注释和字符串解成 GBK 乱码，轻则注释被吃掉一行，
+    重则字符串常量匹配不上（例如 README 版本校验）。带非 ASCII 内容的脚本必须写 BOM。
+    """
+    offenders = []
+    for script in sorted((ROOT / "scripts").glob("*.ps1")):
+        data = script.read_bytes()
+        if data.startswith(b"\xef\xbb\xbf"):
+            continue
+        if any(ord(ch) > 127 for ch in data.decode("utf-8")):
+            offenders.append(script.name)
+    assert offenders == [], f"these scripts need a UTF-8 BOM: {offenders}"
 
 
 def test_current_development_state_is_not_copied_to_index_docs():

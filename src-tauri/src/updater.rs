@@ -87,7 +87,7 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
             let compat = fetch_data_compat(UPDATE_FEED_URL).await?;
             let min_schema = compat.min_data_schema_version;
             let max_schema = compat.max_data_schema_version;
-            let data_compatible = current_schema >= min_schema && current_schema <= max_schema;
+            let data_compatible = is_data_schema_compatible(current_schema, &compat);
             Ok(UpdateInfo {
                 available: true,
                 version: update.version.clone(),
@@ -127,7 +127,7 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
 /// 3. 停 sidecar（释放 resources 里 sidecar exe 的文件锁）。
 /// 4. 下载 + 验签 + 安装。
 /// 5. 任一失败：重启 sidecar 恢复后端，把错误返回前端。
-/// 6. 成功：app.restart() 重新拉起应用（NSIS passive 安装会退出当前进程，但不自动重开���。
+/// 6. 成功：app.restart() 重新拉起应用（NSIS passive 安装会退出当前进程，但不自动重开）。
 #[tauri::command]
 pub async fn install_update(
     app: tauri::AppHandle,
@@ -142,7 +142,7 @@ pub async fn install_update(
         .ok_or("没有可用更新")?;
     let compat = fetch_data_compat(UPDATE_FEED_URL).await?;
     let current_schema = current_data_schema(&app).unwrap_or(-1);
-    if !(current_schema >= compat.min_data_schema_version && current_schema <= compat.max_data_schema_version) {
+    if !is_data_schema_compatible(current_schema, &compat) {
         return Err(format!(
             "当前数据结构版本 {current_schema} 不在新版兼容范围 {}–{}，请先迁移数据",
             compat.min_data_schema_version, compat.max_data_schema_version
@@ -329,9 +329,59 @@ async fn fetch_data_compat(latest_json_url: &str) -> Result<DataCompat, String> 
         .map_err(|e| format!("解析 data-compat 失败: {e}"))
 }
 
+/// 数据结构兼容门禁。current 为 -1 表示读不到本地 schema 版本（数据库缺失或损坏），
+/// 此时一律判为不兼容（fail closed），避免在不明确的数据状态下让新版覆盖安装。
+fn is_data_schema_compatible(current: i64, compat: &DataCompat) -> bool {
+    if current < 0 {
+        return false;
+    }
+    current >= compat.min_data_schema_version && current <= compat.max_data_schema_version
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn compat(min: i64, max: i64) -> DataCompat {
+        DataCompat {
+            min_data_schema_version: min,
+            max_data_schema_version: max,
+        }
+    }
+
+    #[test]
+    fn data_schema_gate_accepts_versions_inside_range() {
+        assert!(is_data_schema_compatible(7, &compat(7, 7)));
+        assert!(is_data_schema_compatible(7, &compat(5, 9)));
+        assert!(is_data_schema_compatible(5, &compat(5, 9)));
+        assert!(is_data_schema_compatible(9, &compat(5, 9)));
+    }
+
+    #[test]
+    fn data_schema_gate_rejects_versions_outside_range() {
+        assert!(!is_data_schema_compatible(4, &compat(5, 9)));
+        assert!(!is_data_schema_compatible(10, &compat(5, 9)));
+        assert!(!is_data_schema_compatible(6, &compat(7, 7)));
+    }
+
+    #[test]
+    fn data_schema_gate_fails_closed_when_local_schema_is_unknown() {
+        // current_data_schema 读失败时传入 -1，绝不能因为 min=0 而放行。
+        assert!(!is_data_schema_compatible(-1, &compat(0, 99)));
+        assert!(!is_data_schema_compatible(-1, &compat(7, 7)));
+    }
+
+    #[test]
+    fn data_compat_parses_feed_payload() {
+        let parsed: DataCompat = serde_json::from_str(
+            r#"{"min_data_schema_version":7,"max_data_schema_version":8,"extra":"ignored"}"#,
+        )
+        .unwrap();
+        assert_eq!(parsed.min_data_schema_version, 7);
+        assert_eq!(parsed.max_data_schema_version, 8);
+        // 缺字段必须解析失败，否则会退化成默认 0–0 的假兼容范围。
+        assert!(serde_json::from_str::<DataCompat>(r#"{"min_data_schema_version":7}"#).is_err());
+    }
 
     #[test]
     fn copy_dir_recursive_copies_subtree() {
