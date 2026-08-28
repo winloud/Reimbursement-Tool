@@ -22,7 +22,7 @@
 
 ## 待补缺口（阶段 5+）
 
-- 生产 sidecar 打包：新增 PyInstaller onedir spec 与构建步骤，产物以 Tauri `externalBin` 装入 NSIS，`resolve_sidecar_command` 生产路径切换为 Tauri sidecar API 启动打包产物；当前 `python sidecar_app.py` 回退仅保留为开发兜底（见 `src-tauri/src/sidecar.rs` 模块注释与 `tauri.conf.json`）。
+- 生产 sidecar 打包：新增 PyInstaller onedir spec 与构建步骤，产物以 Tauri `bundle.resources` 装入 NSIS（onedir 是目录，非单 exe，故不用 externalBin），`resolve_sidecar_command` 生产路径切换为通过 `resource_dir()` 定位 `reimbursement-sidecar.exe` 并由 Tauri 启动；当前 `python sidecar_app.py` 回退仅保留为开发兜底（见 `src-tauri/src/sidecar.rs` 模块注释与 `tauri.conf.json`）。
 
 ## 验收条件
 

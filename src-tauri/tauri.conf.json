@@ -42,6 +42,7 @@
     "icon": [
       "icons/icon.png"
     ],
+    "resources": ["resources/reimbursement-sidecar"],
     "publisher": "winloud",
     "category": "Utility",
     "shortDescription": "出差旅费报销管理工具",

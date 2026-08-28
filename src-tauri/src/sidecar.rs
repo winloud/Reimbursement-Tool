@@ -15,13 +15,15 @@
 //
 // TODO(阶段 5+) 生产 sidecar 打包：当前 resolve_sidecar_command 在无开发环境变量时
 // 回退到 `python sidecar_app.py`，仅用于开发/测试。生产安装包既无 Python 也无源码，
-// 需新增 PyInstaller onedir spec 与构建步骤，将产物以 Tauri externalBin 装入 NSIS，
-// 并由 Tauri sidecar API 启动打包产物；届时此处 python 回退应保留为开发兜底或移除。
-// tauri.conf.json 当前未配置 externalBin，该装入工作是阶段 5+ 的内容。
+// 由 resolve_sidecar_command 解析 resource_dir()/reimbursement-sidecar/
+// reimbursement-sidecar.exe（PyInstaller onedir 产物经 bundle.resources 装入 NSIS）。
+// 构建脚本（阶段 7）负责把 onedir 产物放到 src-tauri/resources/reimbursement-sidecar/
+// 供 cargo tauri build 打包。python 回退保留为开发兜底。
 
 use std::collections::HashMap;
 use serde::Deserialize;
 use tauri::async_runtime::block_on;
+use tauri::Manager;
 use tokio::time::timeout;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
@@ -52,7 +54,7 @@ pub fn spawn_and_wait(
     session_token: String,
     app_version: String,
 ) -> Result<(RuntimeConfig, tauri_plugin_shell::process::CommandChild), String> {
-    let (program, args) = resolve_sidecar_command()?;
+    let (program, args) = resolve_sidecar_command(app)?;
 
     let mut envs = HashMap::new();
     envs.insert(
@@ -132,12 +134,12 @@ pub fn spawn_and_wait(
     ))
 }
 
-/// 解析 sidecar 启动命令。优先用环境变量，回退到开发默认（python 源码）。
-/// REIMBURSEMENT_SIDECAR_CMD 用空格分割，首段为程序，其余为参数。
-///
-/// TODO(阶段 5+) 生产环境将切换为 Tauri sidecar API 启动 PyInstaller onedir 打包产物
-/// （见模块顶部注释与 ADR 0009）；此处 `python sidecar_app.py` 回退仅保留为开发兜底。
-fn resolve_sidecar_command() -> Result<(String, Vec<String>), String> {
+/// 解析 sidecar 启动命令。优先级：
+/// 1. 环境变量 REIMBURSEMENT_SIDECAR_CMD（开发模式，空格分割，首段为程序）。
+/// 2. 打包产物：resource_dir()/reimbursement-sidecar/reimbursement-sidecar.exe
+///    （生产 NSIS 安装后，sidecar onedir 经 bundle.resources 装入）。
+/// 3. 开发兜底：python sidecar_app.py（源码根）。
+fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String>), String> {
     if let Ok(cmd) = std::env::var("REIMBURSEMENT_SIDECAR_CMD") {
         let parts: Vec<String> = cmd.split_whitespace().map(String::from).collect();
         if parts.is_empty() {
@@ -146,6 +148,18 @@ fn resolve_sidecar_command() -> Result<(String, Vec<String>), String> {
         let (program, args) = parts.split_first().unwrap();
         return Ok((program.clone(), args.to_vec()));
     }
+
+    // 生产：解析打包进 NSIS 的 PyInstaller onedir exe。
+    if let Ok(resource_dir) = app.path().resource_dir() {
+        let sidecar_exe = resource_dir
+            .join("reimbursement-sidecar")
+            .join("reimbursement-sidecar.exe");
+        if sidecar_exe.exists() {
+            return Ok((sidecar_exe.to_string_lossy().into_owned(), vec!["--port".into(), "0".into()]));
+        }
+    }
+
+    // 开发兜底：python 源码。
     Ok((
         "python".to_string(),
         vec!["sidecar_app.py".to_string(), "--port".into(), "0".into()],

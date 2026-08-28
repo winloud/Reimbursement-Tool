@@ -10,6 +10,26 @@
 - 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
 - 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
+## v2.0.0 起：Tauri NSIS 发行
+
+v2.0.0 起桌面发行改为 Tauri NSIS 安装包 + GitHub Releases updater feed（见 ADR 0009）。构建脚本为 `scripts/build_tauri_release.ps1`，取代旧 `build_release.ps1` 的便携 ZIP 逻辑：
+
+```powershell
+# 本地构建（测试密钥，不签名）
+powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyyymmdd
+
+# 正式构建（私钥/密码由环境变量注入）
+$env:TAURI_SIGNING_PRIVATE_KEY_PATH = "path\to\.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "..."
+powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyyymmdd
+```
+
+流程：前端构建 → PyInstaller onedir（`reimbursement_sidecar.spec`）→ 复制到 `src-tauri/resources/reimbursement-sidecar` → `cargo tauri build` 产出 NSIS → `tauri signer sign` 签名更新包 → `generate_updater_feed.ps1` 产出 `latest.json` + `data-compat.json`。
+
+更新包与 feed 上传到 GitHub Release（tag 对应），`tauri.conf.json` 的 `plugins.updater.endpoints` 指向 `latest.json`，客户端自动验签安装。私钥保存在本地安全位置 + GitHub Secrets，公钥写入 `tauri.conf.json`，私钥永不入仓库。
+
+旧便携 ZIP 流程（`build_release.ps1` / `release_publish.ps1` / `validate_release_asset.ps1`）在阶段 8 清理。
+
 ## 当前计划生命周期
 
 - `docs/releases/active-plan.md` 只保留当前目标、范围、验收条件和阻塞，不累计完成流水、历史测试次数、预览包哈希或 CHANGELOG 内容副本。
