@@ -97,6 +97,12 @@ jobs:
           key: tauri-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
           restore-keys: tauri-${{ runner.os }}-
 
+      - name: Install Tauri CLI
+        shell: pwsh
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri --version
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend

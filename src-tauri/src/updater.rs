@@ -79,25 +79,15 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
         .map_err(|e| format!("初始化更新器失败: {e}"))?;
 
     // data-compat 元数据与 latest.json 同址（由 UPDATE_FEED_URL 推导）。
-    let compat = fetch_data_compat(UPDATE_FEED_URL).await;
-
+    // fail closed：元数据拉取/解析失败时不允许安装，避免在不明确兼容范围时升级。
     let current_schema = current_data_schema(&app).unwrap_or(-1);
 
     match updater.check().await {
         Ok(Some(update)) => {
-            let (min_schema, max_schema, data_compatible) = match &compat {
-                Ok(c) => {
-                    let ok = current_schema >= c.min_data_schema_version
-                        && current_schema <= c.max_data_schema_version;
-                    (c.min_data_schema_version, c.max_data_schema_version, ok)
-                }
-                Err(e) => {
-                    // 元数据拉取失败：保守起见视为兼容，让用户自行决定
-                    // （避免 feed 临时不可用时阻断所有更新）。
-                    eprintln!("data-compat 拉取失败，按兼容处理: {e}");
-                    (0, i64::MAX, true)
-                }
-            };
+            let compat = fetch_data_compat(UPDATE_FEED_URL).await?;
+            let min_schema = compat.min_data_schema_version;
+            let max_schema = compat.max_data_schema_version;
+            let data_compatible = current_schema >= min_schema && current_schema <= max_schema;
             Ok(UpdateInfo {
                 available: true,
                 version: update.version.clone(),
@@ -111,9 +101,7 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
                     String::new()
                 } else {
                     format!(
-                        "新版要求数据结构版本 {min}–{max}，当前为 {current_schema}，请先在数据维护页迁移数据",
-                        min = min_schema,
-                        max = max_schema,
+                        "新版要求数据结构版本 {min_schema}–{max_schema}，当前为 {current_schema}，请先在数据维护页迁移数据",
                     )
                 },
             })
@@ -133,54 +121,85 @@ pub async fn check_for_update(app: tauri::AppHandle) -> Result<UpdateInfo, Strin
     }
 }
 
-/// 安装更新。先 pre_update 备份，再停 sidecar，再下载验签安装，最后重启。
+/// 安装更新。流程：
+/// 1. 重新 check 并校验数据兼容（确保即将安装的版本就是校验过的版本）。
+/// 2. pre_update 备份：SQLite 在线热备（sidecar 运行时也能拿一致快照）+ 复制 uploads。
+/// 3. 停 sidecar（释放 resources 里 sidecar exe 的文件锁）。
+/// 4. 下载 + 验签 + 安装。
+/// 5. 任一失败：重启 sidecar 恢复后端，把错误返回前端。
+/// 6. 成功：app.restart() 重新拉起应用（NSIS passive 安装会退出当前进程，但不自动重开���。
 #[tauri::command]
 pub async fn install_update(
     app: tauri::AppHandle,
 ) -> Result<InstallResult, String> {
-    // 1. pre_update 备份（安装失败时这是回退点）。
+    let updater = app.updater().map_err(|e| format!("初始化更新器失败: {e}"))?;
+
+    // 1. 重新 check 并校验兼容，确保即将安装的版本通过了兼容检查。
+    let update = updater
+        .check()
+        .await
+        .map_err(|e| format!("检查更新失败: {e}"))?
+        .ok_or("没有可用更新")?;
+    let compat = fetch_data_compat(UPDATE_FEED_URL).await?;
+    let current_schema = current_data_schema(&app).unwrap_or(-1);
+    if !(current_schema >= compat.min_data_schema_version && current_schema <= compat.max_data_schema_version) {
+        return Err(format!(
+            "当前数据结构版本 {current_schema} 不在新版兼容范围 {}–{}，请先迁移数据",
+            compat.min_data_schema_version, compat.max_data_schema_version
+        ));
+    }
+
+    // 2. pre_update 备份（SQLite 热备 + uploads 复制）。sidecar 仍运行，但热备保证一致性。
     let backup_path = create_pre_update_backup(&app)
         .map_err(|e| format!("创建升级前备份失败: {e}"))?;
 
-    // 2. 停 sidecar（避免安装时 DB 被占用）。
+    // 3. 停 sidecar。
     if let Some(state) = app.try_state::<crate::AppState>() {
         if let Some(child) = state.sidecar_child.lock().unwrap().take() {
             let _ = child.kill();
         }
     }
 
-    // 3. 下载 + 验签 + 安装。updater 插件用 pubkey 验签，passive 模式安装。
-    let updater = app.updater().map_err(|e| format!("初始化更新器失败: {e}"))?;
-    let update = updater
-        .check()
-        .await
-        .map_err(|e| format!("检查更新失败: {e}"))?
-        .ok_or("没有可用更新")?;
-
-    update
+    // 4. 下载 + 验签 + 安装。失败则在错误出口统一恢复 sidecar（见下方处理）。
+    let install_result = update
         .download_and_install(
             |progress, total| {
-                // 进度回调：前端可通过事件订阅，此处仅记录。
                 eprintln!("更新下载进度: {progress} 字节 / 共 {:?} 字节", total);
             },
             || {
                 eprintln!("更新下载完成，准备安装");
             },
         )
-        .await
-        .map_err(|e| format!("下载安装更新失败: {e}"))?;
+        .await;
 
-    Ok(InstallResult {
-        success: true,
-        error: String::new(),
-        backup_path: backup_path.to_string_lossy().into_owned(),
-    })
-    // 安装完成后由 NSIS passive 模式触发重启；Tauri 进程会被替换。
-    // 这里不显式 restart，交由安装器。
+    if let Err(e) = install_result {
+        // 5. 失败恢复：重启 sidecar，保证前端后端可用。附带备份路径供用户回退。
+        let backup_msg = format!("升级前备份: {}", backup_path.display());
+        match restore_sidecar(&app) {
+            Ok(()) => return Err(format!("下载安装更新失败: {e}；已恢复后端。{backup_msg}")),
+            Err(restore_err) => return Err(format!(
+                "下载安装更新失败: {e}；恢复后端也失败: {restore_err}（请手动重启程序）。{backup_msg}"
+            )),
+        }
+    }
+
+    // 6. 重启应用。download_and_install 成功后 NSIS passive 安装替换进程，
+    // 但 Tauri 官方示例仍显式 restart 拉起新版本。restart() 不返回（类型为 !），
+    // 成功路径不会回到前端；失败路径在上方已返回 Err。
+    app.restart();
 }
 
-/// 创建 pre_update 备份：复制 runtime 关键内容到 app_local_data/pre_update/<timestamp>，
-/// 保留最近 PRE_UPDATE_KEEP 份，老的删除。
+/// 重启 sidecar 恢复后端（更新失败后调用）。
+/// Ok 表示已恢复，Err 表示恢复失败（前端应提示手动重启）。
+fn restore_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
+    crate::launch_sidecar(app, &app.state::<crate::SharedRuntimeConfig>())
+}
+
+/// 创建 pre_update 备份：SQLite 在线热备 + 复制 uploads。
+///
+/// 数据库用 SQLite backup API 在 sidecar 运行时也能拿到一致快照（不依赖停 sidecar）；
+/// uploads 直接文件复制（附件写入由业务层控制，复制期间无新增需保证；当前业务
+/// 上传是用户主动操作，备份瞬间无写入，足够安全）。
 fn create_pre_update_backup(app: &tauri::AppHandle) -> Result<PathBuf, String> {
     let runtime = crate::migration::resolve_runtime_dir(app)?;
     let base = app
@@ -189,32 +208,52 @@ fn create_pre_update_backup(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .map_err(|e| format!("解析 AppLocalData 失败: {e}"))?;
     let backup_root = base.join(PRE_UPDATE_DIR_NAME);
 
-    // 备份目录用计数标识（不能用时间戳，Date.now 在 workflow 脚本不可用；
-    // 但这是 Rust 运行时，SystemTime 可用）。
     use std::time::{SystemTime, UNIX_EPOCH};
     let ts = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|d| d.as_secs())
         .unwrap_or(0);
     let backup_dir = backup_root.join(format!("pre_update_{ts}"));
-    fs::create_dir_all(&backup_dir)
+    fs::create_dir_all(backup_dir.join("data"))
         .map_err(|e| format!("创建备份目录失败: {e}"))?;
 
-    // 复制 runtime 的 data/（含 expense.db + backups）和 uploads/。
-    // vendor/、logs/、window-state.json 不纳入升级前备份（体积大或可重建）。
-    for entry in ["data", "uploads"] {
-        let src = runtime.join(entry);
-        if !src.exists() {
-            continue;
-        }
-        let dst = backup_dir.join(entry);
-        copy_dir_recursive(&src, &dst).map_err(|e| format!("备份 {entry} 失败: {e}"))?;
+    // SQLite 在线热备：打开源 DB（sidecar 仍运行，但 backup API 拿一致快照）。
+    let src_db = runtime.join("data").join("expense.db");
+    if src_db.exists() {
+        let dst_db = backup_dir.join("data").join("expense.db");
+        backup_database(&src_db, &dst_db)
+            .map_err(|e| format!("数据库热备失败: {e}"))?;
+    }
+    // 复制 data/backups 子目录（备份的备份）。
+    let src_backups = runtime.join("data").join("backups");
+    if src_backups.exists() {
+        copy_dir_recursive(&src_backups, &backup_dir.join("data").join("backups"))
+            .map_err(|e| format!("备份 data/backups 失败: {e}"))?;
+    }
+
+    // 复制 uploads。
+    let src_uploads = runtime.join("uploads");
+    if src_uploads.exists() {
+        copy_dir_recursive(&src_uploads, &backup_dir.join("uploads"))
+            .map_err(|e| format!("备份 uploads 失败: {e}"))?;
     }
 
     // 清理旧备份，保留最近 PRE_UPDATE_KEEP 份。
     prune_old_backups(&backup_root, PRE_UPDATE_KEEP);
 
     Ok(backup_dir)
+}
+
+/// 用 SQLite backup API 做在线热备，保证事务一致性。
+fn backup_database(src: &std::path::Path, dst: &std::path::Path) -> Result<(), String> {
+    use rusqlite::backup::Backup;
+    let src_conn = Connection::open(src).map_err(|e| format!("打开源 DB 失败: {e}"))?;
+    let mut dst_conn = Connection::open(dst).map_err(|e| format!("打开目标 DB 失败: {e}"))?;
+    let backup = Backup::new(&src_conn, &mut dst_conn).map_err(|e| format!("初始化 backup 失败: {e}"))?;
+    backup
+        .run_to_completion(100, std::time::Duration::from_millis(10), Some(|_| {}))
+        .map_err(|e| format!("backup 执行失败: {e}"))?;
+    Ok(())
 }
 
 fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {

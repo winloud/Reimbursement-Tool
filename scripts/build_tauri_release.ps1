@@ -1,12 +1,16 @@
 # Tauri NSIS 安装包构建脚本（阶段 7）。
 #
 # 取代旧 build_release.ps1 的便携 ZIP 逻辑。流程：
-#   1. 构建前端（npm run build）。
+#   1. 同步版本号到 Cargo.toml 与 tauri.conf.json（避免 feed 与二进制版本不一致）。
 #   2. PyInstaller 用 reimbursement_sidecar.spec 打 onedir 产物到 dist/reimbursement-sidecar。
 #   3. 复制 onedir 产物到 src-tauri/resources/reimbursement-sidecar（Tauri bundle.resources 装入点）。
-#   4. cargo tauri build 产出 NSIS 安装包（两种：常规联网 bootstrap WebView2 / 完全离线含 WebView2 offline）。
-#   5. 用 tauri signer 对更新包签名，生成 .sig（私钥/密码由环境变量注入，脚本不持有）。
+#   4. cargo tauri build 产出 NSIS 安装包（前端构建由 tauri.conf.json beforeBuildCommand 在 frontend 执行，
+#      脚本不重复跑）。
+#   5. 用 tauri signer sign 对更新包签名，生成 .sig（私钥/密码由环境变量注入，脚本不持有）。
 #   6. 调 generate_updater_feed.ps1 产出 latest.json + data-compat.json。
+#
+# 离线包：-Offline 用 tauri build --config 临时覆盖 bundle.windows.webviewInstallMode.type
+# 为 offlineInstaller，产出含 WebView2 offline installer 的 NSIS，资产名带 -offline 后缀。
 #
 # 私钥环境变量（发布时注入，本地构建用测试密钥）：
 #   TAURI_SIGNING_PRIVATE_KEY_PATH：私钥文件路径。
@@ -20,7 +24,6 @@ param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$ReleaseDate = "",
     [switch]$Offline,
-    [switch]$SkipFrontend,
     [switch]$SkipSidecar,
     [string]$Python = "python",
     [string]$TauriFeatures = ""
@@ -33,12 +36,17 @@ $AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))
 $SidecarDist = Join-Path $Root "dist\reimbursement-sidecar"
 $ResourcesDir = Join-Path $Root "src-tauri\resources\reimbursement-sidecar"
 $TauriSrcDir = Join-Path $Root "src-tauri"
+$CargoTomlPath = Join-Path $TauriSrcDir "Cargo.toml"
+$TauriConfPath = Join-Path $TauriSrcDir "tauri.conf.json"
 
 if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
     $ReleaseDate = Get-Date -Format "yyyyMMdd"
 }
 if ($ReleaseDate -notmatch "^\d{8}$") {
     throw "ReleaseDate must use yyyymmdd format."
+}
+if ($Version -notmatch "^\d+\.\d+\.\d+$") {
+    throw "Version must use X.Y.Z format."
 }
 
 function Invoke-Step {
@@ -50,12 +58,21 @@ function Invoke-Step {
     }
 }
 
-# 1. 构建前端。
-if (-not $SkipFrontend) {
-    Invoke-Step "Frontend build" {
-        Push-Location (Join-Path $Root "frontend")
-        try { npm run build } finally { Pop-Location }
+# 1. 同步版本号到 Cargo.toml 与 tauri.conf.json，避免 feed/二进制/安装包版本不一致。
+Invoke-Step "Sync version to $Version" {
+    $cargoContent = Get-Content -Raw -LiteralPath $CargoTomlPath
+    $cargoUpdated = $cargoContent -replace '(?m)^version\s*=\s*"[^"]*"', "version = `"$Version`""
+    if ($cargoUpdated -eq $cargoContent) {
+        throw "无法在 $CargoTomlPath 找到 version 字段"
     }
+    [System.IO.File]::WriteAllText($CargoTomlPath, $cargoUpdated, (New-Object System.Text.UTF8Encoding($false)))
+
+    $confContent = Get-Content -Raw -LiteralPath $TauriConfPath
+    $confUpdated = $confContent -replace '(?m)^(\s*)"version"\s*:\s*"[^"]*"', "`${1}`"version`": `"$Version`""
+    if ($confUpdated -eq $confContent) {
+        throw "无法在 $TauriConfPath 找到 version 字段"
+    }
+    [System.IO.File]::WriteAllText($TauriConfPath, $confUpdated, (New-Object System.Text.UTF8Encoding($false)))
 }
 
 # 2. PyInstaller 打 sidecar onedir。
@@ -73,7 +90,6 @@ if (-not $SkipSidecar) {
 # 3. 复制 onedir 到 Tauri resources 装入点。
 Invoke-Step "Stage sidecar to src-tauri/resources" {
     if (Test-Path -LiteralPath $ResourcesDir) {
-        # 清除旧产物（含开发占位 README），保留目录本身。
         Get-ChildItem -LiteralPath $ResourcesDir -Force | ForEach-Object {
             Remove-Item -LiteralPath $_.FullName -Recurse -Force
         }
@@ -81,35 +97,47 @@ Invoke-Step "Stage sidecar to src-tauri/resources" {
         New-Item -ItemType Directory -Path $ResourcesDir -Force | Out-Null
     }
     Copy-Item -LiteralPath $SidecarDist -Destination $ResourcesDir -Recurse -Force
-    # 复制后 resources 下结构应为 resources/reimbursement-sidecar/reimbursement-sidecar.exe + 依赖
 }
 
-# 4. cargo tauri build 产出 NSIS。
+# 4. cargo tauri build 产出 NSIS。前端构建由 beforeBuildCommand（cwd=../frontend）执行，脚本不重复。
+# 离线包用 --config 临时覆盖 webviewInstallMode 为 offlineInstaller。
 $tauriArgs = @("tauri", "build")
 if ($TauriFeatures) {
     $tauriArgs += @("--features", $TauriFeatures)
 }
-# 离线包：通过环境变量或 feature 切换 WebView2 offline installer（阶段 7 收尾按需配置）。
-# 当前 tauri.conf.json bundle.targets 为 nsis，先产出常规包。
-Invoke-Step "cargo tauri build (NSIS)" {
+$buildLabel = "cargo tauri build (NSIS online)"
+if ($Offline) {
+    # 临时配置覆盖：离线 WebView2 installer。
+    $offlineConfig = '{"bundle":{"windows":{"webviewInstallMode":{"type":"offlineInstaller"}}}}'
+    $tauriArgs += @("--config", $offlineConfig)
+    $buildLabel = "cargo tauri build (NSIS offline)"
+}
+Invoke-Step $buildLabel {
     Push-Location $TauriSrcDir
     try { cargo @tauriArgs } finally { Pop-Location }
 }
 
 # 5. 对更新包签名（产出 .sig）。
-# tauri build 默认产出到 src-tauri/target/release/bundle/nsis/。
 $NsisDir = Join-Path $TauriSrcDir "target\release\bundle\nsis"
 $setupExe = Get-ChildItem -LiteralPath $NsisDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
     Select-Object -First 1
 if (-not $setupExe) {
     throw "未找到 NSIS setup 产物: $NsisDir"
 }
+# 离线包重命名加 -offline 后缀，便于区分在线/离线资产。
 $setupPath = $setupExe.FullName
+if ($Offline -and -not $setupPath.Contains("-offline")) {
+    $offlinePath = [System.IO.Path]::ChangeExtension($setupPath, "-offline.exe").Replace(".-offline", "-offline")
+    Move-Item -LiteralPath $setupPath -Destination $offlinePath -Force
+    $setupPath = $offlinePath
+    $setupExe = Get-Item -LiteralPath $setupPath
+}
 $sigPath = "$setupPath.sig"
 
 if ($env:TAURI_SIGNING_PRIVATE_KEY_PATH -and (Test-Path -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
     Invoke-Step "Sign update package" {
-        $signArgs = @("tauri", "sign", $setupPath, "--private-key", $env:TAURI_SIGNING_PRIVATE_KEY_PATH)
+        # Tauri v2 正确签名子命令：cargo tauri signer sign <file> --private-key-path <path>
+        $signArgs = @("tauri", "signer", "sign", $setupPath, "--private-key-path", $env:TAURI_SIGNING_PRIVATE_KEY_PATH)
         if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
             $signArgs += @("--password", $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
         }

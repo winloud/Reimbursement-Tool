@@ -107,7 +107,10 @@ exe = EXE(
     bootloader_ignore_signals=False,
     strip=False,
     upx=True,
-    console=False,
+    # console=True：sidecar 靠 sys.stdout 输出 ready JSON 握手，Rust 端读它判定就绪。
+    # windowed/noconsole 模式下 sys.stdout 为 None，握手无法完成。
+    # sidecar 是后台子进程，console 不会闪窗（无独立窗口，Tauri 管窗口）。
+    console=True,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

@@ -98,6 +98,7 @@ async fn start_sidecar_after_init(
 
 /// 启动 sidecar 的公共逻辑：spawn + Job Object + 写入共享配置 + 管理 AppState。
 /// setup（runtime 已就绪）与 start_sidecar_after_init（迁移后）复用。
+/// Job 绑定失败时显式 kill child，避免遗留孤儿进程。
 fn launch_sidecar(
     app: &tauri::AppHandle,
     state: &tauri::State<'_, SharedRuntimeConfig>,
@@ -106,10 +107,15 @@ fn launch_sidecar(
     let app_version = env!("CARGO_PKG_VERSION").to_string();
     let (config, child) = sidecar::spawn_and_wait(app, session_token, app_version)?;
     let pid = child.pid();
-    let sidecar_job = job::SidecarJob::assign(pid).map_err(|e| {
-        eprintln!("绑定 Job Object 失败（pid={pid}）: {e}");
-        e
-    })?;
+    let sidecar_job = match job::SidecarJob::assign(pid) {
+        Ok(job) => job,
+        Err(e) => {
+            // Job 绑定失败：child 已 ready 但尚未存入 AppState，显式 kill 避免孤儿。
+            eprintln!("绑定 Job Object 失败（pid={pid}）: {e}，kill child");
+            let _ = child.kill();
+            return Err(e);
+        }
+    };
     state.0.lock().unwrap().replace(config);
     app.manage(AppState {
         sidecar_child: Mutex::new(Some(child)),

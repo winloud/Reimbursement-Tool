@@ -19,6 +19,12 @@ import RefreshIcon from "@mui/icons-material/Refresh";
 import SystemUpdateIcon from "@mui/icons-material/SystemUpdate";
 import { checkForUpdate, installUpdate, isInTauriEnvironment } from "../api/tauriBridge";
 
+/// 判断 invoke 错误是否为"进程正在重启"（app.restart() 断开连接）。
+/// Tauri invoke 断连的错误信息含 channel/disconnected/network 等关键词。
+function isRestartInProgress(message) {
+  return /disconnected|channel|network|failed to fetch|aborted/i.test(message);
+}
+
 export default function UpdateSection() {
   const [checking, setChecking] = useState(false);
   const [installing, setInstalling] = useState(false);
@@ -43,20 +49,25 @@ export default function UpdateSection() {
   const handleInstall = async () => {
     if (!updateInfo?.available || !updateInfo?.data_compatible) return;
     const confirmed = window.confirm(
-      `将更新到 ${updateInfo.version}，安装前会自动创建升级前备份。安装完成后程序将自动重启。确认更新？`,
+      `将更新到 ${updateInfo.version}，安装前会自动创建升级前备份，安装完成后程序将自动重启。确认更新？`,
     );
     if (!confirmed) return;
     setInstalling(true);
     setError("");
     try {
-      const result = await installUpdate();
-      if (!result?.success) {
-        throw new Error(result?.error || "安装失败");
-      }
-      setInstallResult(result);
-      // 安装成功后 NSIS passive 模式会重启程序，无需额外操作。
+      await installUpdate();
+      // 正常不会走到这里：install_update 成功后调用 app.restart()，进程被替换，
+      // invoke 连接断开，进入 catch。若意外返回则按成功处理。
+      setInstallResult({ success: true, backup_path: "" });
     } catch (err) {
-      setError(String(err?.message || err || "安装更新失败"));
+      const msg = String(err?.message || err || "");
+      // 安装成功后 app.restart() 会断开 invoke 连接，表现为网络/通道错误。
+      // 此时进程正在重启，不当作失败；否则为真实安装失败（后端已恢复）。
+      if (isRestartInProgress(msg)) {
+        setInstallResult({ success: true, backup_path: "" });
+      } else {
+        setError(msg || "安装更新失败");
+      }
     } finally {
       setInstalling(false);
     }
@@ -83,7 +94,7 @@ export default function UpdateSection() {
 
           {installResult?.success && (
             <Alert severity="success">
-              更新已安装，程序即将自动重启。升级前备份：{installResult.backup_path}
+              更新已安装，程序正在自动重启。如未自动重启请手动重新打开。
             </Alert>
           )}
 
