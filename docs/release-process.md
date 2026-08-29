@@ -28,6 +28,45 @@ powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyy
 
 更新包与 feed 上传到 GitHub Release（tag 对应），`tauri.conf.json` 的 `plugins.updater.endpoints` 指向 `latest.json`，客户端自动验签安装。私钥保存在本地安全位置 + GitHub Secrets，公钥写入 `tauri.conf.json`，私钥永不入仓库。
 
+### updater 签名密钥
+
+**这对密钥一旦随 v2.0.0 发布就不能再换**：客户端用安装包里内嵌的公钥验签，换了公钥会让所有
+老版本拒绝后续更新包，只能让用户手动重装。首次发布前务必确认私钥已妥善保存。
+
+生成（只做一次，在本机终端执行，密码自己想一个并记牢）：
+
+```powershell
+cd src-tauri
+cargo tauri signer generate -w "$env:USERPROFILE\.tauri\reimbursement.key"
+```
+
+产物两个文件：
+
+- `%USERPROFILE%\.tauri\reimbursement.key` —— **私钥，绝不入仓库、不发聊天、不进云同步**
+- `%USERPROFILE%\.tauri\reimbursement.key.pub` —— 公钥
+
+把公钥文件的**全部内容**（它本身已经是一串 base64）填进 `src-tauri/tauri.conf.json` 的
+`plugins.updater.pubkey`，然后提交。
+
+保存要求（三处缺一不可，丢任意两处就再也签不出更新包）：
+
+1. 私钥文件离线备份（U 盘或密码管理器附件），和密码分开存放。
+2. 密码存进密码管理器。
+3. GitHub 仓库 Settings → Secrets and variables → Actions 添加两条：
+   - `TAURI_SIGNING_PRIVATE_KEY`：私钥文件内容的 base64
+     （`[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.tauri\reimbursement.key"))`）
+   - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：上面那个密码
+
+本地构建正式包时通过环境变量注入，脚本不持有私钥：
+
+```powershell
+$env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:USERPROFILE\.tauri\reimbursement.key"
+$env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "你的密码"
+powershell -File scripts\build_tauri_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
+```
+
+未设这两个变量时构建脚本会跳过签名并给出警告，产出的包只能用于安装测试，不能用于更新测试。
+
 旧便携 ZIP 流程（`build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 多版本目录、`portable-release.json`）已在阶段 8 删除。`validate_release_asset.ps1` 改为校验已发布 Release 上的 NSIS 安装包、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
 
 ## 当前计划生命周期
