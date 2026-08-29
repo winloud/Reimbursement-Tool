@@ -15,6 +15,7 @@ from backend.schemas.invoice import (
     InvoiceUploadResult,
 )
 from backend.services.invoice_service import (
+    UPLOAD_WARNINGS_RAW_KEY,
     get_invoice_or_404,
     local_pdf_open_supported,
     open_invoice_pdf_locally,
@@ -45,10 +46,15 @@ def post_invoice_upload(
         trip_id=trip_id,
         regular_item_id=regular_item_id,
     )
-    results = [
-        InvoiceUploadResult.model_validate(invoice).model_copy(update={"parsed": parsed})
-        for invoice, parsed in uploaded
-    ]
+    results = []
+    for invoice, parsed in uploaded:
+        raw_warnings = parsed.raw.get(UPLOAD_WARNINGS_RAW_KEY, []) if parsed.raw else []
+        warnings = [str(warning).strip() for warning in raw_warnings if str(warning).strip()]
+        results.append(
+            InvoiceUploadResult.model_validate(invoice).model_copy(
+                update={"parsed": parsed, "warnings": warnings}
+            )
+        )
     message = "发票已上传" if len(results) <= 1 else f"已从文件中识别并上传 {len(results)} 张发票"
     return ApiResponse(data=results, message=message)
 

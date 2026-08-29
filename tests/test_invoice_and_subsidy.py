@@ -11,6 +11,7 @@ from sqlalchemy import select
 
 from backend.models.invoice import Invoice
 from backend.models.trip import Trip
+from backend.routers import invoices as invoice_router
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
 from backend.schemas.report import ReportCreate, ReportUpdate, TripWrite
 from backend.services import invoice_parser
@@ -91,19 +92,23 @@ def test_parse_image_invoice_reads_qr_payload(monkeypatch, tmp_path: Path):
     assert parsed.raw["parse_method"] == "qrcode"
 
 
-def test_parse_pdf_invoice_pages_returns_successful_pages(monkeypatch, tmp_path: Path):
-    monkeypatch.setattr("backend.services.invoice_parser.pdf_page_count", lambda _path: 2)
+def test_parse_pdf_invoice_pages_returns_every_page(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("backend.services.invoice_parser.pdf_page_count", lambda _path: 3)
 
     def fake_artifacts(_path, zoom=2, page_index=0):
-        invoice_no = "10000001" if page_index == 0 else "10000002"
-        amount = "88.00" if page_index == 0 else "99.00"
+        invoice_no = "10000001" if page_index == 0 else "10000002" if page_index == 2 else ""
+        amount = "88.00" if page_index == 0 else "99.00" if page_index == 2 else "0.00"
         return {
-            "text": f"发票号码: {invoice_no}\n开票日期: 2026年6月{page_index + 1}日\n价税合计（小写） ￥{amount}",
+            "text": (
+                f"发票号码: {invoice_no}\n开票日期: 2026年6月{page_index + 1}日\n价税合计（小写） ￥{amount}"
+                if invoice_no
+                else "无法识别的续页"
+            ),
             "preview_image": "data:image/png;base64,abc",
             "qr_image": object(),
             "page_index": page_index,
             "page_number": page_index + 1,
-            "page_count": 2,
+            "page_count": 3,
             "render_error": None,
         }
 
@@ -115,9 +120,36 @@ def test_parse_pdf_invoice_pages_returns_successful_pages(monkeypatch, tmp_path:
 
     parsed_pages = invoice_parser.parse_pdf_invoice_pages(tmp_path / "multi.pdf")
 
-    assert [item.invoice_no for item in parsed_pages] == ["10000001", "10000002"]
-    assert [item.amount for item in parsed_pages] == [Decimal("88.00"), Decimal("99.00")]
-    assert [item.raw["page_number"] for item in parsed_pages] == [1, 2]
+    assert [item.invoice_no for item in parsed_pages] == ["10000001", None, "10000002"]
+    assert [item.amount for item in parsed_pages] == [Decimal("88.00"), Decimal("0.00"), Decimal("99.00")]
+    assert [item.raw["page_number"] for item in parsed_pages] == [1, 2, 3]
+
+
+def test_parse_pdf_invoice_uses_last_page_for_multi_page_pdf(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("backend.services.invoice_parser.pdf_page_count", lambda _path: 3)
+
+    def fake_artifacts(_path, zoom=2, page_index=0):
+        return {
+            "text": f"发票号码: 1000000{page_index + 1}\n价税合计（小写） ￥{page_index + 1}.00",
+            "preview_image": "data:image/png;base64,abc",
+            "qr_image": object(),
+            "page_index": page_index,
+            "page_number": page_index + 1,
+            "page_count": 3,
+            "render_error": None,
+        }
+
+    monkeypatch.setattr("backend.services.invoice_parser.extract_pdf_page_artifacts", fake_artifacts)
+    monkeypatch.setattr(
+        "backend.services.invoice_parser.decode_qr_payloads_from_image",
+        lambda _image, include_details=False, engine="zxing": ([], []) if include_details else [],
+    )
+
+    parsed = parse_pdf_invoice(tmp_path / "multi.pdf")
+
+    assert parsed.invoice_no == "10000003"
+    assert parsed.amount == Decimal("3.00")
+    assert parsed.raw["page_number"] == 3
 
 
 def test_parse_pdf_invoice_detects_vat_special_invoice(monkeypatch, tmp_path: Path):
@@ -617,16 +649,16 @@ def test_upload_invoice_requires_manual_amount_confirmation(monkeypatch, db):
     assert report.total_amount == Decimal("0.00")
 
 
-def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_path: Path, db):
-    from pypdf import PdfWriter
+def test_upload_multi_page_pdf_groups_consecutive_invoice_numbers(monkeypatch, tmp_path: Path, db):
+    from pypdf import PdfReader, PdfWriter
 
     upload_root = tmp_path / "uploads"
     monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
 
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     writer = PdfWriter()
-    writer.add_blank_page(width=200, height=200)
-    writer.add_blank_page(width=210, height=200)
+    for width in (200, 210, 220, 230):
+        writer.add_blank_page(width=width, height=200)
     pdf_buffer = BytesIO()
     writer.write(pdf_buffer)
     pdf_buffer.seek(0)
@@ -634,18 +666,10 @@ def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_pa
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_files_with_engine",
         lambda _path, _file_type, _engine: [
-            InvoiceParsedData(
-                invoice_no="10000001",
-                invoice_date=date(2026, 6, 1),
-                amount=Decimal("88.00"),
-                raw={"source": "pdf", "page_index": 0, "page_number": 1, "page_count": 2, "parse_success": True},
-            ),
-            InvoiceParsedData(
-                invoice_no="10000002",
-                invoice_date=date(2026, 6, 2),
-                amount=Decimal("99.00"),
-                raw={"source": "pdf", "page_index": 1, "page_number": 2, "page_count": 2, "parse_success": True},
-            ),
+            InvoiceParsedData(invoice_no="10000001", amount=Decimal("10.00"), raw={"parse_success": True}),
+            InvoiceParsedData(invoice_no="10000001", amount=Decimal("11.00"), raw={"parse_success": True}),
+            InvoiceParsedData(invoice_no="10000002", amount=Decimal("20.00"), raw={"parse_success": True}),
+            InvoiceParsedData(invoice_no="10000002", amount=Decimal("21.00"), raw={"parse_success": True}),
         ],
     )
 
@@ -659,13 +683,178 @@ def test_upload_multi_page_pdf_creates_split_invoice_records(monkeypatch, tmp_pa
     invoices = [invoice for invoice, _parsed in uploaded]
     assert len(invoices) == 2
     assert [invoice.invoice_no for invoice in invoices] == ["10000001", "10000002"]
+    assert [invoice.amount for invoice in invoices] == [Decimal("11.00"), Decimal("21.00")]
     assert len({invoice.file_path for invoice in invoices}) == 2
+    group_widths = []
     for invoice in invoices:
-        assert invoice.file_type == "pdf"
-        assert (upload_root / Path(invoice.file_path).relative_to("uploads")).exists()
+        stored_path = upload_root / Path(invoice.file_path).relative_to("uploads")
+        reader = PdfReader(str(stored_path))
+        group_widths.append([float(page.mediabox.width) for page in reader.pages])
+    assert group_widths == [[200.0, 210.0], [220.0, 230.0]]
+    assert [parsed.raw["group_page_numbers"] for _invoice, parsed in uploaded] == [[1, 2], [3, 4]]
 
 
-def test_upload_multi_page_pdf_rejects_page_matching_existing_invoice(monkeypatch, tmp_path: Path, db):
+def test_upload_multi_page_pdf_with_one_invoice_preserves_original(monkeypatch, tmp_path: Path, db):
+    from pypdf import PdfReader, PdfWriter
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    writer = PdfWriter()
+    for width in (200, 210, 220, 230):
+        writer.add_blank_page(width=width, height=200)
+    pdf_buffer = BytesIO()
+    writer.write(pdf_buffer)
+    pdf_buffer.seek(0)
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(
+                invoice_no=" SAME-001 " if index == 1 else "SAME-001",
+                amount=Decimal(f"{index}.00"),
+                raw={"parse_success": True},
+            )
+            for index in range(1, 5)
+        ],
+    )
+
+    uploaded = upload_invoices(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="same.pdf", file=pdf_buffer),
+    )
+
+    assert len(uploaded) == 1
+    invoice, parsed = uploaded[0]
+    stored_path = upload_root / Path(invoice.file_path).relative_to("uploads")
+    assert len(PdfReader(str(stored_path)).pages) == 4
+    assert invoice.invoice_no == "SAME-001"
+    assert invoice.amount == Decimal("4.00")
+    assert parsed.raw["group_page_numbers"] == [1, 2, 3, 4]
+    assert parsed.raw.get("upload_warnings") is None
+
+
+def test_upload_multi_page_pdf_with_noncontiguous_number_falls_back(monkeypatch, tmp_path: Path, db):
+    from pypdf import PdfReader, PdfWriter
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    writer = PdfWriter()
+    for width in (200, 210, 220):
+        writer.add_blank_page(width=width, height=200)
+    pdf_buffer = BytesIO()
+    writer.write(pdf_buffer)
+    pdf_buffer.seek(0)
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(invoice_no="A-001", amount=Decimal("10.00"), raw={"parse_success": True}),
+            InvoiceParsedData(invoice_no="B-001", amount=Decimal("20.00"), raw={"parse_success": True}),
+            InvoiceParsedData(invoice_no="A-001", amount=Decimal("30.00"), raw={"parse_success": True}),
+        ],
+    )
+
+    uploaded = upload_invoices(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="noncontiguous.pdf", file=pdf_buffer),
+    )
+
+    assert len(uploaded) == 1
+    invoice, parsed = uploaded[0]
+    stored_path = upload_root / Path(invoice.file_path).relative_to("uploads")
+    assert len(PdfReader(str(stored_path)).pages) == 3
+    assert invoice.invoice_no == "A-001"
+    assert invoice.amount == Decimal("30.00")
+    assert "页面不连续" in parsed.raw["upload_warnings"][0]
+    assert parsed.raw["group_page_numbers"] == [1, 2, 3]
+
+
+def test_invoice_upload_response_exposes_grouping_warnings(monkeypatch, db):
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    invoice = Invoice(
+        report_id=report.id,
+        expense_category="luggage",
+        file_path=f"uploads/{report.id}/fallback.pdf",
+        file_type="pdf",
+        invoice_no="A-001",
+        amount=Decimal("30.00"),
+        amount_confirmed=False,
+    )
+    db.add(invoice)
+    db.commit()
+    db.refresh(invoice)
+    parsed = InvoiceParsedData(
+        invoice_no="A-001",
+        amount=Decimal("30.00"),
+        raw={"upload_warnings": ["建议先拆分 PDF。"]},
+    )
+    monkeypatch.setattr(invoice_router, "upload_invoices", lambda *_args, **_kwargs: [(invoice, parsed)])
+
+    response = invoice_router.post_invoice_upload(
+        report_id=report.id,
+        file=UploadFile(filename="fallback.pdf", file=BytesIO(b"pdf")),
+        expense_category="luggage",
+        db=db,
+    )
+
+    assert response.data is not None
+    assert response.data[0].warnings == ["建议先拆分 PDF。"]
+    assert response.data[0].parsed == parsed
+
+
+@pytest.mark.parametrize(
+    "invoice_numbers",
+    [
+        ["A-001", None, "A-001"],
+        [None, None, None],
+    ],
+)
+def test_upload_multi_page_pdf_with_unrecognized_page_falls_back(
+    monkeypatch,
+    tmp_path: Path,
+    db,
+    invoice_numbers,
+):
+    from pypdf import PdfReader, PdfWriter
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
+    report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
+    writer = PdfWriter()
+    for width in (200, 210, 220):
+        writer.add_blank_page(width=width, height=200)
+    pdf_buffer = BytesIO()
+    writer.write(pdf_buffer)
+    pdf_buffer.seek(0)
+    monkeypatch.setattr(
+        "backend.services.invoice_service.parse_invoice_files_with_engine",
+        lambda _path, _file_type, _engine: [
+            InvoiceParsedData(invoice_no=invoice_no, amount=Decimal(f"{index}.00"), raw={"parse_success": bool(invoice_no)})
+            for index, invoice_no in enumerate(invoice_numbers, start=1)
+        ],
+    )
+
+    uploaded = upload_invoices(
+        db,
+        report_id=report.id,
+        expense_category="luggage",
+        upload_file=UploadFile(filename="unclear.pdf", file=pdf_buffer),
+    )
+
+    assert len(uploaded) == 1
+    invoice, parsed = uploaded[0]
+    stored_path = upload_root / Path(invoice.file_path).relative_to("uploads")
+    assert len(PdfReader(str(stored_path)).pages) == 3
+    assert invoice.invoice_no == invoice_numbers[-1]
+    assert invoice.amount == Decimal("3.00")
+    assert "无法按发票号明确分组" in parsed.raw["upload_warnings"][0]
+
+
+def test_upload_multi_page_pdf_rejects_group_matching_existing_invoice(monkeypatch, tmp_path: Path, db):
     upload_root = tmp_path / "uploads"
     monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
     source = create_report(db, ReportCreate(report_date=date(2026, 6, 1), purpose="单页来源"))
@@ -687,19 +876,20 @@ def test_upload_multi_page_pdf_rejects_page_matching_existing_invoice(monkeypatc
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_files_with_engine",
         lambda _path, _file_type, _engine: [
-            InvoiceParsedData(amount=Decimal("10.00"), raw={"page_index": 0}),
-            InvoiceParsedData(amount=Decimal("20.00"), raw={"page_index": 1}),
+            InvoiceParsedData(invoice_no="GROUP-A", amount=Decimal("10.00")),
+            InvoiceParsedData(invoice_no="GROUP-B", amount=Decimal("20.00")),
         ],
     )
 
-    def fake_split(_source_path, report_id, _category, page_index):
+    def fake_split(_source_path, report_id, _category, page_indices):
+        page_index = page_indices[0]
         relative = Path("uploads") / str(report_id) / f"page-{page_index}.pdf"
         path = upload_root.joinpath(*relative.parts[1:])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"existing split page" if page_index == 0 else b"unique split page")
         return relative.as_posix()
 
-    monkeypatch.setattr("backend.services.invoice_service.split_pdf_page_to_upload_file", fake_split)
+    monkeypatch.setattr("backend.services.invoice_service.split_pdf_pages_to_upload_file", fake_split)
 
     with pytest.raises(HTTPException) as exc_info:
         upload_invoices(
@@ -716,26 +906,27 @@ def test_upload_multi_page_pdf_rejects_page_matching_existing_invoice(monkeypatc
     assert list((upload_root / str(target.id)).glob("*")) == []
 
 
-def test_upload_multi_page_pdf_rejects_identical_pages_and_rolls_back(monkeypatch, tmp_path: Path, db):
+def test_upload_multi_page_pdf_rejects_identical_groups_and_rolls_back(monkeypatch, tmp_path: Path, db):
     upload_root = tmp_path / "uploads"
     monkeypatch.setattr("backend.services.invoice_service.UPLOAD_ROOT", upload_root)
     report = create_report(db, ReportCreate(report_date=date(2026, 6, 3)))
     monkeypatch.setattr(
         "backend.services.invoice_service.parse_invoice_files_with_engine",
         lambda _path, _file_type, _engine: [
-            InvoiceParsedData(amount=Decimal("10.00"), raw={"page_index": 0}),
-            InvoiceParsedData(amount=Decimal("20.00"), raw={"page_index": 1}),
+            InvoiceParsedData(invoice_no="GROUP-A", amount=Decimal("10.00")),
+            InvoiceParsedData(invoice_no="GROUP-B", amount=Decimal("20.00")),
         ],
     )
 
-    def fake_split(_source_path, report_id, _category, page_index):
+    def fake_split(_source_path, report_id, _category, page_indices):
+        page_index = page_indices[0]
         relative = Path("uploads") / str(report_id) / f"page-{page_index}.pdf"
         path = upload_root.joinpath(*relative.parts[1:])
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"identical split page")
         return relative.as_posix()
 
-    monkeypatch.setattr("backend.services.invoice_service.split_pdf_page_to_upload_file", fake_split)
+    monkeypatch.setattr("backend.services.invoice_service.split_pdf_pages_to_upload_file", fake_split)
 
     with pytest.raises(HTTPException) as exc_info:
         upload_invoices(
@@ -746,7 +937,7 @@ def test_upload_multi_page_pdf_rejects_identical_pages_and_rolls_back(monkeypatc
         )
 
     assert exc_info.value.status_code == 409
-    assert "与本文件中的其他页面内容完全相同" in exc_info.value.detail
+    assert "与本文件中的其他发票分组内容完全相同" in exc_info.value.detail
     assert db.scalars(select(Invoice).where(Invoice.report_id == report.id)).all() == []
     assert list((upload_root / str(report.id)).glob("*")) == []
 

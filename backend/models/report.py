@@ -66,11 +66,11 @@ class ExpenseReport(Base):
     @property
     def invoice_count(self) -> int:
         if self.report_type == "regular":
-            return len(self.active_invoices) if self.regular_mode == "invoice" else 0
+            return sum(invoice.page_count for invoice in self.active_invoices) if self.regular_mode == "invoice" else 0
         paper_count = sum(int(trip.paper_invoice_count or 0) for trip in self.trips) + sum(
             int(item.paper_invoice_count or 0) for item in self.expense_items
         )
-        return len(self.active_invoices) + paper_count
+        return sum(invoice.page_count for invoice in self.active_invoices) + paper_count
 
     @property
     def document_count(self) -> int:

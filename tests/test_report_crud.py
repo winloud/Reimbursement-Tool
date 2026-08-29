@@ -1,5 +1,6 @@
 from datetime import date, datetime
 from decimal import Decimal
+from pathlib import Path
 
 import pytest
 from fastapi import HTTPException
@@ -8,7 +9,7 @@ from pydantic import ValidationError
 from backend.database import connection
 from backend.models.invoice import Invoice
 from backend.models.settings import Settings
-from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportRead, ReportUpdate, TripWrite
+from backend.schemas.report import ExpenseItemWrite, ReportCreate, ReportDetailRead, ReportRead, ReportUpdate, TripWrite
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
     ReportFilters,
@@ -108,6 +109,65 @@ def test_report_read_invoice_count_includes_electronic_and_paper_invoices(db):
     db.flush()
     assert report.invoice_count == 2
     assert ReportRead.model_validate(report).invoice_count == 2
+
+
+def test_multi_page_invoice_counts_actual_pdf_pages_without_database_migration(monkeypatch, tmp_path: Path, db):
+    from pypdf import PdfWriter
+
+    upload_root = tmp_path / "uploads"
+    monkeypatch.setattr("backend.models.invoice.UPLOAD_ROOT", upload_root)
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date=date(2026, 8, 29),
+            trips=[
+                TripWrite(
+                    sort_order=1,
+                    depart_month=8,
+                    depart_day=29,
+                    arrive_month=8,
+                    arrive_day=29,
+                    paper_invoice_amount=Decimal("10.00"),
+                    paper_invoice_count=1,
+                )
+            ],
+            expense_items=[
+                ExpenseItemWrite(
+                    category="luggage",
+                    paper_invoice_amount=Decimal("20.00"),
+                    paper_invoice_count=2,
+                )
+            ],
+        ),
+    )
+    relative_path = Path("uploads") / str(report.id) / "four-pages.pdf"
+    absolute_path = upload_root.joinpath(*relative_path.parts[1:])
+    absolute_path.parent.mkdir(parents=True)
+    writer = PdfWriter()
+    for _page in range(4):
+        writer.add_blank_page(width=200, height=200)
+    with absolute_path.open("wb") as target:
+        writer.write(target)
+
+    invoice = Invoice(
+        report=report,
+        expense_category="luggage",
+        file_path=relative_path.as_posix(),
+        file_type="pdf",
+        amount=Decimal("40.00"),
+        amount_confirmed=True,
+    )
+    db.add(invoice)
+    db.flush()
+
+    luggage = next(item for item in report.expense_items if item.category == "luggage")
+    detail = ReportDetailRead.model_validate(report)
+
+    assert invoice.page_count == 4
+    assert luggage.invoice_count == 6
+    assert report.invoice_count == 7
+    assert detail.invoice_count == 7
+    assert detail.invoices[0].page_count == 4
 
 
 def test_removing_trip_soft_deletes_its_invoices_and_keeps_other_trip_files(db):

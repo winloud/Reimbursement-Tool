@@ -36,21 +36,21 @@ test("regular payload keeps the locked type, mode, and stable item ids", () => {
   });
 });
 
-test("invoice mode derives confirmed total and counts every invoice record", () => {
+test("invoice mode derives confirmed total and counts invoice pages", () => {
   const item = normalizeRegularItem({ id: 3, amount: 999 });
   const invoices = [
-    { id: 1, regular_item_id: 3, amount: "20.50", amount_confirmed: true },
-    { id: 2, regular_item_id: 3, amount: "10.00", amount_confirmed: false },
+    { id: 1, regular_item_id: 3, amount: "20.50", amount_confirmed: true, page_count: 4 },
+    { id: 2, regular_item_id: 3, amount: "10.00", amount_confirmed: false, page_count: 2 },
   ];
   assert.deepEqual(getRegularItemDerived({ item, mode: "invoice", invoices }), {
     amount: 20.5,
-    documentCount: 2,
+    documentCount: 6,
     invoices,
     attachments: [],
   });
   assert.deepEqual(calculateRegularSummary({ mode: "invoice", items: [item], invoices }), {
     totalAmount: 20.5,
-    documentCount: 2,
+    documentCount: 6,
   });
   const payload = buildRegularReportPayload({
     form: { report_date: "2026-08-11", employee_name: "张三" },

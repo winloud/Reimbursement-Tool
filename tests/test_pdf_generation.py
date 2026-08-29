@@ -582,6 +582,38 @@ def test_trip_values_keep_actual_transport_invoice_values(db):
     assert values["transport_fare"] == "18.50"
 
 
+def test_pdf_values_count_multi_page_transport_invoice_pages(monkeypatch, db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_date="2026-06-04",
+            trips=[TripWrite(sort_order=1, depart_month=6, depart_day=4, arrive_month=6, arrive_day=4)],
+        ),
+    )
+    invoice = Invoice(
+        report=report,
+        trip=report.trips[0],
+        expense_category="transport_fare",
+        file_path=f"uploads/{report.id}/four-pages.pdf",
+        file_type="pdf",
+        amount=Decimal("18.50"),
+        amount_confirmed=True,
+    )
+    invoice.__dict__["page_count"] = 4
+    db.add(invoice)
+    db.flush()
+    calls = []
+
+    monkeypatch.setattr(
+        "backend.services.pdf_generator._draw_field",
+        lambda _canvas, field, value: calls.append((field.name, value)),
+    )
+    _build_overlay(report, list(report.trips), [], [], True, (595, 298), fill_font_name="CustomFill")
+
+    assert _trip_values(report.trips[0])["invoice_count"] == 4
+    assert dict(calls)["total_invoice_count"] == 4
+
+
 def test_pdf_values_include_paper_invoices_without_attachment_pages(monkeypatch, db):
     report = create_report(
         db,

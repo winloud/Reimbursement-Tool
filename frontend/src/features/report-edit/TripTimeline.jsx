@@ -29,6 +29,7 @@ import WarningAmberIcon from "@mui/icons-material/WarningAmber";
 import {
   formatAmount,
   getConfirmedInvoiceCount,
+  getInvoicePageTotal,
   getConfirmedInvoiceTotal,
   getPaperInvoiceCount,
   getSubsidySpans,
@@ -282,7 +283,7 @@ function TripTimelineRow({
   const confirmedElectronicCount = getConfirmedInvoiceCount(tripInvoices);
   const confirmedCount = confirmedElectronicCount + paperCount;
   const pendingCount = tripInvoices.filter((invoice) => !invoice.amount_confirmed).length;
-  const invoiceCount = tripInvoices.length + paperCount;
+  const invoiceCount = getInvoicePageTotal(tripInvoices) + paperCount;
   const confirmedAmount = getConfirmedInvoiceTotal(tripInvoices) + Number(trip.paper_invoice_amount || 0);
   const tripTitle = `${trip.depart_place || "出发地"} -> ${trip.arrive_place || "到达地"}`;
   const isFirst = index === 0;

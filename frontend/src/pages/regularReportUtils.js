@@ -1,4 +1,4 @@
-import { formatAmount } from "./reportEditUtils.js";
+import { formatAmount, getInvoicePageTotal } from "./reportEditUtils.js";
 
 export const REGULAR_REPORT_MODES = [
   { value: "no_invoice", label: "无票报销" },
@@ -104,7 +104,7 @@ export const getRegularItemDerived = ({ item, mode, invoices = [], attachments =
       amount: itemInvoices
         .filter((invoice) => invoice.amount_confirmed)
         .reduce((sum, invoice) => sum + Number(invoice.amount || 0), 0),
-      documentCount: itemInvoices.length,
+      documentCount: getInvoicePageTotal(itemInvoices),
       invoices: itemInvoices,
       attachments: [],
     };

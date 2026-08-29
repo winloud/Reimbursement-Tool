@@ -49,5 +49,5 @@ class RegularItem(Base):
     @property
     def document_count(self) -> int:
         if self.report.regular_mode == "invoice":
-            return len(self.active_invoices)
+            return sum(invoice.page_count for invoice in self.active_invoices)
         return sum(int(attachment.page_count or 0) for attachment in self.active_attachments)

@@ -2,7 +2,7 @@ import { Box, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/materia
 import DeleteIcon from "@mui/icons-material/Delete";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
-import { formatAmount } from "../../pages/reportEditUtils";
+import { formatAmount, getInvoicePageCount } from "../../pages/reportEditUtils";
 import FileListShell from "./FileListShell";
 import { fileCardSx } from "./editPageStyles";
 
@@ -12,7 +12,7 @@ export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSele
     <FileListShell
       title="已上传发票"
       count={invoices.length}
-      countUnit="张"
+      countUnit="份"
       emptyText="暂无发票"
       readonly={readonly}
       uploadSlot={uploadSlot}
@@ -21,6 +21,7 @@ export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSele
         const invoiceNumber = invoice.invoice_no || "无发票号码";
         const confirmationLabel = invoice.amount_confirmed ? "已确认" : "待确认";
         const fileType = String(invoice.file_type || "file").toUpperCase();
+        const pageCount = getInvoicePageCount(invoice);
 
         return (
           <Paper
@@ -46,6 +47,12 @@ export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSele
                 <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
                   <Box component="span" sx={{ fontWeight: 700 }}>
                     {fileType}
+                  </Box>
+                  <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
+                    ·
+                  </Box>
+                  <Box component="span" sx={{ fontWeight: 700 }}>
+                    {pageCount} 页
                   </Box>
                   <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
                     ·

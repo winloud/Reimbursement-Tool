@@ -21,6 +21,7 @@ import { getSaveStateMeta } from "../features/report-edit-shared/saveStateMeta";
 import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   createInvoiceUploadIssue,
+  createInvoiceUploadWarnings,
   getInvoiceUploadFeedback,
 } from "./reportEditUtils";
 import { STATUS_ACTIONS, STATUS_META } from "./reportStatus";
@@ -427,6 +428,7 @@ export default function RegularReportEdit() {
           const uploadedItems = Array.isArray(response.data) ? response.data : [response.data].filter(Boolean);
           if (uploadedItems.length === 0) throw new Error("服务器未返回发票信息");
           uploaded.push(...uploadedItems);
+          issues.push(...createInvoiceUploadWarnings(file.name, uploadedItems));
           successfulFileCount += 1;
         } catch (uploadError) {
           issues.push(createInvoiceUploadIssue(file.name, getApiErrorMessage(uploadError, "上传失败"), uploadError.response?.status));
