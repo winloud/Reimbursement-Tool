@@ -153,9 +153,18 @@ fn parse_sidecar_command_env(cmd: &str) -> Result<(String, Vec<String>), String>
     Ok((program.clone(), args.to_vec()))
 }
 
+/// 打包后 sidecar exe 相对 resource_dir() 的路径段。
+///
+/// Tauri 打包 `bundle.resources` 的数组项时保留其相对路径，因此
+/// tauri.conf.json 里的 "resources/reimbursement-sidecar" 会落到
+/// resource_dir()/resources/reimbursement-sidecar/。漏掉开头的 "resources"
+/// 会让生产安装包永远找不到 exe，静默回退到开发用的 `python sidecar_app.py`。
+const SIDECAR_RESOURCE_SEGMENTS: [&str; 3] =
+    ["resources", "reimbursement-sidecar", "reimbursement-sidecar.exe"];
+
 /// 解析 sidecar 启动命令。优先级：
 /// 1. 环境变量 REIMBURSEMENT_SIDECAR_CMD（开发模式，空格分割，首段为程序）。
-/// 2. 打包产物：resource_dir()/reimbursement-sidecar/reimbursement-sidecar.exe
+/// 2. 打包产物：resource_dir()/resources/reimbursement-sidecar/reimbursement-sidecar.exe
 ///    （生产 NSIS 安装后，sidecar onedir 经 bundle.resources 装入）。
 /// 3. 开发兜底：python sidecar_app.py（源码根）。
 fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String>), String> {
@@ -165,9 +174,9 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
 
     // 生产：解析打包进 NSIS 的 PyInstaller onedir exe。
     if let Ok(resource_dir) = app.path().resource_dir() {
-        let sidecar_exe = resource_dir
-            .join("reimbursement-sidecar")
-            .join("reimbursement-sidecar.exe");
+        let sidecar_exe = SIDECAR_RESOURCE_SEGMENTS
+            .iter()
+            .fold(resource_dir, |path, segment| path.join(segment));
         if sidecar_exe.exists() {
             return Ok((sidecar_exe.to_string_lossy().into_owned(), vec!["--port".into(), "0".into()]));
         }
@@ -182,7 +191,7 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ready_line, parse_sidecar_command_env};
+    use super::{parse_ready_line, parse_sidecar_command_env, SIDECAR_RESOURCE_SEGMENTS};
 
     #[test]
     fn parse_ready_line_accepts_ready_handshake() {
@@ -234,5 +243,27 @@ mod tests {
     fn parse_sidecar_command_env_rejects_empty_value() {
         assert!(parse_sidecar_command_env("").is_err());
         assert!(parse_sidecar_command_env("   ").is_err());
+    }
+
+    /// 生产路径回归：sidecar 在安装包里的位置由 tauri.conf.json 的 bundle.resources 决定，
+    /// Tauri 打包数组项时保留相对路径。两边一旦错位，安装包会静默回退到
+    /// `python sidecar_app.py`——终端用户机器没有 Python，表现为启动即失败。
+    #[test]
+    fn sidecar_resource_path_matches_bundle_resources_config() {
+        let config: serde_json::Value =
+            serde_json::from_str(include_str!("../tauri.conf.json")).unwrap();
+        let resources = config["bundle"]["resources"].as_array().unwrap();
+        let declared: Vec<&str> = resources.iter().map(|v| v.as_str().unwrap()).collect();
+
+        // 配置里声明的目录（相对 src-tauri/），打包后原样出现在 resource_dir() 下。
+        let expected_dir = SIDECAR_RESOURCE_SEGMENTS[..SIDECAR_RESOURCE_SEGMENTS.len() - 1].join("/");
+        assert!(
+            declared.contains(&expected_dir.as_str()),
+            "bundle.resources 声明 {declared:?}，但 sidecar.rs 解析 {expected_dir}/"
+        );
+        assert_eq!(
+            SIDECAR_RESOURCE_SEGMENTS.last().copied(),
+            Some("reimbursement-sidecar.exe")
+        );
     }
 }

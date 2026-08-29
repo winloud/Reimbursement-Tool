@@ -52,6 +52,11 @@ if ($Version -notmatch "^\d+\.\d+\.\d+$") {
 function Invoke-Step {
     param([Parameter(Mandatory = $true)][string]$Name, [scriptblock]$Block)
     Write-Host "==> $Name"
+    # 纯 PowerShell 步骤（同步版本号、复制 sidecar）不会设置 $LASTEXITCODE。
+    # 先归零：否则要么沿用上一条原生命令的退出码，要么在本进程从未调用过原生命令时
+    # 拿到 $null，$null -ne 0 成立，步骤会被误判成失败。
+    # PowerShell 自身的错误由 $ErrorActionPreference = "Stop" 负责抛出。
+    $global:LASTEXITCODE = 0
     & $Block
     if ($LASTEXITCODE -ne 0) {
         throw "$Name failed with exit code $LASTEXITCODE."
@@ -59,19 +64,28 @@ function Invoke-Step {
 }
 
 # 1. 同步版本号到 Cargo.toml 与 tauri.conf.json，避免 feed/二进制/安装包版本不一致。
+# 两处都必须显式按 UTF-8 读：这两个文件含中文（Cargo.toml 的 description、
+# tauri.conf.json 的 productName「报销管理」），而 Windows PowerShell 默认按 ANSI 代码页
+# 读取无 BOM 的 UTF-8，再用 UTF8 写回就会把中文写成乱码，进而毁掉安装包名和窗口标题。
+# 存在性判断也不能比较替换前后是否相同：版本号本来就等于目标值时（同一 tag 重建构建，
+# 即 workflow_dispatch 的主要用途）内容不变，会被误判成“找不到 version 字段”。
+$VersionPatterns = @{
+    Cargo = '(?m)^version\s*=\s*"[^"]*"'
+    Conf  = '(?m)^(\s*)"version"\s*:\s*"[^"]*"'
+}
 Invoke-Step "Sync version to $Version" {
-    $cargoContent = Get-Content -Raw -LiteralPath $CargoTomlPath
-    $cargoUpdated = $cargoContent -replace '(?m)^version\s*=\s*"[^"]*"', "version = `"$Version`""
-    if ($cargoUpdated -eq $cargoContent) {
+    $cargoContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $CargoTomlPath
+    if ($cargoContent -notmatch $VersionPatterns.Cargo) {
         throw "无法在 $CargoTomlPath 找到 version 字段"
     }
+    $cargoUpdated = $cargoContent -replace $VersionPatterns.Cargo, "version = `"$Version`""
     [System.IO.File]::WriteAllText($CargoTomlPath, $cargoUpdated, (New-Object System.Text.UTF8Encoding($false)))
 
-    $confContent = Get-Content -Raw -LiteralPath $TauriConfPath
-    $confUpdated = $confContent -replace '(?m)^(\s*)"version"\s*:\s*"[^"]*"', "`${1}`"version`": `"$Version`""
-    if ($confUpdated -eq $confContent) {
+    $confContent = Get-Content -Raw -Encoding UTF8 -LiteralPath $TauriConfPath
+    if ($confContent -notmatch $VersionPatterns.Conf) {
         throw "无法在 $TauriConfPath 找到 version 字段"
     }
+    $confUpdated = $confContent -replace $VersionPatterns.Conf, "`${1}`"version`": `"$Version`""
     [System.IO.File]::WriteAllText($TauriConfPath, $confUpdated, (New-Object System.Text.UTF8Encoding($false)))
 }
 
@@ -88,15 +102,28 @@ if (-not $SkipSidecar) {
 }
 
 # 3. 复制 onedir 到 Tauri resources 装入点。
+# 只复制 onedir 的内容，不要复制目录本身：`Copy-Item -LiteralPath <dir> -Destination <已存在的dir>`
+# 会把源目录塞进目标里，产生 resources/reimbursement-sidecar/reimbursement-sidecar/ 的多余嵌套，
+# 使 sidecar.rs 在生产安装包里定位不到 exe，回退到开发用的 `python sidecar_app.py`。
 Invoke-Step "Stage sidecar to src-tauri/resources" {
     if (Test-Path -LiteralPath $ResourcesDir) {
-        Get-ChildItem -LiteralPath $ResourcesDir -Force | ForEach-Object {
-            Remove-Item -LiteralPath $_.FullName -Recurse -Force
-        }
+        # 清理上一次的产物，但保留纳入版本管理的占位说明：
+        # 该文件负责让 bundle.resources 指向的目录在干净检出后依然存在
+        # （cargo tauri build 要求该路径存在），删掉它会让仓库出现意外的删除改动。
+        Get-ChildItem -LiteralPath $ResourcesDir -Force |
+            Where-Object { $_.Name -ne "README.md" } |
+            ForEach-Object { Remove-Item -LiteralPath $_.FullName -Recurse -Force }
     } else {
         New-Item -ItemType Directory -Path $ResourcesDir -Force | Out-Null
     }
-    Copy-Item -LiteralPath $SidecarDist -Destination $ResourcesDir -Recurse -Force
+    Copy-Item -Path (Join-Path $SidecarDist "*") -Destination $ResourcesDir -Recurse -Force
+
+    # 布局断言：exe 必须直接位于装入点下。这条路径要和 sidecar.rs 的
+    # resource_dir()/resources/reimbursement-sidecar/reimbursement-sidecar.exe 保持一致。
+    $stagedExe = Join-Path $ResourcesDir "reimbursement-sidecar.exe"
+    if (-not (Test-Path -LiteralPath $stagedExe)) {
+        throw "sidecar 装入布局错误，未找到 $stagedExe（检查是否多了一层目录嵌套）"
+    }
 }
 
 # 4. cargo tauri build 产出 NSIS。前端构建由 beforeBuildCommand（cwd=../frontend）执行，脚本不重复。

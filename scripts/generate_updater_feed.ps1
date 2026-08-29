@@ -36,7 +36,7 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 if (-not (Test-Path -LiteralPath $SignatureFile)) {
     throw "签名文件不存在: $SignatureFile"
 }
-$signature = (Get-Content -Raw -LiteralPath $SignatureFile).Trim()
+$signature = (Get-Content -Raw -Encoding UTF8 -LiteralPath $SignatureFile).Trim()
 
 if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
     $chinaTimeZone = [System.TimeZoneInfo]::FindSystemTimeZoneById("China Standard Time")
@@ -63,8 +63,13 @@ $latest = [ordered]@{
     }
 }
 
+# feed 必须写成无 BOM 的 UTF-8：Windows PowerShell 5.1 的 `Set-Content -Encoding UTF8`
+# 会带 BOM，而客户端（tauri-plugin-updater 与 updater.rs 的 fetch_data_compat）用
+# serde_json 解析，BOM 会让解析在第 1 列直接失败，导致所有客户端都检查不到更新。
+$Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+
 $latestPath = Join-Path $OutputDir "latest.json"
-$latest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath $latestPath -Encoding UTF8
+[System.IO.File]::WriteAllText($latestPath, ($latest | ConvertTo-Json -Depth 5), $Utf8NoBom)
 
 # data-compat.json：声明新版兼容的数据结构范围，与 latest.json 同址发布。
 $compat = [ordered]@{
@@ -72,7 +77,7 @@ $compat = [ordered]@{
     max_data_schema_version = $MaxDataSchema
 }
 $compatPath = Join-Path $OutputDir "data-compat.json"
-$compat | ConvertTo-Json -Depth 3 | Set-Content -LiteralPath $compatPath -Encoding UTF8
+[System.IO.File]::WriteAllText($compatPath, ($compat | ConvertTo-Json -Depth 3), $Utf8NoBom)
 
 Write-Host "已生成 updater feed："
 Write-Host "  latest.json      -> $latestPath"

@@ -38,6 +38,21 @@ function Assert-JsonField {
     }
 }
 
+function Get-FileSha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+
+    $stream = [System.IO.File]::OpenRead($Path)
+    $sha256 = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $hashBytes = $sha256.ComputeHash($stream)
+        return ([BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
+    }
+    finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 # 1. NSIS setup 产物。
 $setupExe = Get-ChildItem -LiteralPath $BundleDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
     Where-Object { $_.Name -notlike "*.sig" } |
@@ -49,21 +64,30 @@ Write-Host "NSIS 产物: $($setupExe.FullName)"
 Write-Host "大小: $([math]::Round($setupExe.Length / 1MB, 2)) MB"
 
 # 2. 签名文件。
+# `cargo tauri signer sign` 写出的 .sig 是 **base64 编码**的 minisign 签名，
+# 不是明文 minisign 文件：直接按 'untrusted comment:' 前缀断言必然失败。
+# updater 也是拿这段 base64 原样填进 latest.json 的 signature 字段。
 $sigPath = "$($setupExe.FullName).sig"
-$sigFile = Assert-FileExists -Path $sigPath -Description "更新包签名"
-$sigContent = (Get-Content -Raw -LiteralPath $sigPath).Trim()
+Assert-FileExists -Path $sigPath -Description "更新包签名" | Out-Null
+$sigContent = (Get-Content -Raw -Encoding UTF8 -LiteralPath $sigPath).Trim()
 if ($sigContent.Length -lt 100) {
     throw "签名文件内容过短，可能无效: $sigPath"
 }
-if (-not $sigContent.StartsWith("untrusted comment:")) {
-    throw "签名文件格式不符 minisign（应以 'untrusted comment:' 开头）: $sigPath"
+try {
+    $decodedSig = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($sigContent))
+}
+catch {
+    throw "签名文件不是合法 base64: $sigPath"
+}
+if (-not $decodedSig.StartsWith("untrusted comment:")) {
+    throw "签名解码后不符 minisign 格式（应以 'untrusted comment:' 开头）: $sigPath"
 }
 Write-Host "签名: $sigPath"
 
 # 3. latest.json。
 $latestPath = Join-Path $FeedDir "latest.json"
-$latestFile = Assert-FileExists -Path $latestPath -Description "latest.json"
-$latest = Get-Content -Raw -LiteralPath $latestPath | ConvertFrom-Json
+Assert-FileExists -Path $latestPath -Description "latest.json" | Out-Null
+$latest = Get-Content -Raw -Encoding UTF8 -LiteralPath $latestPath | ConvertFrom-Json
 Assert-JsonField -Object $latest -Field "version" -Description "latest.json"
 Assert-JsonField -Object $latest -Field "pub_date" -Description "latest.json"
 if ($latest.version -ne $Version) {
@@ -75,17 +99,20 @@ if (-not $latest.platforms.$platformKey) {
 }
 Assert-JsonField -Object $latest.platforms.$platformKey -Field "signature" -Description "latest.json $platformKey"
 Assert-JsonField -Object $latest.platforms.$platformKey -Field "url" -Description "latest.json $platformKey"
-$expectedSigLines = ($sigContent -split "`n" | Where-Object { $_ -notmatch "^untrusted comment:" -and $_ -notmatch "^trusted comment:" })
 $feedSig = [string]$latest.platforms.$platformKey.signature
 if ([string]::IsNullOrWhiteSpace($feedSig)) {
     throw "latest.json signature 为空"
+}
+# feed 里的签名必须与 .sig 文件逐字一致，否则客户端验签会失败。
+if ($feedSig -cne $sigContent) {
+    throw "latest.json signature 与 $sigPath 内容不一致"
 }
 Write-Host "latest.json: version=$($latest.version) platform=$platformKey"
 
 # 4. data-compat.json。
 $compatPath = Join-Path $FeedDir "data-compat.json"
-$compatFile = Assert-FileExists -Path $compatPath -Description "data-compat.json"
-$compat = Get-Content -Raw -LiteralPath $compatPath | ConvertFrom-Json
+Assert-FileExists -Path $compatPath -Description "data-compat.json" | Out-Null
+$compat = Get-Content -Raw -Encoding UTF8 -LiteralPath $compatPath | ConvertFrom-Json
 Assert-JsonField -Object $compat -Field "min_data_schema_version" -Description "data-compat.json"
 Assert-JsonField -Object $compat -Field "max_data_schema_version" -Description "data-compat.json"
 if ([int]$compat.min_data_schema_version -gt [int]$compat.max_data_schema_version) {
@@ -94,7 +121,10 @@ if ([int]$compat.min_data_schema_version -gt [int]$compat.max_data_schema_versio
 Write-Host "data-compat.json: min=$($compat.min_data_schema_version) max=$($compat.max_data_schema_version)"
 
 # 5. SHA256 清单。
-$sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $setupExe.FullName).Hash.ToLowerInvariant()
+# 用 .NET 直接算，不走 Get-FileHash：该 cmdlet 依赖 Microsoft.PowerShell.Utility 的
+# 模块自动加载，PSModulePath 被 PowerShell 7 等挤占的机器上会 CommandNotFound。
+# validate_release_asset.ps1 出于同样原因用的也是 .NET 实现。
+$sha256 = Get-FileSha256 -Path $setupExe.FullName
 Write-Host "NSIS SHA256: $sha256"
 
 Write-Host ""
