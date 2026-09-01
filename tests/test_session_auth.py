@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from backend.main import create_app
+from backend.distribution import DISTRIBUTION_TARGET_ENV
 from backend.middleware.session_auth import SESSION_ENV, SESSION_HEADER, SessionAuthMiddleware
 
 
@@ -80,6 +81,7 @@ def test_protected_route_accepts_correct_token(client, monkeypatch):
 
 
 def test_zip_maintenance_routes_are_registered_without_tauri_token(monkeypatch, tmp_path):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
     monkeypatch.delenv(SESSION_ENV, raising=False)
 
     app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
@@ -91,7 +93,8 @@ def test_zip_maintenance_routes_are_registered_without_tauri_token(monkeypatch, 
     assert "/api/maintenance/restart" in paths
 
 
-def test_tauri_session_disables_zip_maintenance_routes(monkeypatch, tmp_path):
+def test_tauri_target_disables_zip_maintenance_routes(monkeypatch, tmp_path):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
     monkeypatch.setenv(SESSION_ENV, "secret-token")
 
     app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
@@ -101,3 +104,32 @@ def test_tauri_session_disables_zip_maintenance_routes(monkeypatch, tmp_path):
     assert "/api/maintenance/updates/preview" not in paths
     assert "/api/maintenance/versions/switch" not in paths
     assert "/api/maintenance/restart" not in paths
+
+
+def test_zip_target_with_session_auth_keeps_zip_routes(monkeypatch, tmp_path):
+    """Target 决定 router；token 只决定请求是否需要鉴权。"""
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
+    monkeypatch.setenv(SESSION_ENV, "secret-token")
+
+    app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
+    paths = {route.path for route in app.routes}
+
+    assert "/api/maintenance/updates/preview" in paths
+    with TestClient(app) as client:
+        assert client.get("/openapi.json").status_code == 401
+        assert client.get("/openapi.json", headers={SESSION_HEADER: "secret-token"}).status_code == 200
+
+
+def test_tauri_target_without_session_token_still_hides_zip_routes(monkeypatch, tmp_path):
+    """异常缺 token 时也绝不能把 Tauri 误判成 ZIP。"""
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
+    monkeypatch.delenv(SESSION_ENV, raising=False)
+
+    app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
+    paths = {route.path for route in app.routes}
+
+    assert "/api/maintenance/info" in paths
+    assert "/api/maintenance/updates/preview" not in paths
+    assert "/api/maintenance/versions/switch" not in paths
+    with TestClient(app) as client:
+        assert client.get("/openapi.json").status_code == 200

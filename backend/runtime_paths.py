@@ -4,8 +4,11 @@ import os
 import sys
 from pathlib import Path
 
+from backend.distribution import DistributionTarget, TAURI_SOURCE_FALLBACK_ENV, get_distribution_target
+
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT_ENV = "REIMBURSEMENT_APP_ROOT"
 
 
 def is_frozen_app() -> bool:
@@ -17,10 +20,18 @@ def bundle_root() -> Path:
 
 
 def app_root() -> Path:
-    # Tauri 通过 REIMBURSEMENT_APP_ROOT 注入 AppLocalData runtime，必须优先于
-    # 任何冻结产物路径推断。ZIP 未注入该变量时，继续识别 versions/<version>/
-    # 便携布局；独立 sidecar 则回退到自身 exe 目录。
-    configured_root = os.environ.get("REIMBURSEMENT_APP_ROOT")
+    target = get_distribution_target()
+    configured_root = os.environ.get(APP_ROOT_ENV)
+
+    if target is DistributionTarget.TAURI:
+        if configured_root:
+            return Path(configured_root).resolve()
+        if not is_frozen_app() and os.environ.get(TAURI_SOURCE_FALLBACK_ENV) == "1":
+            return SOURCE_ROOT
+        raise RuntimeError(
+            f"Tauri Target 缺少 {APP_ROOT_ENV}，拒绝回退到 ZIP 便携目录"
+        )
+
     if configured_root:
         return Path(configured_root).resolve()
     if is_frozen_app():
@@ -32,10 +43,15 @@ def app_root() -> Path:
 
 
 def upload_root() -> Path:
-    # Tauri 开发模式使用源码 Python sidecar（非 frozen），但仍会注入
-    # REIMBURSEMENT_APP_ROOT。此时附件必须与数据库一起落在 AppLocalData
-    # runtime；只有未注入 Tauri 路径的普通源码开发才使用 backend/uploads。
-    if os.environ.get("REIMBURSEMENT_APP_ROOT") or is_frozen_app():
+    target = get_distribution_target()
+    configured_root = os.environ.get(APP_ROOT_ENV)
+    if target is DistributionTarget.TAURI:
+        if configured_root:
+            return app_root() / "uploads"
+        if not is_frozen_app() and os.environ.get(TAURI_SOURCE_FALLBACK_ENV) == "1":
+            return SOURCE_ROOT / "backend" / "uploads"
+        return app_root() / "uploads"
+    if configured_root or is_frozen_app():
         return app_root() / "uploads"
     return SOURCE_ROOT / "backend" / "uploads"
 

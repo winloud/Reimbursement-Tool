@@ -1,0 +1,32 @@
+from __future__ import annotations
+
+import os
+from enum import Enum
+
+
+DISTRIBUTION_TARGET_ENV = "REIMBURSEMENT_DISTRIBUTION_TARGET"
+TAURI_SOURCE_FALLBACK_ENV = "REIMBURSEMENT_ALLOW_TAURI_SOURCE_FALLBACK"
+
+
+class DistributionTarget(str, Enum):
+    ZIP = "zip"
+    TAURI = "tauri"
+
+
+def parse_distribution_target(value: str) -> DistributionTarget:
+    try:
+        return DistributionTarget(value.strip().lower())
+    except (AttributeError, ValueError) as exc:
+        supported = ", ".join(target.value for target in DistributionTarget)
+        raise RuntimeError(
+            f"{DISTRIBUTION_TARGET_ENV} 无效：{value!r}；仅支持 {supported}"
+        ) from exc
+
+
+def get_distribution_target() -> DistributionTarget:
+    raw_target = os.environ.get(DISTRIBUTION_TARGET_ENV)
+    if raw_target is None:
+        # 兼容 pytest、uvicorn backend.main:app 和现有源码开发入口。
+        # 正式 ZIP/Tauri 桌面入口均会显式注入；待阶段 6 清点所有 CLI 调用者后移除此默认值。
+        return DistributionTarget.ZIP
+    return parse_distribution_target(raw_target)

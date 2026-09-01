@@ -15,6 +15,8 @@ from pathlib import Path
 
 import uvicorn
 
+os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"
+
 from backend.main import create_app
 from backend.runtime_paths import APP_ROOT, DATABASE_PATH, FRONTEND_DIST_DIR, LOG_DIR, UPLOAD_ROOT
 from desktop_dependencies import ensure_runtime_dependencies, find_chromium_browser, is_webview2_available, show_error_message

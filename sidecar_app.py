@@ -2,6 +2,7 @@
 
 由 Tauri（Rust）以子进程方式启动，只提供 HTTP API，不再携带前端和 pywebview。
 启动契约：
+  - sidecar 入口明确设置 REIMBURSEMENT_DISTRIBUTION_TARGET=tauri。
   - 环境变量 REIMBURSEMENT_APP_ROOT 指向运行数据根（复用 runtime_paths.app_root）。
   - 环境变量 REIMBURSEMENT_APP_VERSION 为当前版本号。
   - 环境变量 REIMBURSEMENT_SESSION_TOKEN 为随机会话令牌（阶段 3 起用于鉴权）。
@@ -24,6 +25,11 @@ import urllib.request
 from pathlib import Path
 
 import uvicorn
+
+# sidecar 入口明确声明 Tauri Target；源码直跑仅保留显式标记的开发 fallback。
+os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "tauri"
+if not getattr(sys, "frozen", False):
+    os.environ.setdefault("REIMBURSEMENT_ALLOW_TAURI_SOURCE_FALLBACK", "1")
 
 from backend.main import create_app
 from backend.runtime_paths import APP_ROOT, LOG_DIR

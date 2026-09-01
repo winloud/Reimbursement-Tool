@@ -4,13 +4,24 @@ import os
 import sys
 from pathlib import Path
 
+from backend.distribution import DistributionTarget, TAURI_SOURCE_FALLBACK_ENV, get_distribution_target
+
 
 DEFAULT_APP_VERSION = "1.4.2"
+APP_VERSION_ENV = "REIMBURSEMENT_APP_VERSION"
 
 
 def resolve_app_version() -> str:
-    # Tauri 注入版本优先；ZIP 未注入时继续从 versions/<version>/ 推断。
-    configured_version = os.environ.get("REIMBURSEMENT_APP_VERSION")
+    target = get_distribution_target()
+    configured_version = os.environ.get(APP_VERSION_ENV)
+
+    if target is DistributionTarget.TAURI:
+        if configured_version:
+            return configured_version
+        if not getattr(sys, "frozen", False) and os.environ.get(TAURI_SOURCE_FALLBACK_ENV) == "1":
+            return DEFAULT_APP_VERSION
+        raise RuntimeError(f"Tauri Target 缺少 {APP_VERSION_ENV}")
+
     if configured_version:
         return configured_version
     if getattr(sys, "frozen", False):

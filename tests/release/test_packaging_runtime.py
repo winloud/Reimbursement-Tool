@@ -5,6 +5,7 @@ from fastapi import HTTPException
 from fastapi.responses import FileResponse
 
 from backend import app_metadata
+from backend.distribution import DISTRIBUTION_TARGET_ENV, TAURI_SOURCE_FALLBACK_ENV
 from backend.main import create_app
 from backend import runtime_paths
 from backend.runtime_paths import uploaded_path
@@ -42,6 +43,7 @@ def test_uploaded_path_uses_runtime_upload_root(tmp_path: Path):
 def test_app_root_prefers_tauri_injected_runtime_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
     """Tauri 通过 REIMBURSEMENT_APP_ROOT 注入 AppLocalData runtime 目录（ADR 0009）。"""
     configured_root = tmp_path / "runtime"
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
     monkeypatch.setenv("REIMBURSEMENT_APP_ROOT", str(configured_root))
     monkeypatch.delattr(runtime_paths.sys, "frozen", raising=False)
 
@@ -51,27 +53,42 @@ def test_app_root_prefers_tauri_injected_runtime_root(monkeypatch: pytest.Monkey
 
 def test_source_upload_root_falls_back_without_tauri_injection(monkeypatch: pytest.MonkeyPatch):
     """普通源码开发未注入 Tauri runtime 时继续使用仓库内的上传目录。"""
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
     monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
     monkeypatch.delattr(runtime_paths.sys, "frozen", raising=False)
 
     assert runtime_paths.upload_root() == ROOT / "backend" / "uploads"
 
 
-def test_frozen_sidecar_root_falls_back_to_executable_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """独立启动冻结 sidecar 且没有 Tauri 注入时回退到 exe 目录。"""
+def test_frozen_tauri_sidecar_rejects_missing_runtime_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """冻结 Tauri sidecar 不得静默回退到安装目录或 ZIP 目录。"""
     exe_dir = tmp_path / "reimbursement-sidecar"
     exe_dir.mkdir(parents=True)
     exe_path = exe_dir / "reimbursement-sidecar.exe"
     exe_path.write_bytes(b"exe")
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
     monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
     monkeypatch.setattr(runtime_paths.sys, "frozen", True, raising=False)
     monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
 
-    assert runtime_paths.app_root() == exe_dir
-    assert runtime_paths.upload_root() == exe_dir / "uploads"
+    with pytest.raises(RuntimeError, match="拒绝回退到 ZIP"):
+        runtime_paths.app_root()
+    with pytest.raises(RuntimeError, match="拒绝回退到 ZIP"):
+        runtime_paths.upload_root()
+
+
+def test_tauri_source_fallback_requires_explicit_development_flag(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
+    monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
+    monkeypatch.setenv(TAURI_SOURCE_FALLBACK_ENV, "1")
+    monkeypatch.delattr(runtime_paths.sys, "frozen", raising=False)
+
+    assert runtime_paths.app_root() == ROOT
+    assert runtime_paths.upload_root() == ROOT / "backend" / "uploads"
 
 
 def test_frozen_zip_app_root_detects_portable_install_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
     exe_path = tmp_path / "报销管理" / "versions" / "1.4.2" / "报销管理.exe"
     exe_path.parent.mkdir(parents=True)
     exe_path.write_bytes(b"exe")
@@ -83,18 +100,21 @@ def test_frozen_zip_app_root_detects_portable_install_root(monkeypatch: pytest.M
 
 
 def test_app_version_prefers_tauri_injected_version(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
     monkeypatch.setenv("REIMBURSEMENT_APP_VERSION", "2.0.0")
 
     assert app_metadata.resolve_app_version() == "2.0.0"
 
 
 def test_app_version_falls_back_to_default_without_injection(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
     monkeypatch.delenv("REIMBURSEMENT_APP_VERSION", raising=False)
 
     assert app_metadata.resolve_app_version() == app_metadata.DEFAULT_APP_VERSION
 
 
 def test_zip_app_version_detects_portable_version_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "zip")
     exe_path = tmp_path / "报销管理" / "versions" / "1.4.2-preview-20260901-001" / "报销管理.exe"
     exe_path.parent.mkdir(parents=True)
     exe_path.write_bytes(b"exe")
@@ -103,6 +123,15 @@ def test_zip_app_version_detects_portable_version_dir(monkeypatch: pytest.Monkey
     monkeypatch.setattr(app_metadata.sys, "executable", str(exe_path))
 
     assert app_metadata.resolve_app_version() == "1.4.2-preview-20260901-001"
+
+
+def test_frozen_tauri_sidecar_rejects_missing_app_version(monkeypatch: pytest.MonkeyPatch):
+    monkeypatch.setenv(DISTRIBUTION_TARGET_ENV, "tauri")
+    monkeypatch.delenv("REIMBURSEMENT_APP_VERSION", raising=False)
+    monkeypatch.setattr(app_metadata.sys, "frozen", True, raising=False)
+
+    with pytest.raises(RuntimeError, match="REIMBURSEMENT_APP_VERSION"):
+        app_metadata.resolve_app_version()
 
 
 def test_sidecar_spec_excludes_frontend_and_pywebview():

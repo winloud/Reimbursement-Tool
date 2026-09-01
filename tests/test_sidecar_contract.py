@@ -11,12 +11,23 @@ Tauri（Rust 端）依赖以下约定判定 sidecar 就绪，任何一条被破�
 from __future__ import annotations
 
 import json
+import os
 import socket
 from pathlib import Path
 
 import pytest
 
+_previous_target = os.environ.get("REIMBURSEMENT_DISTRIBUTION_TARGET")
+_previous_fallback = os.environ.get("REIMBURSEMENT_ALLOW_TAURI_SOURCE_FALLBACK")
 import sidecar_app
+if _previous_target is None:
+    os.environ.pop("REIMBURSEMENT_DISTRIBUTION_TARGET", None)
+else:
+    os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = _previous_target
+if _previous_fallback is None:
+    os.environ.pop("REIMBURSEMENT_ALLOW_TAURI_SOURCE_FALLBACK", None)
+else:
+    os.environ["REIMBURSEMENT_ALLOW_TAURI_SOURCE_FALLBACK"] = _previous_fallback
 
 
 def test_bind_free_port_returns_a_bindable_loopback_port():
@@ -111,11 +122,12 @@ def test_wait_until_ready_raises_after_timeout(monkeypatch: pytest.MonkeyPatch):
 
 
 def test_sidecar_reads_runtime_contract_env_vars():
-    """Rust 端注入的三个环境变量必须是 sidecar 实际消费的名字。"""
+    """sidecar Target 与 Rust 注入的运行时环境变量必须实际被消费。"""
     source = Path(sidecar_app.__file__).read_text(encoding="utf-8")
 
     assert "REIMBURSEMENT_APP_VERSION" in source
     assert "REIMBURSEMENT_SESSION_TOKEN" in source
+    assert "REIMBURSEMENT_DISTRIBUTION_TARGET" in source
     # app_root 复用 runtime_paths 的 REIMBURSEMENT_APP_ROOT 解析。
     from backend import runtime_paths
 
