@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
 // 回归全新安装：模块加载时 runtime 尚不存在，任何 get_runtime_config 调用都会
-// 抢在 RuntimeInit 引导之前发生。client 只能注册拦截器，不能主动读取配置。
+// 抢在 RuntimeBoundary 引导之前发生。client 只能注册拦截器，不能主动读取配置。
 const invokeCalls = [];
 globalThis.window = {
   __TAURI_INTERNALS__: {

@@ -28,7 +28,7 @@ import {
   saveBackendResource,
   switchMaintenanceVersion,
 } from "../api/client";
-import { isInTauriEnvironment } from "../api/tauriBridge";
+import PlatformUpdateSection from "../platform/UpdateSection";
 import {
   defaultUpdateStagingSelection,
   formatFileSize,
@@ -39,12 +39,10 @@ import {
 import {
   MaintenanceBackupSection,
   MaintenanceDiagnosticsSection,
-  MaintenanceUpdateSection as ZipMaintenanceUpdateSection,
   cardContentSx,
   cardSx,
   dataCompatibilityMessage,
 } from "./MaintenanceSections";
-import TauriMaintenanceUpdateSection from "./MaintenanceUpdateSection";
 
 const getApiErrorMessage = (err, fallback) =>
   err.response?.data?.message || err.response?.data?.detail || err.message || fallback;
@@ -613,10 +611,7 @@ export default function MaintenancePanel() {
         </Card>
       ) : (
         <Stack spacing={2}>
-          {isInTauriEnvironment() ? (
-            <TauriMaintenanceUpdateSection />
-          ) : (
-          <ZipMaintenanceUpdateSection
+          <PlatformUpdateSection
             busy={busy}
             info={info}
             installedVersions={installedVersions}
@@ -654,7 +649,6 @@ export default function MaintenancePanel() {
             onToggleUpdateStaging={handleToggleUpdateStaging}
             onCleanupUpdateStaging={handleCleanupUpdateStaging}
           />
-          )}
 
           <MaintenanceBackupSection
             busy={busy}

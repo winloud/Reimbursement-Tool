@@ -1,6 +1,6 @@
 import axios from "axios";
 import { buildReportExportPayload, buildReportQueryParams } from "./reportFilters.js";
-import { isInTauriEnvironment, loadRuntimeConfig, saveBackendDownload } from "./tauriBridge.js";
+import { capabilities, platform } from "../platform/index.js";
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "";
 
@@ -9,22 +9,18 @@ export const apiClient = axios.create({
   timeout: 10000,
 });
 
-// 阶段 4：在 Tauri 环境下用 sidecar 的 api_base_url 与会话令牌替换默认值。
-// 浏览器开发模式无令牌（后端放行），baseURL 仍由 VITE_API_BASE_URL 决定。
-//
 // 请求拦截器在模块加载时同步注册，内部 await runtimeConfigReady，
 // 确保首个业务请求不会在配置就绪前发出。配置必须延迟到首个请求再加载：
-// 全新安装尚无 runtime 时，RuntimeInit 需要先显示初始化引导，此时调用
-// get_runtime_config 会得到“未初始化”错误。
+// Tauri 全新安装尚无 runtime 时，RuntimeBoundary 需要先显示初始化引导。
 let runtimeConfigReady = null;
 let sessionToken = "";
 export const initRuntimeConfig = () => {
   if (!runtimeConfigReady) {
-    runtimeConfigReady = loadRuntimeConfig().then((config) => {
-      if (isInTauriEnvironment() && config.api_base_url) {
-        apiClient.defaults.baseURL = config.api_base_url.replace(/\/$/, "");
+    runtimeConfigReady = platform.bootstrap().then((config) => {
+      if (config.apiBaseUrl) {
+        apiClient.defaults.baseURL = config.apiBaseUrl.replace(/\/$/, "");
       }
-      sessionToken = config.session_token || "";
+      sessionToken = config.sessionToken || "";
       return config;
     });
   }
@@ -43,8 +39,8 @@ apiClient.interceptors.request.use(async (requestConfig) => {
   }
   // Axios 会在进入请求拦截器前把 defaults 合并到当前请求配置；只更新
   // apiClient.defaults.baseURL 不会影响这一次已经创建的请求。
-  if (runtimeConfig?.api_base_url && isInTauriEnvironment()) {
-    requestConfig.baseURL = runtimeConfig.api_base_url.replace(/\/$/, "");
+  if (runtimeConfig?.apiBaseUrl) {
+    requestConfig.baseURL = runtimeConfig.apiBaseUrl.replace(/\/$/, "");
   }
   if (sessionToken) {
     requestConfig.headers = requestConfig.headers || {};
@@ -53,10 +49,9 @@ apiClient.interceptors.request.use(async (requestConfig) => {
   return requestConfig;
 });
 
-// 浏览器模式下，prepared download 的相对 URL 需补全为绝对路径供 <a> 下载使用；
-// Tauri 模式下保持相对路径，由 save_backend_download 命令在 Rust 侧用 api_base_url 拼接。
+// 需要原生保存的平台保留相对路径；浏览器保存则补全 API 基址。
 const resolveApiDownloadUrl = (downloadUrl) => {
-  if (!downloadUrl || isInTauriEnvironment() || /^https?:\/\//i.test(downloadUrl)) {
+  if (!downloadUrl || capabilities.nativeSave || /^https?:\/\//i.test(downloadUrl)) {
     return downloadUrl;
   }
   const base = (apiClient.defaults.baseURL || API_BASE_URL).replace(/\/$/, "");
@@ -395,7 +390,7 @@ export const prepareReportBatchPdfDownload = async (reportIds) => {
 
 /**
  * 保存 prepared-download 描述符指向的内容到磁盘。
- * Tauri 下走原生保存对话框（Rust 注入会话令牌取字节）；浏览器下回退到 <a> 下载。
+ * 具体保存方式由 Platform Adapter 决定。
  * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
  */
 export const triggerBackendDownload = async (prepared) => {
@@ -403,20 +398,13 @@ export const triggerBackendDownload = async (prepared) => {
   const filename = prepared?.data?.filename || "download";
   if (!downloadUrl) throw new Error("下载链接无效，请重新生成");
 
-  if (!isInTauriEnvironment()) {
-    const { triggerBrowserDownload } = await import("../utils/browserDownload.js");
-    triggerBrowserDownload(downloadUrl);
-    return { browser: true };
-  }
-
-  return saveBackendDownload(downloadUrl, filename);
+  return platform.saveDownload({ url: downloadUrl, filename });
 };
 
 /**
  * 保存直接文件流端点（备份 ZIP、诊断包）到磁盘。
  * 与 triggerBackendDownload 的区别：这里不走 prepare 描述符，而是直接给定端点 URL。
- * Tauri 下走原生保存对话框（Rust 注入会话令牌取字节）；浏览器下用 fetchBlob 取回 blob
- * 再走 saveBlobDownload，保持浏览器模式原有行为。
+ * Platform Adapter 决定使用原生保存或浏览器 blob 下载。
  * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
  *
  * @param url 资源端点相对/绝对 URL
@@ -426,13 +414,7 @@ export const triggerBackendDownload = async (prepared) => {
 export const saveBackendResource = async (url, filename, fetchBlob) => {
   if (!url) throw new Error("下载链接无效，请重新生成");
 
-  if (!isInTauriEnvironment()) {
-    const { saveBlobDownload } = await import("../utils/browserDownload.js");
-    saveBlobDownload(await fetchBlob());
-    return { browser: true };
-  }
-
-  return saveBackendDownload(url, filename);
+  return platform.saveDownload({ url, filename, fetchBlob });
 };
 
 export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {

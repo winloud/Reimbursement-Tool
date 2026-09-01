@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import App from "./App";
-import RuntimeInit from "./features/RuntimeInit";
+import RuntimeBoundary from "./platform/RuntimeBoundary";
 
 const theme = createTheme({
   palette: {
@@ -174,18 +174,14 @@ const theme = createTheme({
   },
 });
 
-// 首屏先由 RuntimeInit 判断 runtime 是否就绪。
-// - 未就绪（首次启动）：只渲染迁移/新建引导，不读取尚不存在的 runtime config。
-// - 已就绪/浏览器模式：渲染 App；首个 API 请求由 client.js 拦截器按需加载
-//   sidecar 的真实 baseURL 与会话令牌。
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ThemeProvider theme={theme}>
-      <RuntimeInit>
+      <RuntimeBoundary>
         <BrowserRouter>
           <App />
         </BrowserRouter>
-      </RuntimeInit>
+      </RuntimeBoundary>
     </ThemeProvider>
   </React.StrictMode>,
 );

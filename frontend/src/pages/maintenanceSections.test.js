@@ -10,17 +10,22 @@ const MAINTENANCE_SOURCES = [
   "./MaintenancePage.jsx",
   "./MaintenancePanel.jsx",
   "./MaintenanceSections.jsx",
-  "./MaintenanceUpdateSection.jsx",
+  "../platform/UpdateSection.jsx",
+  "../platform/zip/UpdateSection.jsx",
+  "../platform/tauri/UpdateSection.jsx",
   "./maintenanceUtils.js",
 ];
 
 describe("maintenance page keeps both desktop update targets", () => {
-  it("selects the updater UI with the existing Tauri environment check", () => {
+  it("selects the updater UI through the platform boundary", () => {
     const panel = read("./MaintenancePanel.jsx");
+    const selector = read("../platform/UpdateSection.jsx");
 
-    assert.ok(panel.includes("isInTauriEnvironment() ?"));
-    assert.ok(panel.includes("<TauriMaintenanceUpdateSection />"));
-    assert.ok(panel.includes("<ZipMaintenanceUpdateSection"));
+    assert.ok(panel.includes("<PlatformUpdateSection"));
+    assert.doesNotMatch(panel, /isInTauriEnvironment|tauriBridge/);
+    assert.ok(selector.includes('platform.kind === "tauri"'));
+    assert.ok(selector.includes("TauriUpdateSection"));
+    assert.ok(selector.includes("ZipUpdateSection"));
   });
 
   it("keeps ZIP update, version switch and cleanup controls", () => {
@@ -39,19 +44,19 @@ describe("maintenance page keeps both desktop update targets", () => {
     }
   });
 
-  it("shows browser diagnostics only outside Tauri", () => {
+  it("shows browser diagnostics through platform capabilities", () => {
     const sections = read("./MaintenanceSections.jsx");
 
     assert.ok(sections.includes("browserRuntimeSummary"));
-    assert.ok(sections.includes("!isInTauriEnvironment()"));
+    assert.ok(sections.includes("capabilities.browserDiagnostics"));
     assert.ok(sections.includes("browser_runtime"));
   });
 
   it("keeps the Tauri updater section wired to the compatibility gate", () => {
-    const text = read("./MaintenanceUpdateSection.jsx");
+    const text = read("../platform/tauri/UpdateSection.jsx");
 
-    assert.ok(text.includes("checkForUpdate"));
-    assert.ok(text.includes("installUpdate"));
+    assert.ok(text.includes("tauriAdapter.checkForUpdate"));
+    assert.ok(text.includes("tauriAdapter.installUpdate"));
     assert.ok(text.includes("data_compatible"));
     assert.ok(text.includes('if (!updateInfo?.available || !updateInfo?.data_compatible) return;'));
   });

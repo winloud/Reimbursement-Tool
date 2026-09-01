@@ -234,7 +234,8 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.match(invoiceCardListSource, /invoices\.map/);
   assert.match(attachmentCardListSource, /attachments\.map/);
   // Tauri WebView 没有浏览器标签页：凭据必须在应用内弹窗预览；ZIP/浏览器仍保留新标签页。
-  assert.match(attachmentCardListSource, /isInTauriEnvironment/);
+  assert.match(attachmentCardListSource, /capabilities\.inAppProtectedResourcePreview/);
+  assert.match(attachmentCardListSource, /openProtectedResource/);
   assert.match(attachmentCardListSource, /<Dialog open=\{previewOpen\}/);
   assert.match(attachmentCardListSource, /component="iframe"/);
   assert.match(attachmentCardListSource, /component="img"/);

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-// 本文件必须在导入 client.js / tauriBridge.js 之前装好 Tauri 桩。
-// tauriBridge 会在首次业务请求时缓存 runtime config；node --test 为每个测试文件
+// 本文件必须在导入 client.js / platform 之前装好 Tauri 桩。
+// Tauri adapter 会在首次业务请求时缓存 runtime config；node --test 为每个测试文件
 // 开独立进程，因此这里的 window 污染不会影响其他测试文件。
 
 const invokeCalls = [];
@@ -33,7 +33,7 @@ globalThis.window = {
 const { apiClient, getInvoiceFileUrl, getReportAttachmentFileUrl, initRuntimeConfig } = await import(
   "./client.js"
 );
-const { fetchAuthenticatedBlobUrl, saveBackendDownload } = await import("./tauriBridge.js");
+const { openProtectedResource, saveDownload } = await import("../platform/index.js");
 
 describe("session auth in the Tauri shell", () => {
   it("adopts the sidecar api base url and trims the trailing slash", async () => {
@@ -85,7 +85,7 @@ describe("authenticated resource loading through Tauri commands", () => {
     };
 
     try {
-      const url = await fetchAuthenticatedBlobUrl("/api/invoices/7/file");
+      const url = await openProtectedResource("/api/invoices/7/file");
 
       assert.equal(url, "blob:invoice-preview");
       assert.equal(capturedBlob.type, "application/pdf");
@@ -98,7 +98,7 @@ describe("authenticated resource loading through Tauri commands", () => {
   });
 
   it("routes downloads through the native save command", async () => {
-    const result = await saveBackendDownload("/api/reports/downloads/token", "report.pdf");
+    const result = await saveDownload({ url: "/api/reports/downloads/token", filename: "report.pdf" });
 
     assert.deepEqual(result, { saved: true, saved_path: "D:\\下载\\report.pdf" });
     const call = invokeCalls.find((entry) => entry.cmd === "save_backend_download");
@@ -114,12 +114,12 @@ describe("authenticated resource loading through Tauri commands", () => {
       globalThis.window.__TAURI_INTERNALS__.invoke = async () => {
         throw new Error("cancelled");
       };
-      assert.deepEqual(await saveBackendDownload("/api/x", "x.pdf"), { cancelled: true });
+      assert.deepEqual(await saveDownload({ url: "/api/x", filename: "x.pdf" }), { cancelled: true });
 
       globalThis.window.__TAURI_INTERNALS__.invoke = async () => {
         throw new Error("磁盘已满");
       };
-      const failure = await saveBackendDownload("/api/x", "x.pdf");
+      const failure = await saveDownload({ url: "/api/x", filename: "x.pdf" });
       assert.equal(failure.saved, undefined);
       assert.match(failure.error, /磁盘已满/);
     } finally {

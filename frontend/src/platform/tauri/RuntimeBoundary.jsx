@@ -1,13 +1,3 @@
-// 阶段 5：运行时初始化引导。
-//
-// 首次启动 runtime 未就绪时，替代 App 渲染迁移/新建引导界面：
-// - 新建空白数据：调 start_sidecar_after_init(null)，由 Rust 原子完成初始化和启动。
-// - 从旧便携版迁移：choose_legacy_root 选目录预检后，把同一路径交给
-//   start_sidecar_after_init(legacy) 原子完成迁移和启动。
-// 就绪/浏览器模式直接渲染子元素（App）。
-//
-// 迁移成功后触发页面重载；业务界面的首个 API 请求再按需取得 sidecar 配置。
-
 import { useEffect, useState } from "react";
 import {
   Alert,
@@ -21,36 +11,30 @@ import {
 } from "@mui/material";
 import FolderOpenIcon from "@mui/icons-material/FolderOpen";
 import NoteAddIcon from "@mui/icons-material/NoteAdd";
-import {
-  chooseLegacyRoot,
-  getRuntimeInitStatus,
-  isInTauriEnvironment,
-  startSidecarAfterInit,
-} from "../api/tauriBridge";
+
+import tauriAdapter from "./adapter.js";
 
 const STATUS_LOADING = "loading";
 const STATUS_READY = "ready";
 const STATUS_NEEDS_INIT = "needs_init";
 
-export default function RuntimeInit({ children }) {
+export default function TauriRuntimeBoundary({ children }) {
   const [status, setStatus] = useState(STATUS_LOADING);
   const [busy, setBusy] = useState("");
   const [error, setError] = useState("");
   const [legacyCheck, setLegacyCheck] = useState(null);
-  // 选中并通过预检的旧便携根路径；startSidecarAfterInit 需用同一值。
   const [legacyRoot, setLegacyRoot] = useState(null);
 
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const initStatus = await getRuntimeInitStatus();
-      if (cancelled) return;
-      // browser 模式或 ready：直接进业务界面。error 也当 ready 放行，
-      // 让 App 显示启动错误而非卡在引导。
-      if (initStatus === "needs_init") {
-        setStatus(STATUS_NEEDS_INIT);
-      } else {
-        setStatus(STATUS_READY);
+      try {
+        const initStatus = await tauriAdapter.getRuntimeInitStatus();
+        if (!cancelled) {
+          setStatus(initStatus === STATUS_NEEDS_INIT ? STATUS_NEEDS_INIT : STATUS_READY);
+        }
+      } catch {
+        if (!cancelled) setStatus(STATUS_READY);
       }
     })();
     return () => {
@@ -62,7 +46,7 @@ export default function RuntimeInit({ children }) {
     setBusy("new");
     setError("");
     try {
-      await startSidecarAfterInit(null);
+      await tauriAdapter.startSidecarAfterInit(null);
       reloadAfterInit();
     } catch (err) {
       setError(String(err?.message || err || "初始化失败"));
@@ -75,7 +59,7 @@ export default function RuntimeInit({ children }) {
     setBusy("choose");
     setError("");
     try {
-      const check = await chooseLegacyRoot();
+      const check = await tauriAdapter.chooseLegacyRoot();
       if (!check) {
         setError("当前环境不支持选择目录");
         return;
@@ -99,7 +83,7 @@ export default function RuntimeInit({ children }) {
     setBusy("migrate");
     setError("");
     try {
-      await startSidecarAfterInit(legacyRoot);
+      await tauriAdapter.startSidecarAfterInit(legacyRoot);
       reloadAfterInit();
     } catch (err) {
       setError(String(err?.message || err || "迁移失败"));
@@ -116,9 +100,7 @@ export default function RuntimeInit({ children }) {
     );
   }
 
-  if (status === STATUS_READY) {
-    return children;
-  }
+  if (status === STATUS_READY) return children;
 
   return (
     <Box sx={{ display: "flex", alignItems: "center", justifyContent: "center", height: "100vh", p: 3 }}>
@@ -184,9 +166,7 @@ export default function RuntimeInit({ children }) {
             )}
 
             <Typography variant="caption" color="text.secondary">
-              {isInTauriEnvironment()
-                ? "迁移会复制旧目录的数据库、附件、备份和 OpenCV 组件；旧目录不会被修改。"
-                : "浏览器模式无需迁移。"}
+              迁移会复制旧目录的数据库、附件、备份和 OpenCV 组件；旧目录不会被修改。
             </Typography>
           </Stack>
         </CardContent>
@@ -195,8 +175,6 @@ export default function RuntimeInit({ children }) {
   );
 }
 
-// 迁移完成并启动 sidecar 后重新加载页面；RuntimeInit 将识别 ready，随后
-// client.js 在首个业务请求前取得真实的 api_base_url 与会话令牌。
 function reloadAfterInit() {
   if (typeof window !== "undefined" && window.location) {
     window.location.reload();

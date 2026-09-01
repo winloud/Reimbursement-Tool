@@ -7,14 +7,14 @@
 // - 浏览器模式不检查。
 
 import { useEffect } from "react";
-import { checkForUpdate, isInTauriEnvironment } from "../api/tauriBridge";
+import { capabilities, platform } from "../platform/index.js";
 
 const STORAGE_KEY = "reimbursement_last_update_check";
 const CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24 小时
 
 export default function useStartupUpdateCheck(onAvailable) {
   useEffect(() => {
-    if (!isInTauriEnvironment()) return;
+    if (!capabilities.signedUpdater) return;
 
     let cancelled = false;
     (async () => {
@@ -23,7 +23,7 @@ export default function useStartupUpdateCheck(onAvailable) {
         const now = Date.now();
         if (now - lastCheck < CHECK_INTERVAL_MS) return; // 不到 24h，跳过
 
-        const info = await checkForUpdate();
+        const info = await platform.checkForUpdate();
         if (cancelled || !info?.available || !info?.data_compatible) return;
         onAvailable?.(info);
       } catch {

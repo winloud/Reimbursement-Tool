@@ -28,7 +28,7 @@ import {
   parseInvoice,
   updateInvoice,
 } from "../api/client";
-import { fetchAuthenticatedBlobUrl } from "../api/tauriBridge";
+import { openProtectedResource } from "../platform/index.js";
 import { shouldOpenInvoiceLocally } from "./invoiceViewerUtils";
 
 const formatAmount = (value) =>
@@ -231,7 +231,7 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
     }
     let revoked = false;
     let createdUrl = "";
-    fetchAuthenticatedBlobUrl(`/api/invoices/${invoice.id}/file`)
+    openProtectedResource(`/api/invoices/${invoice.id}/file`)
       .then((url) => {
         if (!revoked) {
           createdUrl = url;

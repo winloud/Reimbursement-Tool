@@ -15,7 +15,7 @@ import {
 import DeleteIcon from "@mui/icons-material/Delete";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
-import { fetchAuthenticatedBlobUrl, isInTauriEnvironment } from "../../api/tauriBridge";
+import { capabilities, openProtectedResource } from "../../platform/index.js";
 import FileListShell from "./FileListShell";
 import { fileCardSx } from "./editPageStyles";
 
@@ -31,12 +31,12 @@ function AttachmentCard({ attachment, readonly, onDelete }) {
   const filename = getAttachmentName(attachment);
   const [fileUrl, setFileUrl] = useState("");
   const [previewOpen, setPreviewOpen] = useState(false);
-  const inTauri = isInTauriEnvironment();
+  const inAppPreview = capabilities.inAppProtectedResourcePreview;
 
   useEffect(() => {
     let revoked = false;
     let createdUrl = "";
-    fetchAuthenticatedBlobUrl(`/api/report-attachments/${encodeURIComponent(attachment.id)}/file`)
+    openProtectedResource(`/api/report-attachments/${encodeURIComponent(attachment.id)}/file`)
       .then((url) => {
         if (!revoked) {
           createdUrl = url;
@@ -76,9 +76,9 @@ function AttachmentCard({ attachment, readonly, onDelete }) {
               {getPageLabel(attachment)}
             </Typography>
             <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>
-              <Tooltip title={inTauri ? "预览" : "在新标签页打开"}>
+              <Tooltip title={inAppPreview ? "预览" : "在新标签页打开"}>
                 <span>
-                  {inTauri ? (
+                  {inAppPreview ? (
                     <IconButton
                       size="small"
                       aria-label={`预览 ${filename}`}
@@ -119,7 +119,7 @@ function AttachmentCard({ attachment, readonly, onDelete }) {
           </Stack>
         </Stack>
       </Paper>
-      {inTauri && (
+      {inAppPreview && (
         <Dialog open={previewOpen} onClose={() => setPreviewOpen(false)} fullWidth maxWidth="lg">
           <DialogTitle>{filename}</DialogTitle>
           <DialogContent dividers sx={{ bgcolor: "grey.50" }}>
