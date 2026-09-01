@@ -175,7 +175,7 @@ pub async fn install_update(
     if let Err(e) = install_result {
         // 5. 失败恢复：重启 sidecar，保证前端后端可用。附带备份路径供用户回退。
         let backup_msg = format!("升级前备份: {}", backup_path.display());
-        match restore_sidecar(&app) {
+        match restore_sidecar(&app).await {
             Ok(()) => return Err(format!("下载安装更新失败: {e}；已恢复后端。{backup_msg}")),
             Err(restore_err) => return Err(format!(
                 "下载安装更新失败: {e}；恢复后端也失败: {restore_err}（请手动重启程序）。{backup_msg}"
@@ -191,8 +191,8 @@ pub async fn install_update(
 
 /// 重启 sidecar 恢复后端（更新失败后调用）。
 /// Ok 表示已恢复，Err 表示恢复失败（前端应提示手动重启）。
-fn restore_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
-    crate::launch_sidecar(app, &app.state::<crate::SharedRuntimeConfig>())
+async fn restore_sidecar(app: &tauri::AppHandle) -> Result<(), String> {
+    crate::launch_sidecar(app).await
 }
 
 /// 创建 pre_update 备份：SQLite 在线热备 + 复制 uploads。

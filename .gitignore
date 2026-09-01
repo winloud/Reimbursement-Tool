@@ -47,6 +47,7 @@ data/restore_staging/
 # Local desktop runtime artifacts
 logs/
 window-state.json
+/runtime-test-data/
 
 # Backend uploads
 backend/uploads/

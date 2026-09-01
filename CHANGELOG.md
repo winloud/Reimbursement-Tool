@@ -13,6 +13,11 @@
 - `scripts/verify.ps1` 新增 `Desktop` 档位（Tauri 配置与权限静态检查、Rust 单测、`cargo clippy -D warnings`），并纳入 `All` 档位与两个 GitHub Actions 工作流。
 - 发布链路改为 `scripts/build_tauri_release.ps1` 构建签名 NSIS 与 updater feed，`scripts/validate_release_asset.ps1` 改为校验已发布 Release 上的安装包、签名和 feed；OpenCV 可选运行时包拆到独立脚本 `scripts/build_opencv_runtime.ps1`。
 
+### Fixed
+
+- 修复全新安装首次启动时，前端在运行数据初始化引导出现前读取尚未就绪的 sidecar 配置，导致 Tauri 主进程 panic 并闪退的问题；无 `runtime` 目录时现在会正常进入“首次使用设置”。
+- 修复选择“新建空白数据”或迁移旧数据后，异步启动流程嵌套调用 Tokio `block_on`，导致 sidecar 已拉起但界面长期停在“处理中”的问题；初始化与启动现在使用同一异步命令，并防止重复拉起及失败后遗留子进程。
+
 ### Removed
 
 - 删除便携 ZIP 桌面发行链路：旧桌面壳与启动器、`versions/` 多版本目录、`current-version.json` / `portable-release.json` 清单、ZIP 升级辅助脚本与指南，以及 `browser-profile` 浏览器配置目录。旧便携版用户改用安装包安装后，首次启动通过迁移引导带走数据。

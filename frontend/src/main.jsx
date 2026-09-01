@@ -4,7 +4,6 @@ import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import App from "./App";
 import RuntimeInit from "./features/RuntimeInit";
-import { initRuntimeConfig } from "./api/client";
 
 const theme = createTheme({
   palette: {
@@ -175,14 +174,10 @@ const theme = createTheme({
   },
 });
 
-// 阶段 5：首屏先由 RuntimeInit 判断 runtime 是否就绪。
-// - 未就绪（首次启动）：渲染迁移/新建引导，完成后启动 sidecar 并 reload，
-//   让下面的 initRuntimeConfig 重新拉取 sidecar 真实配置。
-// - 已就绪/浏览器模式：直接渲染 App，initRuntimeConfig 注册拦截器，
-//   首屏请求已有 sidecar baseURL 与会话令牌。
-// initRuntimeConfig 仍同步触发一次以注册 axios 拦截器；未就绪时其内部
-// loadRuntimeConfig 会失败，但 RuntimeInit 不依赖它，App 也不渲染。
-initRuntimeConfig();
+// 首屏先由 RuntimeInit 判断 runtime 是否就绪。
+// - 未就绪（首次启动）：只渲染迁移/新建引导，不读取尚不存在的 runtime config。
+// - 已就绪/浏览器模式：渲染 App；首个 API 请求由 client.js 拦截器按需加载
+//   sidecar 的真实 baseURL 与会话令牌。
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
     <ThemeProvider theme={theme}>

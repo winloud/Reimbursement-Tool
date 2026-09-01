@@ -1,12 +1,12 @@
 // 阶段 5：运行时初始化引导。
 //
 // 首次启动 runtime 未就绪时，替代 App 渲染迁移/新建引导界面：
-// - 新建空白数据：调 initialize_runtime(null) + start_sidecar_after_init(null)
-// - 从旧便携版迁移：choose_legacy_root 选目录预检 -> initialize_runtime(legacy)
-//   -> start_sidecar_after_init(legacy)
+// - 新建空白数据：调 start_sidecar_after_init(null)，由 Rust 原子完成初始化和启动。
+// - 从旧便携版迁移：choose_legacy_root 选目录预检后，把同一路径交给
+//   start_sidecar_after_init(legacy) 原子完成迁移和启动。
 // 就绪/浏览器模式直接渲染子元素（App）。
 //
-// 迁移成功后触发页面重载，让 main.jsx 重新走 initRuntimeConfig 拿 sidecar 真实配置。
+// 迁移成功后触发页面重载；业务界面的首个 API 请求再按需取得 sidecar 配置。
 
 import { useEffect, useState } from "react";
 import {
@@ -24,7 +24,6 @@ import NoteAddIcon from "@mui/icons-material/NoteAdd";
 import {
   chooseLegacyRoot,
   getRuntimeInitStatus,
-  initializeRuntime,
   isInTauriEnvironment,
   startSidecarAfterInit,
 } from "../api/tauriBridge";
@@ -63,7 +62,6 @@ export default function RuntimeInit({ children }) {
     setBusy("new");
     setError("");
     try {
-      await initializeRuntime(null);
       await startSidecarAfterInit(null);
       reloadAfterInit();
     } catch (err) {
@@ -101,10 +99,6 @@ export default function RuntimeInit({ children }) {
     setBusy("migrate");
     setError("");
     try {
-      const initResult = await initializeRuntime(legacyRoot);
-      if (!initResult?.success) {
-        throw new Error(initResult?.error || "迁移失败");
-      }
       await startSidecarAfterInit(legacyRoot);
       reloadAfterInit();
     } catch (err) {
@@ -201,8 +195,8 @@ export default function RuntimeInit({ children }) {
   );
 }
 
-// 迁移完成并启动 sidecar 后，重新加载页面让 main.jsx 走 initRuntimeConfig
-// 拿到 sidecar 真实的 api_base_url 与会话令牌。
+// 迁移完成并启动 sidecar 后重新加载页面；RuntimeInit 将识别 ready，随后
+// client.js 在首个业务请求前取得真实的 api_base_url 与会话令牌。
 function reloadAfterInit() {
   if (typeof window !== "undefined" && window.location) {
     window.location.reload();

@@ -1,10 +1,9 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-// 本文件必须在导入 client.js / tauriBridge.js 之前装好 Tauri 桩，
-// 因为 tauriBridge 在模块级缓存 runtime config，client.js 在模块加载时就注册拦截器
-// 并触发一次 initRuntimeConfig。node --test 为每个测试文件开独立进程，
-// 因此这里的 window 污染不会影响其他测试文件。
+// 本文件必须在导入 client.js / tauriBridge.js 之前装好 Tauri 桩。
+// tauriBridge 会在首次业务请求时缓存 runtime config；node --test 为每个测试文件
+// 开独立进程，因此这里的 window 污染不会影响其他测试文件。
 
 const invokeCalls = [];
 const invokeResults = {

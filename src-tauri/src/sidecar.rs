@@ -16,13 +16,13 @@
 // 产物经 bundle.resources 装入 NSIS，见 scripts/build_tauri_release.ps1）。
 // 两者都不可用时回退到 `python sidecar_app.py`，仅作开发兜底。
 
-use std::collections::HashMap;
 use serde::Deserialize;
-use tauri::async_runtime::block_on;
+use std::collections::HashMap;
+use tauri::async_runtime::Receiver;
 use tauri::Manager;
-use tokio::time::timeout;
 use tauri_plugin_shell::process::CommandEvent;
 use tauri_plugin_shell::ShellExt;
+use tokio::time::timeout;
 
 const READY_TIMEOUT_SECS: u64 = 30;
 
@@ -45,7 +45,7 @@ pub struct RuntimeConfig {
 ///
 /// `session_token` 由 Rust 生成传入 sidecar 环境变量；阶段 2 暂不校验，
 /// 阶段 3 起由 FastAPI 中间件校验。
-pub fn spawn_and_wait(
+pub async fn spawn_and_wait(
     app: &tauri::AppHandle,
     session_token: String,
     app_version: String,
@@ -76,38 +76,11 @@ pub fn spawn_and_wait(
 
     eprintln!("sidecar spawned pid={}", child.pid());
 
-    // 阻塞等待 ready JSON，带超时。setup 是同步上下文，用 block_on 跑异步 recv。
-    // 任何错误出口都先 kill child 再返回，避免遗留后台 Python 进程
-    // （Job Object 要等本函数成功返回后由 lib.rs 绑定，此处失败时尚未绑定）。
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(READY_TIMEOUT_SECS);
-    let ready_result = block_on(async {
-        loop {
-            if std::time::Instant::now() >= deadline {
-                return Err("sidecar 启动超时未输出 ready JSON".to_string());
-            }
-            match timeout(std::time::Duration::from_millis(200), rx.recv()).await {
-                Ok(Some(CommandEvent::Stdout(bytes))) => {
-                    let line = String::from_utf8_lossy(&bytes);
-                    eprintln!("sidecar stdout: {line}");
-                    if let Some(url) = parse_ready_line(&line) {
-                        return Ok(url);
-                    }
-                }
-                Ok(Some(CommandEvent::Stderr(bytes))) => {
-                    eprintln!("sidecar stderr: {}", String::from_utf8_lossy(&bytes));
-                }
-                Ok(Some(CommandEvent::Terminated(payload))) => {
-                    return Err(format!("sidecar 提前退出: {payload:?}"));
-                }
-                Ok(Some(CommandEvent::Error(msg))) => {
-                    return Err(format!("sidecar 事件错误: {msg}"));
-                }
-                Ok(None) => return Err("sidecar 输出通道关闭".to_string()),
-                Ok(Some(_)) => continue,
-                Err(_) => continue,
-            }
-        }
-    });
+    // 异步等待 ready JSON。spawn_and_wait 既会从同步 setup 调用，也会从异步
+    // Tauri command / updater 恢复路径调用，内部不能 block_on，否则异步路径会触发
+    // “Cannot start a runtime from within a runtime” panic。
+    // 任何错误出口都先 kill child 再返回，避免遗留后台 Python 进程。
+    let ready_result = wait_for_ready(&mut rx).await;
 
     let api_base_url = match ready_result {
         Ok(url) => url,
@@ -126,6 +99,37 @@ pub fn spawn_and_wait(
         },
         child,
     ))
+}
+
+/// 等待 sidecar 的 ready 事件。保持为纯 async，允许直接运行在 Tokio worker 内。
+async fn wait_for_ready(rx: &mut Receiver<CommandEvent>) -> Result<String, String> {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(READY_TIMEOUT_SECS);
+    loop {
+        if std::time::Instant::now() >= deadline {
+            return Err("sidecar 启动超时未输出 ready JSON".to_string());
+        }
+        match timeout(std::time::Duration::from_millis(200), rx.recv()).await {
+            Ok(Some(CommandEvent::Stdout(bytes))) => {
+                let line = String::from_utf8_lossy(&bytes);
+                eprintln!("sidecar stdout: {line}");
+                if let Some(url) = parse_ready_line(&line) {
+                    return Ok(url);
+                }
+            }
+            Ok(Some(CommandEvent::Stderr(bytes))) => {
+                eprintln!("sidecar stderr: {}", String::from_utf8_lossy(&bytes));
+            }
+            Ok(Some(CommandEvent::Terminated(payload))) => {
+                return Err(format!("sidecar 提前退出: {payload:?}"));
+            }
+            Ok(Some(CommandEvent::Error(msg))) => {
+                return Err(format!("sidecar 事件错误: {msg}"));
+            }
+            Ok(None) => return Err("sidecar 输出通道关闭".to_string()),
+            Ok(Some(_)) => continue,
+            Err(_) => continue,
+        }
+    }
 }
 
 /// 解析 sidecar stdout 的一行，命中 ready 握手时返回 api_base_url。
@@ -191,7 +195,32 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_ready_line, parse_sidecar_command_env, SIDECAR_RESOURCE_SEGMENTS};
+    use super::{
+        parse_ready_line, parse_sidecar_command_env, wait_for_ready, SIDECAR_RESOURCE_SEGMENTS,
+    };
+    use tauri_plugin_shell::process::CommandEvent;
+
+    #[test]
+    fn ready_wait_runs_inside_an_existing_tokio_runtime() {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .unwrap();
+
+        runtime.block_on(async {
+            let (tx, mut rx) = tauri::async_runtime::channel(1);
+            tx.send(CommandEvent::Stdout(
+                br#"{"event":"ready","api_base_url":"http://127.0.0.1:51234"}"#.to_vec(),
+            ))
+            .await
+            .unwrap();
+
+            assert_eq!(
+                wait_for_ready(&mut rx).await.unwrap(),
+                "http://127.0.0.1:51234"
+            );
+        });
+    }
 
     #[test]
     fn parse_ready_line_accepts_ready_handshake() {

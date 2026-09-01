@@ -129,19 +129,41 @@ Invoke-Step "Stage sidecar to src-tauri/resources" {
 # 4. cargo tauri build 产出 NSIS。前端构建由 beforeBuildCommand（cwd=../frontend）执行，脚本不重复。
 # 离线包用 --config 临时覆盖 webviewInstallMode 为 offlineInstaller。
 $tauriArgs = @("tauri", "build")
+$offlineConfigPath = $null
 if ($TauriFeatures) {
     $tauriArgs += @("--features", $TauriFeatures)
 }
 $buildLabel = "cargo tauri build (NSIS online)"
 if ($Offline) {
-    # 临时配置覆盖：离线 WebView2 installer。
-    $offlineConfig = '{"bundle":{"windows":{"webviewInstallMode":{"type":"offlineInstaller"}}}}'
-    $tauriArgs += @("--config", $offlineConfig)
+    # PowerShell 将传给原生命令的内联 JSON 双引号处理掉，不能直接把 JSON
+    # 字符串作为 cargo tauri --config 参数。使用短生命周期的临时 JSON 文件，
+    # 让 Tauri CLI 按文件路径读取覆盖配置。
+    $offlineConfigPath = Join-Path $env:TEMP "reimbursement-tauri-offline-$([guid]::NewGuid().ToString('N')).json"
+    $offlineConfig = [ordered]@{
+        bundle = [ordered]@{
+            windows = [ordered]@{
+                webviewInstallMode = [ordered]@{ type = "offlineInstaller" }
+            }
+        }
+    } | ConvertTo-Json -Depth 5
+    [System.IO.File]::WriteAllText(
+        $offlineConfigPath,
+        $offlineConfig,
+        (New-Object System.Text.UTF8Encoding($false))
+    )
+    $tauriArgs += @("--config", $offlineConfigPath)
     $buildLabel = "cargo tauri build (NSIS offline)"
 }
-Invoke-Step $buildLabel {
-    Push-Location $TauriSrcDir
-    try { cargo @tauriArgs } finally { Pop-Location }
+try {
+    Invoke-Step $buildLabel {
+        Push-Location $TauriSrcDir
+        try { cargo @tauriArgs } finally { Pop-Location }
+    }
+}
+finally {
+    if ($offlineConfigPath -and (Test-Path -LiteralPath $offlineConfigPath)) {
+        Remove-Item -LiteralPath $offlineConfigPath -Force -ErrorAction SilentlyContinue
+    }
 }
 
 # 5. 对更新包签名（产出 .sig）。

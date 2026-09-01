@@ -13,8 +13,9 @@ export const apiClient = axios.create({
 // 浏览器开发模式无令牌（后端放行），baseURL 仍由 VITE_API_BASE_URL 决定。
 //
 // 请求拦截器在模块加载时同步注册，内部 await runtimeConfigReady，
-// 确保首屏请求不会在配置就绪前发出。initRuntimeConfig 在 main.jsx 渲染前完成；
-// 即便用户绕过渲染，拦截器也会把请求挂到配置就绪后再放行。
+// 确保首个业务请求不会在配置就绪前发出。配置必须延迟到首个请求再加载：
+// 全新安装尚无 runtime 时，RuntimeInit 需要先显示初始化引导，此时调用
+// get_runtime_config 会得到“未初始化”错误。
 let runtimeConfigReady = null;
 let sessionToken = "";
 export const initRuntimeConfig = () => {
@@ -45,9 +46,6 @@ apiClient.interceptors.request.use(async (requestConfig) => {
   }
   return requestConfig;
 });
-
-// 立即触发一次；Tauri 下异步等待 sidecar 就绪，浏览器下几乎同步返回。
-initRuntimeConfig();
 
 // 浏览器模式下，prepared download 的相对 URL 需补全为绝对路径供 <a> 下载使用；
 // Tauri 模式下保持相对路径，由 save_backend_download 命令在 Rust 侧用 api_base_url 拼接。
