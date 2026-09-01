@@ -358,7 +358,7 @@ def _other_expense_rows(report: ExpenseReport) -> list[ExpenseRow]:
                 if invoice.expense_category == category and invoice.trip_id is None
             ]
             amount = sum((invoice.amount for invoice in invoices), Decimal("0.00"))
-            count = len(invoices)
+            count = sum(invoice.page_count for invoice in invoices)
         else:
             amount = item.amount
             count = item.invoice_count

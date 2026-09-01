@@ -110,16 +110,32 @@ export const createInvoiceUploadIssue = (fileName, message, statusCode) => ({
   type: Number(statusCode) === 409 ? "duplicate" : "error",
 });
 
+export const createInvoiceUploadWarnings = (fileName, uploadedInvoices = []) => {
+  const normalizedFileName = String(fileName || "").trim() || "未命名文件";
+  const messages = new Set();
+  for (const invoice of Array.isArray(uploadedInvoices) ? uploadedInvoices : []) {
+    for (const warning of Array.isArray(invoice?.warnings) ? invoice.warnings : []) {
+      const message = String(warning || "").trim();
+      if (message) messages.add(message);
+    }
+  }
+  return [...messages].map((message) => ({ fileName: normalizedFileName, message, type: "warning" }));
+};
+
 export const getInvoiceUploadFeedback = ({ totalFileCount = 0, successfulFileCount = 0, issues = [] } = {}) => {
   const normalizedIssues = Array.isArray(issues) ? issues.filter(Boolean) : [];
   const duplicateCount = normalizedIssues.filter((issue) => issue.type === "duplicate").length;
-  const failedCount = normalizedIssues.length - duplicateCount;
+  const warningCount = normalizedIssues.filter((issue) => issue.type === "warning").length;
+  const failedCount = normalizedIssues.filter(
+    (issue) => issue.type !== "duplicate" && issue.type !== "warning",
+  ).length;
   const hasIssues = normalizedIssues.length > 0;
 
   return {
     totalFileCount: Math.max(0, Number(totalFileCount) || 0),
     successfulFileCount: Math.max(0, Number(successfulFileCount) || 0),
     duplicateCount,
+    warningCount,
     failedCount,
     issues: normalizedIssues,
     hasIssues,
@@ -272,7 +288,16 @@ export const getVisibleExpenseCategories = ({
 export const getConfirmedInvoiceTotal = (invoices = []) =>
   invoices.filter((invoice) => invoice.amount_confirmed).reduce((sum, invoice) => sum + toFiniteAmount(invoice.amount), 0);
 
-export const getConfirmedInvoiceCount = (invoices = []) => invoices.filter((invoice) => invoice.amount_confirmed).length;
+export const getInvoicePageCount = (invoice) => {
+  const count = Number(invoice?.page_count ?? 1);
+  return Number.isInteger(count) && count > 0 ? count : 1;
+};
+
+export const getInvoicePageTotal = (invoices = []) =>
+  (Array.isArray(invoices) ? invoices : []).reduce((total, invoice) => total + getInvoicePageCount(invoice), 0);
+
+export const getConfirmedInvoiceCount = (invoices = []) =>
+  getInvoicePageTotal((Array.isArray(invoices) ? invoices : []).filter((invoice) => invoice.amount_confirmed));
 
 export const getExpenseItemInvoiceTotal = (item = {}, invoices) =>
   Array.isArray(invoices)

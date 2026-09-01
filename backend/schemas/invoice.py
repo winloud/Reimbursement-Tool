@@ -39,8 +39,10 @@ class InvoiceUploadResult(BaseModel):
     invoice_date: date | None = None
     amount: Decimal
     amount_confirmed: bool
+    page_count: int = 1
     created_at: datetime
     parsed: InvoiceParsedData | None = None
+    warnings: list[str] = Field(default_factory=list)
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -72,6 +74,7 @@ class InvoiceRead(BaseModel):
     invoice_date: date | None = None
     amount: Decimal
     amount_confirmed: bool
+    page_count: int = 1
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

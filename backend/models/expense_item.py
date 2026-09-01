@@ -31,7 +31,7 @@ class ExpenseItem(Base):
 
     @property
     def invoice_count(self) -> int:
-        return len(self.active_confirmed_invoices) + int(self.paper_invoice_count or 0)
+        return sum(invoice.page_count for invoice in self.active_confirmed_invoices) + int(self.paper_invoice_count or 0)
 
     @property
     def invoice_total(self) -> Decimal:

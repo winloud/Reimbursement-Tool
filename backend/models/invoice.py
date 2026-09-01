@@ -1,11 +1,13 @@
 from datetime import date, datetime
 from decimal import Decimal
+from functools import cached_property
 from uuid import uuid4
 
 from sqlalchemy import Boolean, Date, DateTime, ForeignKey, Numeric, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.database.connection import Base
+from backend.runtime_paths import UPLOAD_ROOT, uploaded_path
 
 
 class Invoice(Base):
@@ -30,3 +32,13 @@ class Invoice(Base):
     report = relationship("ExpenseReport", back_populates="invoices")
     trip = relationship("Trip", back_populates="invoices")
     regular_item = relationship("RegularItem", back_populates="invoices")
+
+    @cached_property
+    def page_count(self) -> int:
+        if not str(self.file_type or "").lower().endswith("pdf"):
+            return 1
+
+        from backend.services.invoice_parser import pdf_page_count
+
+        count = pdf_page_count(uploaded_path(self.file_path, upload_root=UPLOAD_ROOT))
+        return max(int(count or 0), 1)

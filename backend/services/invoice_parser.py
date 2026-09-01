@@ -1031,7 +1031,11 @@ def parse_invoice_artifacts(
 
 
 def parse_pdf_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:
-    artifacts = extract_pdf_page_artifacts(file_path)
+    page_count = pdf_page_count(file_path)
+    if page_count > 1:
+        artifacts = extract_pdf_page_artifacts(file_path, page_index=page_count - 1)
+    else:
+        artifacts = extract_pdf_page_artifacts(file_path)
     return parse_invoice_artifacts(artifacts, "pdf", invoice_qr_engine=invoice_qr_engine)
 
 
@@ -1048,8 +1052,7 @@ def parse_pdf_invoice_pages(file_path: Path, invoice_qr_engine: str = INVOICE_QR
         )
         for page_index in range(page_count)
     ]
-    successful_pages = [parsed for parsed in parsed_pages if parsed.raw.get("parse_success")]
-    return successful_pages or parsed_pages[:1]
+    return parsed_pages
 
 
 def parse_image_invoice(file_path: Path, invoice_qr_engine: str = INVOICE_QR_ENGINE_ZXING) -> InvoiceParsedData:

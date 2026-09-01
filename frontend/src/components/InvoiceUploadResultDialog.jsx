@@ -47,8 +47,10 @@ const IssueList = ({ title, issues, tone }) => {
 };
 
 export default function InvoiceUploadResultDialog({ result, onClose, onContinue }) {
+  const warningIssues = result?.issues?.filter((issue) => issue.type === "warning") || [];
   const duplicateIssues = result?.issues?.filter((issue) => issue.type === "duplicate") || [];
-  const failedIssues = result?.issues?.filter((issue) => issue.type !== "duplicate") || [];
+  const failedIssues =
+    result?.issues?.filter((issue) => issue.type !== "duplicate" && issue.type !== "warning") || [];
   const successfulFileCount = result?.successfulFileCount || 0;
   const uploadedInvoiceCount = result?.uploadedInvoices?.length || 0;
   const allDuplicates =
@@ -79,6 +81,9 @@ export default function InvoiceUploadResultDialog({ result, onClose, onContinue 
             </Typography>
             <Stack direction="row" spacing={0.75} flexWrap="wrap" useFlexGap sx={{ mt: 1 }}>
               <Chip size="small" color="success" label={`已上传 ${successfulFileCount}`} />
+              {warningIssues.length > 0 && (
+                <Chip size="small" color="warning" label={`提醒 ${warningIssues.length}`} />
+              )}
               {duplicateIssues.length > 0 && (
                 <Chip size="small" color="warning" label={`重复 ${duplicateIssues.length}`} />
               )}
@@ -88,6 +93,7 @@ export default function InvoiceUploadResultDialog({ result, onClose, onContinue 
             </Stack>
           </Box>
 
+          <IssueList title="需要注意" issues={warningIssues} tone="warning" />
           <IssueList title="重复文件（未上传）" issues={duplicateIssues} tone="warning" />
           <IssueList title="上传失败" issues={failedIssues} tone="error" />
         </Stack>

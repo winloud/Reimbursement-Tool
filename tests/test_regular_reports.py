@@ -119,6 +119,34 @@ def test_regular_invoice_item_amount_and_document_count_are_derived(db):
     assert report.document_count == 2
 
 
+def test_regular_invoice_document_count_uses_pdf_page_count(db):
+    report = create_report(
+        db,
+        ReportCreate(
+            report_type="regular",
+            regular_mode="invoice",
+            regular_items=[regular_item(amount=None)],
+        ),
+    )
+    item = report.regular_items[0]
+    invoice = Invoice(
+        report=report,
+        regular_item=item,
+        expense_category="regular",
+        file_path="uploads/four-pages.pdf",
+        file_type="pdf",
+        amount=Decimal("88.00"),
+        amount_confirmed=True,
+    )
+    invoice.__dict__["page_count"] = 4
+    db.add(invoice)
+    db.flush()
+
+    assert item.document_count == 4
+    assert report.invoice_count == 4
+    assert report.document_count == 4
+
+
 def test_regular_status_validation_is_mode_specific(db):
     no_invoice = create_report(
         db,

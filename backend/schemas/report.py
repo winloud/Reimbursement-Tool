@@ -307,6 +307,7 @@ class InvoiceRead(BaseModel):
     invoice_date: date | None = None
     amount: Decimal
     amount_confirmed: bool
+    page_count: int = 1
     created_at: datetime
 
     model_config = ConfigDict(from_attributes=True)

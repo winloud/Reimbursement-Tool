@@ -13,6 +13,7 @@ import {
   calculateSummary,
   cloneTripAfter,
   createInvoiceUploadIssue,
+  createInvoiceUploadWarnings,
   getAddableExpenseCategories,
   getExpenseCategoryLabel,
   getExpenseCategoryOptions,
@@ -24,6 +25,9 @@ import {
   getExpenseItemInvoiceShortfall,
   getFirstExpenseInvoiceShortfall,
   getInvoiceUploadFeedback,
+  getInvoicePageCount,
+  getInvoicePageTotal,
+  getConfirmedInvoiceCount,
   getPaperInvoiceCount,
   getSubsidySpans,
   getTripGapWarnings,
@@ -439,6 +443,22 @@ describe("report edit utilities", () => {
     });
   });
 
+  it("collects unique successful-upload warnings", () => {
+    assert.deepEqual(
+      createInvoiceUploadWarnings("multi.pdf", [
+        { warnings: ["无法明确分组，请先拆分 PDF", "无法明确分组，请先拆分 PDF"] },
+        { warnings: [] },
+      ]),
+      [
+        {
+          fileName: "multi.pdf",
+          message: "无法明确分组，请先拆分 PDF",
+          type: "warning",
+        },
+      ],
+    );
+  });
+
   it("summarizes successful and failed invoice uploads", () => {
     assert.deepEqual(
       getInvoiceUploadFeedback({ totalFileCount: 1, successfulFileCount: 1 }),
@@ -446,6 +466,7 @@ describe("report edit utilities", () => {
         totalFileCount: 1,
         successfulFileCount: 1,
         duplicateCount: 0,
+        warningCount: 0,
         failedCount: 0,
         issues: [],
         hasIssues: false,
@@ -459,6 +480,7 @@ describe("report edit utilities", () => {
         totalFileCount: 3,
         successfulFileCount: 2,
         duplicateCount: 1,
+        warningCount: 0,
         failedCount: 0,
         issues: [duplicateIssue],
         hasIssues: true,
@@ -479,6 +501,7 @@ describe("report edit utilities", () => {
         totalFileCount: 2,
         successfulFileCount: 0,
         duplicateCount: 2,
+        warningCount: 0,
         failedCount: 0,
         issues: duplicateIssues,
         hasIssues: true,
@@ -497,8 +520,28 @@ describe("report edit utilities", () => {
         totalFileCount: 3,
         successfulFileCount: 1,
         duplicateCount: 1,
+        warningCount: 0,
         failedCount: 1,
         issues: [duplicateIssue, failedIssue],
+        hasIssues: true,
+        toastMessage: "",
+      },
+    );
+
+    const warningIssue = createInvoiceUploadWarnings("multi.pdf", [{ warnings: ["建议先拆分 PDF"] }])[0];
+    assert.deepEqual(
+      getInvoiceUploadFeedback({
+        totalFileCount: 1,
+        successfulFileCount: 1,
+        issues: [warningIssue],
+      }),
+      {
+        totalFileCount: 1,
+        successfulFileCount: 1,
+        duplicateCount: 0,
+        warningCount: 1,
+        failedCount: 0,
+        issues: [warningIssue],
         hasIssues: true,
         toastMessage: "",
       },
@@ -507,16 +550,20 @@ describe("report edit utilities", () => {
 
   it("uses one upload-result dialog before confirming partial successes", () => {
     const reportEditSource = readFileSync(new URL("./ReportEdit.jsx", import.meta.url), "utf8");
+    const regularReportEditSource = readFileSync(new URL("./RegularReportEdit.jsx", import.meta.url), "utf8");
     const dialogSource = readFileSync(
       new URL("../components/InvoiceUploadResultDialog.jsx", import.meta.url),
       "utf8",
     );
 
     assert.match(reportEditSource, /setUploadResult\(\{ \.\.\.feedback, uploadedInvoices: confirmationQueue \}\)/);
+    assert.match(reportEditSource, /createInvoiceUploadWarnings\(file\.name, uploadedItems\)/);
+    assert.match(regularReportEditSource, /createInvoiceUploadWarnings\(file\.name, uploadedItems\)/);
     assert.match(reportEditSource, /const handleUploadResultContinue/);
     assert.match(dialogSource, /发票上传结果/);
     assert.match(dialogSource, /继续确认 \{uploadedInvoiceCount\} 张/);
     assert.match(dialogSource, /知道了/);
+    assert.match(dialogSource, /需要注意/);
     assert.match(dialogSource, /重复文件（未上传）/);
     assert.match(dialogSource, /上传失败/);
   });
@@ -910,6 +957,27 @@ describe("report edit utilities", () => {
     assert.equal(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: 1 }), "");
     assert.match(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: 0 }), /同时填写/);
     assert.match(validatePaperInvoice({ paper_invoice_amount: "12.00", paper_invoice_count: "1.5" }), /非负整数/);
+  });
+
+  it("counts electronic invoice pages while retaining one uploaded invoice record", () => {
+    const invoices = [
+      { id: 1, page_count: 4, amount_confirmed: true },
+      { id: 2, page_count: 2, amount_confirmed: false },
+      { id: 3, page_count: 0, amount_confirmed: true },
+    ];
+
+    assert.equal(invoices.length, 3);
+    assert.equal(getInvoicePageCount(invoices[0]), 4);
+    assert.equal(getInvoicePageCount(invoices[2]), 1);
+    assert.equal(getInvoicePageTotal(invoices), 7);
+    assert.equal(getConfirmedInvoiceCount(invoices), 5);
+
+    const invoiceListSource = readFileSync(
+      new URL("../features/report-edit-shared/InvoiceCardList.jsx", import.meta.url),
+      "utf8",
+    );
+    assert.match(invoiceListSource, /countUnit="份"/);
+    assert.match(invoiceListSource, /\{pageCount\} 页/);
   });
 
   it("filters zero-valued other expense items from summary details", () => {

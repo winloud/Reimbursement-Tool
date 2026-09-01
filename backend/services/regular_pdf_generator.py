@@ -112,7 +112,7 @@ def _active_item_attachments(report: ExpenseReport, item_id: int | None) -> list
 
 def regular_item_document_count(report: ExpenseReport, item: object) -> int:
     if report.regular_mode == "invoice":
-        return len(_active_item_invoices(report, item.id))
+        return sum(invoice.page_count for invoice in _active_item_invoices(report, item.id))
     return sum(max(int(attachment.page_count or 1), 1) for attachment in _active_item_attachments(report, item.id))
 
 

@@ -1,7 +1,7 @@
 # 报销单工具开发文档
 
 ## 当前状态
-- 当前源码版本：v1.4.1
+- 当前源码版本：v1.4.2
 - 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
 - 当前开发状态：[releases/active-plan.md](releases/active-plan.md)
 

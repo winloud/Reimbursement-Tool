@@ -2,6 +2,7 @@ import ipaddress
 import os
 import shutil
 import sys
+from dataclasses import dataclass
 from datetime import datetime
 from decimal import Decimal
 from hashlib import sha1
@@ -15,7 +16,7 @@ from sqlalchemy.orm import Session
 from backend.runtime_paths import PROJECT_ROOT, UPLOAD_ROOT, uploaded_path
 from backend.models.invoice import Invoice
 from backend.schemas.invoice import InvoiceParsedData, InvoiceUpdate
-from backend.services.invoice_parser import parse_invoice_file, parse_invoice_file_many
+from backend.services.invoice_parser import parse_invoice_file, parse_invoice_file_many, pdf_page_count
 from backend.services.settings_service import get_or_create_settings
 from backend.services.report_service import (
     EXPENSE_CATEGORIES,
@@ -36,6 +37,21 @@ from backend.services.invoice_duplicate_service import (
 )
 
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".bmp", ".gif", ".webp"}
+UPLOAD_WARNINGS_RAW_KEY = "upload_warnings"
+UNCLEAR_PDF_GROUPING_WARNING = (
+    "该多页 PDF 无法按发票号明确分组，已将完整 PDF 作为一张待确认发票上传；"
+    "如文件包含多张发票，请先拆分 PDF 后重新上传。"
+)
+NONCONTIGUOUS_PDF_GROUPING_WARNING = (
+    "检测到同一发票号的页面不连续，未自动重排或合并，已将完整 PDF 作为一张待确认发票上传；"
+    "建议先拆分 PDF。"
+)
+
+
+@dataclass(frozen=True)
+class ParsedInvoiceGroup:
+    parsed: InvoiceParsedData
+    page_indices: tuple[int, ...]
 
 
 def _invoice_file_path(relative_path: str | Path) -> Path:
@@ -82,6 +98,14 @@ def parse_invoice_files_with_engine(absolute_path: Path, file_type: str, invoice
         parsed_items = parse_invoice_file_many(absolute_path, file_type, invoice_qr_engine=invoice_qr_engine)
     except TypeError:
         return [parse_invoice_file(absolute_path, file_type)]
+    if file_type == "pdf":
+        if pdf_page_count(absolute_path) > 1:
+            return parsed_items
+        if not parsed_items or all(not item.raw.get("parse_success") for item in parsed_items):
+            fallback = parse_invoice_file_with_engine(absolute_path, file_type, invoice_qr_engine)
+            if fallback.invoice_no or fallback.invoice_date or fallback.amount > Decimal("0.00"):
+                return [fallback]
+        return parsed_items
     if not parsed_items or all(not item.raw.get("parse_success") for item in parsed_items):
         fallback = parse_invoice_file_with_engine(absolute_path, file_type, invoice_qr_engine)
         if fallback.invoice_no or fallback.invoice_date or fallback.amount > Decimal("0.00"):
@@ -230,30 +254,123 @@ def relocate_invoice_file(invoice: Invoice, file_hash: str) -> None:
     invoice.file_path = final_relative.as_posix()
 
 
-def split_pdf_page_to_upload_file(source_path: Path, report_id: int, expense_category: str, page_index: int) -> str:
+def split_pdf_pages_to_upload_file(
+    source_path: Path,
+    report_id: int,
+    expense_category: str,
+    page_indices: tuple[int, ...],
+) -> str:
     from pypdf import PdfReader, PdfWriter
 
     reader = PdfReader(str(source_path))
-    if page_index < 0 or page_index >= len(reader.pages):
-        raise ValueError("PDF 页码超出范围")
+    if not page_indices:
+        raise ValueError("PDF 分组不能为空")
     writer = PdfWriter()
-    writer.add_page(reader.pages[page_index])
+    for page_index in page_indices:
+        if page_index < 0 or page_index >= len(reader.pages):
+            raise ValueError("PDF 页码超出范围")
+        writer.add_page(reader.pages[page_index])
 
     upload_dir = UPLOAD_ROOT / str(report_id)
     upload_dir.mkdir(parents=True, exist_ok=True)
     filename_prefix = safe_category_filename_prefix(expense_category)
-    relative_path = Path("uploads") / str(report_id) / f"{filename_prefix}_invoice_page{page_index + 1}_{uuid4().hex}.pdf"
+    start_page = page_indices[0] + 1
+    end_page = page_indices[-1] + 1
+    page_label = f"page{start_page}" if start_page == end_page else f"pages{start_page}-{end_page}"
+    relative_path = Path("uploads") / str(report_id) / f"{filename_prefix}_invoice_{page_label}_{uuid4().hex}.pdf"
     absolute_path = _invoice_file_path(relative_path)
     with absolute_path.open("wb") as target:
         writer.write(target)
     return relative_path.as_posix()
 
 
-def parsed_page_index(parsed: InvoiceParsedData) -> int | None:
-    value = parsed.raw.get("page_index") if parsed.raw else None
-    if isinstance(value, int) and value >= 0:
-        return value
-    return None
+def _parsed_with_group_metadata(
+    parsed: InvoiceParsedData,
+    page_indices: tuple[int, ...],
+    source_page_count: int,
+    warning: str | None = None,
+) -> InvoiceParsedData:
+    raw = dict(parsed.raw or {})
+    normalized_invoice_no = (parsed.invoice_no or "").strip() or None
+    raw.update(
+        {
+            "group_page_numbers": [page_index + 1 for page_index in page_indices],
+            "group_page_count": len(page_indices),
+            "source_page_count": source_page_count,
+        }
+    )
+    if warning:
+        raw[UPLOAD_WARNINGS_RAW_KEY] = [warning]
+    return parsed.model_copy(update={"invoice_no": normalized_invoice_no, "raw": raw})
+
+
+def build_invoice_page_groups(
+    parsed_items: list[InvoiceParsedData],
+    source_page_count: int,
+) -> list[ParsedInvoiceGroup]:
+    if not parsed_items:
+        parsed_items = [InvoiceParsedData(raw={"source": "pdf"})]
+
+    actual_page_count = max(source_page_count, len(parsed_items), 1)
+    if actual_page_count <= 1:
+        parsed = _parsed_with_group_metadata(parsed_items[-1], (0,), actual_page_count)
+        return [ParsedInvoiceGroup(parsed=parsed, page_indices=(0,))]
+
+    all_page_indices = tuple(range(actual_page_count))
+    if len(parsed_items) != actual_page_count:
+        parsed = _parsed_with_group_metadata(
+            parsed_items[-1],
+            all_page_indices,
+            actual_page_count,
+            UNCLEAR_PDF_GROUPING_WARNING,
+        )
+        return [ParsedInvoiceGroup(parsed=parsed, page_indices=all_page_indices)]
+
+    normalized_numbers = [(parsed.invoice_no or "").strip() for parsed in parsed_items]
+    if any(not invoice_no for invoice_no in normalized_numbers):
+        parsed = _parsed_with_group_metadata(
+            parsed_items[-1],
+            all_page_indices,
+            actual_page_count,
+            UNCLEAR_PDF_GROUPING_WARNING,
+        )
+        return [ParsedInvoiceGroup(parsed=parsed, page_indices=all_page_indices)]
+
+    groups: list[tuple[str, list[int]]] = []
+    seen_numbers: set[str] = set()
+    for page_index, invoice_no in enumerate(normalized_numbers):
+        if groups and groups[-1][0] == invoice_no:
+            groups[-1][1].append(page_index)
+            continue
+        if invoice_no in seen_numbers:
+            parsed = _parsed_with_group_metadata(
+                parsed_items[-1],
+                all_page_indices,
+                actual_page_count,
+                NONCONTIGUOUS_PDF_GROUPING_WARNING,
+            )
+            return [ParsedInvoiceGroup(parsed=parsed, page_indices=all_page_indices)]
+        seen_numbers.add(invoice_no)
+        groups.append((invoice_no, [page_index]))
+
+    parsed_groups: list[ParsedInvoiceGroup] = []
+    for _invoice_no, group_page_indices in groups:
+        page_indices = tuple(group_page_indices)
+        representative = _parsed_with_group_metadata(
+            parsed_items[page_indices[-1]],
+            page_indices,
+            actual_page_count,
+        )
+        parsed_groups.append(ParsedInvoiceGroup(parsed=representative, page_indices=page_indices))
+    return parsed_groups
+
+
+def _pdf_group_subject(page_indices: tuple[int, ...]) -> str:
+    start_page = page_indices[0] + 1
+    end_page = page_indices[-1] + 1
+    if start_page == end_page:
+        return f"该发票文件中的第 {start_page} 页"
+    return f"该发票文件中的第 {start_page}-{end_page} 页"
 
 
 def upload_invoices(
@@ -285,32 +402,29 @@ def upload_invoices(
     if not parsed_items:
         parsed_items = [InvoiceParsedData(raw={"source": file_type})]
 
+    if file_type == "pdf":
+        parsed_groups = build_invoice_page_groups(parsed_items, pdf_page_count(absolute_path))
+    else:
+        parsed_groups = [ParsedInvoiceGroup(parsed=parsed_items[-1], page_indices=())]
+
     created: list[tuple[Invoice, InvoiceParsedData]] = []
     created_paths: list[Path] = []
-    seen_invoice_nos: set[str] = set()
-    seen_page_hashes: set[str] = set()
-    should_split_pdf = file_type == "pdf" and len(parsed_items) > 1
+    seen_group_hashes: set[str] = set()
+    should_split_pdf = file_type == "pdf" and len(parsed_groups) > 1
 
     try:
-        for parsed in parsed_items:
-            normalized_invoice_no = (parsed.invoice_no or "").strip()
-            if normalized_invoice_no:
-                if normalized_invoice_no in seen_invoice_nos:
-                    raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
-                        detail=f"识别到相同发票号 {normalized_invoice_no} 在本文件中重复，请拆分后再上传",
-                    )
-                seen_invoice_nos.add(normalized_invoice_no)
+        for parsed_group in parsed_groups:
+            parsed = parsed_group.parsed
             ensure_no_duplicate_invoice_no(duplicate_index, report_id, parsed.invoice_no)
 
             item_relative_path = relative_path
-            page_number: int | None = None
             if should_split_pdf:
-                page_index = parsed_page_index(parsed)
-                if page_index is None:
-                    page_index = len(created)
-                page_number = page_index + 1
-                item_relative_path = split_pdf_page_to_upload_file(absolute_path, report_id, expense_category, page_index)
+                item_relative_path = split_pdf_pages_to_upload_file(
+                    absolute_path,
+                    report_id,
+                    expense_category,
+                    parsed_group.page_indices,
+                )
                 created_paths.append(_invoice_file_path(item_relative_path))
 
             item_path = _invoice_file_path(item_relative_path)
@@ -322,14 +436,17 @@ def upload_invoices(
                     report_id,
                     item_path.stat().st_size,
                     calculated_item_hash,
-                    subject=f"该发票文件中的第 {page_number} 页",
+                    subject=_pdf_group_subject(parsed_group.page_indices),
                 )
-                if calculated_item_hash in seen_page_hashes:
+                if calculated_item_hash in seen_group_hashes:
                     raise HTTPException(
                         status_code=status.HTTP_409_CONFLICT,
-                        detail=f"该发票文件中的第 {page_number} 页与本文件中的其他页面内容完全相同，请删除重复页后再上传",
+                        detail=(
+                            f"{_pdf_group_subject(parsed_group.page_indices)}"
+                            "与本文件中的其他发票分组内容完全相同，请拆分并删除重复内容后再上传"
+                        ),
                     )
-                seen_page_hashes.add(calculated_item_hash)
+                seen_group_hashes.add(calculated_item_hash)
 
             invoice = Invoice(
                 report_id=report_id,

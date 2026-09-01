@@ -26,6 +26,7 @@ import {
   calculateSummary,
   cloneTripAfter,
   createInvoiceUploadIssue,
+  createInvoiceUploadWarnings,
   emptyForm,
   getAddableExpenseCategories,
   getExpenseItemAmount,
@@ -991,6 +992,7 @@ export default function ReportEdit() {
             throw new Error("服务器未返回发票信息");
           }
           uploaded.push(...uploadedItems);
+          issues.push(...createInvoiceUploadWarnings(file.name, uploadedItems));
           successfulFileCount += 1;
         } catch (err) {
           issues.push(
