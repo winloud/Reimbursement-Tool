@@ -43,8 +43,18 @@ def test_app_root_prefers_tauri_injected_runtime_root(monkeypatch: pytest.Monkey
     """Tauri 通过 REIMBURSEMENT_APP_ROOT 注入 AppLocalData runtime 目录（ADR 0009）。"""
     configured_root = tmp_path / "runtime"
     monkeypatch.setenv("REIMBURSEMENT_APP_ROOT", str(configured_root))
+    monkeypatch.delattr(runtime_paths.sys, "frozen", raising=False)
 
     assert runtime_paths.app_root() == configured_root
+    assert runtime_paths.upload_root() == configured_root / "uploads"
+
+
+def test_source_upload_root_falls_back_without_tauri_injection(monkeypatch: pytest.MonkeyPatch):
+    """普通源码开发未注入 Tauri runtime 时继续使用仓库内的上传目录。"""
+    monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
+    monkeypatch.delattr(runtime_paths.sys, "frozen", raising=False)
+
+    assert runtime_paths.upload_root() == ROOT / "backend" / "uploads"
 
 
 def test_frozen_sidecar_root_falls_back_to_executable_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
@@ -58,6 +68,7 @@ def test_frozen_sidecar_root_falls_back_to_executable_dir(monkeypatch: pytest.Mo
     monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
 
     assert runtime_paths.app_root() == exe_dir
+    assert runtime_paths.upload_root() == exe_dir / "uploads"
 
 
 def test_frozen_zip_app_root_detects_portable_install_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):

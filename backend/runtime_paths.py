@@ -31,12 +31,21 @@ def app_root() -> Path:
     return SOURCE_ROOT
 
 
+def upload_root() -> Path:
+    # Tauri 开发模式使用源码 Python sidecar（非 frozen），但仍会注入
+    # REIMBURSEMENT_APP_ROOT。此时附件必须与数据库一起落在 AppLocalData
+    # runtime；只有未注入 Tauri 路径的普通源码开发才使用 backend/uploads。
+    if os.environ.get("REIMBURSEMENT_APP_ROOT") or is_frozen_app():
+        return app_root() / "uploads"
+    return SOURCE_ROOT / "backend" / "uploads"
+
+
 PROJECT_ROOT = SOURCE_ROOT
 BUNDLE_ROOT = bundle_root()
 APP_ROOT = app_root()
 DATA_DIR = APP_ROOT / "data"
 DATABASE_PATH = DATA_DIR / "expense.db"
-UPLOAD_ROOT = APP_ROOT / "uploads" if is_frozen_app() else PROJECT_ROOT / "backend" / "uploads"
+UPLOAD_ROOT = upload_root()
 LOG_DIR = APP_ROOT / "logs"
 FRONTEND_DIST_DIR = BUNDLE_ROOT / "frontend" / "dist"
 
