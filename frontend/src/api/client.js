@@ -35,10 +35,16 @@ export const initRuntimeConfig = () => {
 // 配置加载失败时 await 会抛错，请求失败——此时 sidecar 未就绪，属启动错误。
 apiClient.interceptors.request.use(async (requestConfig) => {
   if (!runtimeConfigReady) initRuntimeConfig();
+  let runtimeConfig = null;
   try {
-    await runtimeConfigReady;
+    runtimeConfig = await runtimeConfigReady;
   } catch {
     // 配置加载失败：令牌缺失，放行请求让其按原逻辑失败，避免永久卡死后续请求。
+  }
+  // Axios 会在进入请求拦截器前把 defaults 合并到当前请求配置；只更新
+  // apiClient.defaults.baseURL 不会影响这一次已经创建的请求。
+  if (runtimeConfig?.api_base_url && isInTauriEnvironment()) {
+    requestConfig.baseURL = runtimeConfig.api_base_url.replace(/\/$/, "");
   }
   if (sessionToken) {
     requestConfig.headers = requestConfig.headers || {};

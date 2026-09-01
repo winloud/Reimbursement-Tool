@@ -42,6 +42,7 @@ describe("lazy runtime config initialization", () => {
 
       assert.deepEqual(invokeCalls, ["get_runtime_config"]);
       assert.equal(apiClient.defaults.baseURL, "http://127.0.0.1:51234");
+      assert.equal(capturedConfig.baseURL, "http://127.0.0.1:51234");
       assert.equal(capturedConfig.headers["X-Session-Token"], "sid-lazy-init");
     } finally {
       apiClient.defaults.adapter = originalAdapter;
