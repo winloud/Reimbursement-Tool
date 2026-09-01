@@ -18,8 +18,9 @@
 
 ## 技术决策
 - decisions/
-- ZIP 桌面升级路线（v1.x，已被 0009 取代）：[decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md)
-- Tauri + NSIS + AppLocalData 桌面发行（v2.0.0）：[decisions/0009-tauri-nsis-applocaldata.md](decisions/0009-tauri-nsis-applocaldata.md)
+- ZIP 桌面升级路线：[decisions/0002-portable-install-root.md](decisions/0002-portable-install-root.md)
+- Tauri + NSIS + AppLocalData 桌面发行：[decisions/0009-tauri-nsis-applocaldata.md](decisions/0009-tauri-nsis-applocaldata.md)
+- 同源双 Target 决策：[decisions/0010-dual-desktop-targets.md](decisions/0010-dual-desktop-targets.md)
 - 发布治理与不可变 tag：[decisions/0003-release-governance.md](decisions/0003-release-governance.md)
 - 铁路客票文本解码与中转分组：[decisions/0004-rail-ticket-pdf-text-decoding.md](decisions/0004-rail-ticket-pdf-text-decoding.md)
 - 桌面端视口支持边界：[decisions/0005-desktop-viewport-support.md](decisions/0005-desktop-viewport-support.md)

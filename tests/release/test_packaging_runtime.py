@@ -47,8 +47,8 @@ def test_app_root_prefers_tauri_injected_runtime_root(monkeypatch: pytest.Monkey
     assert runtime_paths.app_root() == configured_root
 
 
-def test_frozen_app_root_falls_back_to_executable_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
-    """缺少注入变量时冻结 sidecar 回退到 exe 目录，不再解析旧 versions/ 布局。"""
+def test_frozen_sidecar_root_falls_back_to_executable_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    """独立启动冻结 sidecar 且没有 Tauri 注入时回退到 exe 目录。"""
     exe_dir = tmp_path / "reimbursement-sidecar"
     exe_dir.mkdir(parents=True)
     exe_path = exe_dir / "reimbursement-sidecar.exe"
@@ -58,6 +58,17 @@ def test_frozen_app_root_falls_back_to_executable_dir(monkeypatch: pytest.Monkey
     monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
 
     assert runtime_paths.app_root() == exe_dir
+
+
+def test_frozen_zip_app_root_detects_portable_install_root(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    exe_path = tmp_path / "报销管理" / "versions" / "1.4.2" / "报销管理.exe"
+    exe_path.parent.mkdir(parents=True)
+    exe_path.write_bytes(b"exe")
+    monkeypatch.delenv("REIMBURSEMENT_APP_ROOT", raising=False)
+    monkeypatch.setattr(runtime_paths.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(runtime_paths.sys, "executable", str(exe_path))
+
+    assert runtime_paths.app_root() == tmp_path / "报销管理"
 
 
 def test_app_version_prefers_tauri_injected_version(monkeypatch: pytest.MonkeyPatch):
@@ -72,6 +83,17 @@ def test_app_version_falls_back_to_default_without_injection(monkeypatch: pytest
     assert app_metadata.resolve_app_version() == app_metadata.DEFAULT_APP_VERSION
 
 
+def test_zip_app_version_detects_portable_version_dir(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    exe_path = tmp_path / "报销管理" / "versions" / "1.4.2-preview-20260901-001" / "报销管理.exe"
+    exe_path.parent.mkdir(parents=True)
+    exe_path.write_bytes(b"exe")
+    monkeypatch.delenv("REIMBURSEMENT_APP_VERSION", raising=False)
+    monkeypatch.setattr(app_metadata.sys, "frozen", True, raising=False)
+    monkeypatch.setattr(app_metadata.sys, "executable", str(exe_path))
+
+    assert app_metadata.resolve_app_version() == "1.4.2-preview-20260901-001"
+
+
 def test_sidecar_spec_excludes_frontend_and_pywebview():
     spec = (ROOT / "reimbursement_sidecar.spec").read_text(encoding="utf-8")
 
@@ -82,11 +104,11 @@ def test_sidecar_spec_excludes_frontend_and_pywebview():
     assert 'name="reimbursement-sidecar"' in spec
 
 
-def test_packaging_requirements_drop_pywebview():
+def test_packaging_requirements_support_both_desktop_targets():
     requirements = (ROOT / "backend" / "requirements-packaging.txt").read_text(encoding="utf-8")
 
     assert "pyinstaller" in requirements
-    assert "pywebview" not in requirements
+    assert "pywebview" in requirements
 
 
 def test_tauri_build_script_stages_sidecar_and_generates_feed():
@@ -108,14 +130,14 @@ def test_opencv_runtime_script_is_standalone():
     assert "opencv_package_version" in script
     assert "numpy_version" in script
     assert "assets\\opencv-wechat-qrcode" in script
-    # 便携 ZIP 链路已删除，运行时包脚本不得再引用 launcher/versions/portable manifest。
+    # OpenCV 包保持独立，不绑定任一桌面壳或便携 manifest。
     assert "reimbursement_launcher.spec" not in script
     assert "portable-release.json" not in script
     assert "versions" not in script
 
 
-def test_legacy_portable_zip_chain_is_removed():
-    for legacy in (
+def test_zip_and_tauri_packaging_chains_coexist():
+    for zip_asset in (
         "desktop_app.py",
         "desktop_dependencies.py",
         "portable_launcher.py",
@@ -126,4 +148,35 @@ def test_legacy_portable_zip_chain_is_removed():
         "scripts/upgrade_zip_release.ps1",
         "docs/zip-upgrade-guide.md",
     ):
-        assert not (ROOT / legacy).exists(), f"legacy portable ZIP chain file still present: {legacy}"
+        assert (ROOT / zip_asset).exists(), f"ZIP target asset is missing: {zip_asset}"
+
+    for tauri_asset in (
+        "sidecar_app.py",
+        "reimbursement_sidecar.spec",
+        "scripts/build_tauri_release.ps1",
+        "scripts/validate_tauri_release.ps1",
+        "src-tauri/tauri.conf.json",
+    ):
+        assert (ROOT / tauri_asset).exists(), f"Tauri target asset is missing: {tauri_asset}"
+
+
+def test_zip_build_script_keeps_the_v142_portable_contract():
+    script = (ROOT / "scripts" / "build_release.ps1").read_text(encoding="utf-8-sig")
+
+    assert "reimbursement_tool.spec" in script
+    assert "reimbursement_launcher.spec" in script
+    assert "portable-release.json" in script
+    assert '"versions\\$PackageVersion"' in script
+    assert "scripts\\upgrade_zip_release.ps1" in script
+    assert "data_schema_version = $DataSchemaVersion" in script
+
+
+def test_target_build_outputs_are_separate():
+    zip_script = (ROOT / "scripts" / "build_release.ps1").read_text(encoding="utf-8-sig")
+    tauri_script = (ROOT / "scripts" / "build_tauri_release.ps1").read_text(encoding="utf-8-sig")
+
+    assert 'dist\\$AppName' in zip_script
+    assert 'Join-Path $Root "release"' in zip_script
+    assert 'dist\\reimbursement-sidecar' in tauri_script
+    assert 'Join-Path $TauriSrcDir "target\\release\\bundle\\nsis"' in tauri_script
+    assert 'Join-Path $Root "dist-feed"' in tauri_script

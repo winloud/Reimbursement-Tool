@@ -15,26 +15,48 @@ from backend.schemas.maintenance import (
     BackupRead,
     DatabaseIntegrityCheckRead,
     MaintenanceInfoRead,
+    RestartRead,
     RestoreDialogPreviewRead,
     RestoreExecuteRead,
     RestoreExecuteRequest,
     RestorePreviewRead,
+    UpdateStagingCleanupRead,
+    UpdateStagingCleanupRequest,
+    UpdateExecuteRead,
+    UpdateExecuteRequest,
+    UpdatePreviewRead,
+    VersionCleanupRead,
+    VersionCleanupRequest,
+    VersionDeleteRead,
+    VersionDeleteRequest,
+    VersionSwitchRead,
+    VersionSwitchRequest,
 )
 from backend.services.maintenance_service import (
     build_diagnostics_package,
     check_database_integrity,
+    cleanup_selected_update_staging,
     cleanup_old_backups,
+    cleanup_old_installed_versions,
     create_backup,
     create_restore_preview,
     create_restore_preview_from_backup_dialog,
+    create_update_preview,
     delete_backup,
+    delete_installed_version,
     execute_restore,
+    execute_update,
     get_backup_file,
     get_maintenance_info,
     list_backups,
+    request_application_restart,
+    switch_installed_version,
 )
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
+# 阶段 2 临时边界：ZIP 便携更新/版本切换只在未启用 Tauri 会话令牌时注册。
+# 阶段 3/4 再把这个判断收敛到正式的平台与后端 Target 配置层。
+zip_router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
 @router.get("/info", response_model=ApiResponse[MaintenanceInfoRead])
@@ -88,6 +110,43 @@ def post_restore_dialog_preview() -> ApiResponse[RestoreDialogPreviewRead]:
 @router.post("/restore/execute", response_model=ApiResponse[RestoreExecuteRead])
 def post_restore_execute(payload: RestoreExecuteRequest) -> ApiResponse[RestoreExecuteRead]:
     return ApiResponse(data=execute_restore(payload.preview_id, payload.confirm_restore), message="恢复完成")
+
+
+@zip_router.post("/updates/preview", response_model=ApiResponse[UpdatePreviewRead])
+def post_update_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[UpdatePreviewRead]:
+    return ApiResponse(data=create_update_preview(file), message="更新包预览已生成")
+
+
+@zip_router.post("/updates/execute", response_model=ApiResponse[UpdateExecuteRead])
+def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExecuteRead]:
+    return ApiResponse(data=execute_update(payload.preview_id, payload.confirm_update), message="更新已安装，重启后生效")
+
+
+@zip_router.post("/updates/staging/cleanup", response_model=ApiResponse[UpdateStagingCleanupRead])
+def post_update_staging_cleanup(payload: UpdateStagingCleanupRequest) -> ApiResponse[UpdateStagingCleanupRead]:
+    result = cleanup_selected_update_staging(payload.preview_ids, payload.confirm_cleanup)
+    message = "更新暂存包已清理" if not result.failed_packages else "部分更新暂存包清理失败"
+    return ApiResponse(data=result, message=message)
+
+
+@zip_router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])
+def post_version_switch(payload: VersionSwitchRequest) -> ApiResponse[VersionSwitchRead]:
+    return ApiResponse(data=switch_installed_version(payload.version, payload.confirm_switch), message="版本已切换，重启后生效")
+
+
+@zip_router.delete("/versions/{version}", response_model=ApiResponse[VersionDeleteRead])
+def delete_version(version: str, payload: VersionDeleteRequest) -> ApiResponse[VersionDeleteRead]:
+    return ApiResponse(data=delete_installed_version(version, payload.confirm_delete), message="版本已删除")
+
+
+@zip_router.post("/versions/cleanup", response_model=ApiResponse[VersionCleanupRead])
+def post_version_cleanup(payload: VersionCleanupRequest) -> ApiResponse[VersionCleanupRead]:
+    return ApiResponse(data=cleanup_old_installed_versions(payload.confirm_cleanup), message="旧版本已清理")
+
+
+@zip_router.post("/restart", response_model=ApiResponse[RestartRead])
+def post_restart() -> ApiResponse[RestartRead]:
+    return ApiResponse(data=request_application_restart(), message="正在重启程序")
 
 
 @router.get("/diagnostics")

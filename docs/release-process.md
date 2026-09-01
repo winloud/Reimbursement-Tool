@@ -10,9 +10,22 @@
 - 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
 - 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
-## v2.0.0 起：Tauri NSIS 发行
+## 双 Target 过渡期入口
 
-v2.0.0 起桌面发行改为 Tauri NSIS 安装包 + GitHub Releases updater feed（见 ADR 0009）。构建脚本为 `scripts/build_tauri_release.ps1`，取代旧 `build_release.ps1` 的便携 ZIP 逻辑：
+- ZIP：`scripts/build_release.ps1`、`scripts/validate_zip_release.ps1`、`scripts/release_publish_zip.ps1`，远端任务为手动触发的 `Publish ZIP Release`。
+- Tauri：`scripts/build_tauri_release.ps1`、`scripts/validate_tauri_release.ps1`、`scripts/release_publish.ps1`，远端任务为 `Publish Release`。
+- 两条链共享业务版本文件和测试，但运行数据、桌面壳、更新器及构建输出隔离。阶段 5 再统一命令与 CI 编排。
+
+ZIP 本地预览示例：
+
+```powershell
+powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -PreviewSerial 001 -ReleaseDate 20260901
+# 正式 X.Y.Z 本地包使用 validate_zip_release.ps1 校验；预览包由 build_release.ps1 内置结构及测试检查。
+```
+
+## Tauri NSIS Target
+
+Tauri 桌面发行使用 NSIS 安装包 + GitHub Releases updater feed（见 ADR 0009、0010），与便携 ZIP Target 并行。构建脚本为 `scripts/build_tauri_release.ps1`：
 
 ```powershell
 # 本地构建（测试密钥，不签名）
@@ -67,7 +80,7 @@ powershell -File scripts\build_tauri_release.ps1 -Version X.Y.Z -ReleaseDate yyy
 
 未设这两个变量时构建脚本会跳过签名并给出警告，产出的包只能用于安装测试，不能用于更新测试。
 
-旧便携 ZIP 流程（`build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 多版本目录、`portable-release.json`）已在阶段 8 删除。`validate_release_asset.ps1` 改为校验已发布 Release 上的 NSIS 安装包、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
+便携 ZIP 流程继续保留 `build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 和 `portable-release.json`；其校验入口为 `validate_zip_release.ps1`。Tauri 的 `validate_release_asset.ps1` 继续校验已发布 Release 上的 NSIS、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
 
 ## 当前计划生命周期
 

@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳（取代 ADR 0002）。
+已采纳；“取代 ZIP”的单轨结论已被 [ADR 0010](0010-dual-desktop-targets.md) 修订，Tauri 现在是并行 Target。
 
 ## 背景
 
@@ -65,4 +65,4 @@ Windows 桌面版用 Tauri 管理窗口、安装、更新和进程生命周期�
 - 引入 Rust 工具链（Rust stable MSVC + VS 2022 C++ Build Tools）作为构建依赖。
 - 包体不会大幅缩小，离线包因 WebView2 installer 额外增加约 127 MB。
 - 首期不做 Authenticode，未签名 NSIS 在全新 Windows 11 上首次更新可能被 SmartScreen 拦截，需用户手动信任。
-- 取代 ADR 0002 的便携 ZIP 方案；旧便携目录用户需首次迁移到 `runtime`。
+- 选择 Tauri Target 的旧便携用户需首次迁移到 `runtime`；ZIP Target 本身继续遵循 ADR 0002。

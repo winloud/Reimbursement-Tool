@@ -17,14 +17,17 @@ def bundle_root() -> Path:
 
 
 def app_root() -> Path:
-    # v2.0.0 起运行数据固定在 %LOCALAPPDATA%\com.winloud.reimbursementtool\runtime，
-    # 由 Tauri 通过 REIMBURSEMENT_APP_ROOT 注入（见 ADR 0009）。冻结产物在缺少该变量时
-    # 回退到 exe 所在目录，仅用于脱离桌面壳直接运行 sidecar 的排查场景。
+    # Tauri 通过 REIMBURSEMENT_APP_ROOT 注入 AppLocalData runtime，必须优先于
+    # 任何冻结产物路径推断。ZIP 未注入该变量时，继续识别 versions/<version>/
+    # 便携布局；独立 sidecar 则回退到自身 exe 目录。
     configured_root = os.environ.get("REIMBURSEMENT_APP_ROOT")
     if configured_root:
         return Path(configured_root).resolve()
     if is_frozen_app():
-        return Path(sys.executable).resolve().parent
+        executable_dir = Path(sys.executable).resolve().parent
+        if executable_dir.parent.name == "versions":
+            return executable_dir.parent.parent
+        return executable_dir
     return SOURCE_ROOT
 
 

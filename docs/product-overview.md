@@ -14,7 +14,7 @@
 - 自动统计发票页数、发票金额、补贴金额和报销总额；电子发票按附件实际页数统计，纸质发票按登记张数统计。
 - 生成可预览、可下载的报销 PDF。
 - 支持历史数据筛选、批量操作、导入导出和看板统计。
-- 通过 Tauri NSIS 安装包发布为 Windows 桌面工具，业务后端以 PyInstaller onedir API sidecar 运行。
+- 同一套 React、FastAPI、SQLite 和业务服务同时支持便携 ZIP 与 Tauri NSIS 两种 Windows 桌面 Target。
 
 ---
 
@@ -22,9 +22,9 @@
 
 - 当前源码与公开版本：[文档地图的当前状态](README.md#当前状态)
 - 当前开发范围与状态：[当前开发计划](releases/active-plan.md)
-- 当前发布产物命名：`报销管理_X.Y.Z_x64-setup.exe`（常规联网包与完全离线包各一份）
+- ZIP 产物命名：`报销管理-vX.Y.Z-yyyymmdd.zip`；Tauri 产物命名：`报销管理_X.Y.Z_x64-setup.exe`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-<opencv-package-version>-win_amd64.zip`
-- 发布方式：正式版本从 `main` 创建不可变 `vX.Y.Z` tag，由 GitHub Actions 构建、验证并发布 GitHub Release；用户运行 NSIS 安装包完成当前用户安装，后续由 `latest.json` updater feed 自动升级
+- 发布方式：ZIP 与 Tauri 使用独立构建/校验入口；阶段 5 再统一双 Target pipeline。正式发布仍遵循 `main` 与不可变 tag 治理。
 - 默认发票二维码识别路线：`zxing-cpp`
 - 可选兼容路线：`OpenCV + NumPy + WeChatQRCode`，通过解压 runtime ZIP 到 `runtime/vendor/` 本地安装
 
@@ -53,7 +53,7 @@
 
 ### 数据与统计
 
-- SQLite 本地存储，运行态数据位于 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime` 的 `data/`、`uploads/`、`logs/`。
+- SQLite 本地存储；ZIP 数据位于便携根目录，Tauri 数据位于 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，两者不共享运行目录。
 - 支持包含电子发票和非发票附件的完整报销数据 ZIP 导入导出，导入执行前自动备份数据库和受影响附件。
 - 独立“数据维护”页面支持完整备份、恢复预览、恢复执行、备份清理、数据库检查和诊断包导出。
 - 桌面更新包含数据结构兼容性门禁；缺少兼容性信息或不兼容时禁止自动安装。
@@ -63,7 +63,7 @@
 
 - 前端：React 18 + Vite + MUI。
 - 后端：FastAPI + SQLAlchemy + SQLite。
-- 桌面壳：Tauri（Rust）管理窗口、单实例、安装、更新和 sidecar 进程生命周期。
-- 桌面启动：Tauri 启动 PyInstaller onedir API sidecar（随机本机端口 + 会话令牌鉴权），等待 ready 握手后加载业务界面；退出与崩溃均由 Windows Job Object 回收 sidecar。
-- 打包：`scripts/build_tauri_release.ps1 -Version <version>` 产出签名 NSIS 安装包与 `latest.json` updater feed。
+- ZIP 桌面壳：`desktop_app.py` 启动 FastAPI 随机本机端口，按 Chrome app-mode、pywebview、Edge 回退顺序打开共享前端；launcher 管理 `versions/` 和便携数据根目录。
+- Tauri 桌面壳：Rust 管理窗口、单实例、安装、更新和 sidecar 生命周期；sidecar 使用随机端口、会话令牌和 ready 握手，由 Windows Job Object 回收。
+- 打包：`scripts/build_release.ps1` 产出便携 ZIP；`scripts/build_tauri_release.ps1` 产出 NSIS 与 updater feed。
 - 主发布包默认不包含 OpenCV、NumPy、WeChatQRCode 模型。

@@ -10,14 +10,14 @@
 
 ## 目标
 
-- [x] 用 Tauri 取代 `desktop_app.py` 桌面壳，Tauri 管窗口、安装、更新和进程生命周期。
-- [x] 现有 Python 后端改为 PyInstaller API sidecar（只提供 API，不携带前端和 pywebview）。
-- [x] 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，提供从旧便携版迁移。
-- [x] 更新改用 GitHub Releases `latest.json` + 签名 NSIS + `passive` 安装模式。
+- [x] 在不替换稳定 ZIP Target 的前提下增加 Tauri 桌面壳，Tauri 管窗口、安装、更新和进程生命周期。
+- [x] Tauri 使用 PyInstaller API sidecar；ZIP 继续使用 `desktop_app.py` 和 pywebview/Chrome 回退。
+- [x] Tauri 数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`；ZIP 继续使用便携根目录，两者隔离。
+- [x] Tauri 更新使用 GitHub Releases `latest.json` + 签名 NSIS；ZIP 保留原有整包更新和版本切换。
 
 ## 范围
 
-- 本轮包含：Tauri 桌面壳与发行体系整体迁移，详见 `docs/decisions/0009-tauri-nsis-applocaldata.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
+- 本轮包含：在共享业务源码上并行保留 ZIP 与 Tauri 两种桌面 Target，详见 `docs/decisions/0010-dual-desktop-targets.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
 - 本轮不包含：Authenticode 代码签名（首期不做，保留 SmartScreen 风险说明）；差分更新；Linux 服务器部署同步（未明确版本号和发布前验证前不主动同步或部署）。
 
 ## 验收条件

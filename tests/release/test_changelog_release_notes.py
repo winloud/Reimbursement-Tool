@@ -63,7 +63,7 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "release-manifest.json" in workflow
     assert "SHA256SUMS.txt" in workflow
     assert "releases/assets/$($asset.id)" not in workflow
-    # 便携 ZIP 发布链路已删除。
+    # Tauri 发布工作流保持单一职责，不混入并行 ZIP 工作流。
     assert "build_release.ps1" not in workflow
     assert "BuildOpenCvRuntime" not in workflow
 
@@ -88,7 +88,7 @@ def test_preview_workflow_manually_builds_artifact_without_publishing_release():
     assert '$artifactBaseName = "reimbursement-tool-v$version-$previewId"' in workflow
     assert "gh release create" not in workflow
     assert "contents: read" in workflow
-    # 便携 ZIP 预览链路已删除。
+    # Tauri 预览工作流保持单一职责，ZIP 使用 build-zip-preview.yml。
     assert "build_release.ps1" not in workflow
     assert "portable-release.json" not in workflow
 
@@ -157,7 +157,7 @@ def test_release_asset_validator_checks_nsis_and_updater_feed_contract():
     assert "windows-x86_64" in script
     assert "min_data_schema_version" in script
     assert "opencv-wechat-runtime-*.zip" in script
-    # 便携 ZIP 契约已删除。
+    # Tauri 远端 validator 不混入 ZIP 契约；ZIP 使用 validate_zip_release.ps1。
     assert "portable-release.json" not in script
     assert "current-version.json" not in script
     assert "ZipPath" not in script

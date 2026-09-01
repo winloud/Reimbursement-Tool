@@ -6,7 +6,7 @@
 2. **安装说明**：把安装包复制到用户电脑后，安装和运行需要哪些依赖、程序会自动处理什么。
 
 v2.0.0 起桌面发行改为 Tauri NSIS 安装包 + API sidecar（见 `docs/decisions/0009-tauri-nsis-applocaldata.md`），
-旧的便携 ZIP、`versions/` 多版本目录和 Chrome app-mode / pywebview 三级窗口回退已删除。
+Tauri 安装包自身不包含便携 ZIP 的 `versions/`、Chrome app-mode 或 pywebview；这些能力只属于并行的 ZIP Target。
 
 ---
 

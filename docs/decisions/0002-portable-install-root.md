@@ -2,7 +2,7 @@
 
 ## 状态
 
-已被取代（见 [ADR 0009](0009-tauri-nsis-applocaldata.md)）。本文记录的便携 ZIP 方案适用于 v1.x 发行，v2.0.0 起改用 Tauri + NSIS + AppLocalData。
+已重新启用，作为与 Tauri 并行的 ZIP Target；双 Target 边界见 [ADR 0010](0010-dual-desktop-targets.md)。
 
 ## 背景
 

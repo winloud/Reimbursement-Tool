@@ -197,6 +197,53 @@ export const executeMaintenanceRestore = async (payload) => {
   return response.data;
 };
 
+export const previewMaintenanceUpdate = async (file) => {
+  const formData = new FormData();
+  formData.append("file", file);
+  const response = await apiClient.post("/api/maintenance/updates/preview", formData, {
+    headers: { "Content-Type": "multipart/form-data" },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const executeMaintenanceUpdate = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/updates/execute", payload, { timeout: 120000 });
+  return response.data;
+};
+
+export const cleanupMaintenanceUpdateStaging = async (previewIds) => {
+  const response = await apiClient.post(
+    "/api/maintenance/updates/staging/cleanup",
+    { preview_ids: previewIds, confirm_cleanup: true },
+    { timeout: 120000 },
+  );
+  return response.data;
+};
+
+export const switchMaintenanceVersion = async (payload) => {
+  const response = await apiClient.post("/api/maintenance/versions/switch", payload, { timeout: 120000 });
+  return response.data;
+};
+
+export const deleteMaintenanceVersion = async (version) => {
+  const response = await apiClient.delete(`/api/maintenance/versions/${encodeURIComponent(version)}`, {
+    data: { confirm_delete: true },
+    timeout: 120000,
+  });
+  return response.data;
+};
+
+export const cleanupMaintenanceVersions = async () => {
+  const response = await apiClient.post("/api/maintenance/versions/cleanup", { confirm_cleanup: true }, { timeout: 120000 });
+  return response.data;
+};
+
+export const restartMaintenanceApp = async () => {
+  const response = await apiClient.post("/api/maintenance/restart", null, { timeout: 5000 });
+  return response.data;
+};
+
 export const downloadMaintenanceDiagnostics = async () => {
   try {
     const response = await apiClient.get("/api/maintenance/diagnostics", {

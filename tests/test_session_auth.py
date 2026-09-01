@@ -5,6 +5,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from backend.main import create_app
 from backend.middleware.session_auth import SESSION_ENV, SESSION_HEADER, SessionAuthMiddleware
 
 
@@ -76,3 +77,27 @@ def test_protected_route_accepts_correct_token(client, monkeypatch):
     with TestClient(app) as c:
         response = c.get("/api/reports", headers={SESSION_HEADER: "secret-token"})
         assert response.status_code == 200
+
+
+def test_zip_maintenance_routes_are_registered_without_tauri_token(monkeypatch, tmp_path):
+    monkeypatch.delenv(SESSION_ENV, raising=False)
+
+    app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
+    paths = {route.path for route in app.routes}
+
+    assert "/api/maintenance/info" in paths
+    assert "/api/maintenance/updates/preview" in paths
+    assert "/api/maintenance/versions/switch" in paths
+    assert "/api/maintenance/restart" in paths
+
+
+def test_tauri_session_disables_zip_maintenance_routes(monkeypatch, tmp_path):
+    monkeypatch.setenv(SESSION_ENV, "secret-token")
+
+    app = create_app(frontend_dist_dir=tmp_path, enable_startup=False)
+    paths = {route.path for route in app.routes}
+
+    assert "/api/maintenance/info" in paths
+    assert "/api/maintenance/updates/preview" not in paths
+    assert "/api/maintenance/versions/switch" not in paths
+    assert "/api/maintenance/restart" not in paths

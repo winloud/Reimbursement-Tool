@@ -1,8 +1,8 @@
 // 阶段 6：程序更新区块（Tauri updater）。
 //
-// 取代旧 ZIP 更新 UI：检查更新 -> 显示版本与数据结构兼容性 ->
+// Tauri 专用更新 UI：检查更新 -> 显示版本与数据结构兼容性 ->
 // 用户确认 -> 安装（pre_update 备份 + 停 sidecar + 下载验签 + passive 安装）。
-// 浏览器模式显示不支持提示。
+// ZIP/浏览器模式由 MaintenanceSections.jsx 中的便携更新 UI 处理。
 
 import { useState } from "react";
 import {

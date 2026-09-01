@@ -4,6 +4,9 @@
 
 ## Unreleased
 
+- 恢复便携 ZIP 桌面壳、launcher、PyInstaller、整包升级/版本切换和独立构建校验链，与现有 Tauri Target 在同一源码提交中并存。
+- Tauri 的 AppLocalData、会话令牌、原生保存和 updater 路线保持独立；ZIP 继续使用便携目录和无 session token 的本机 API。
+
 ### Changed
 
 - 桌面版改由 Tauri 承载窗口、安装、更新和进程生命周期，业务后端改为只提供 HTTP API 的 PyInstaller sidecar（随机本机端口 + 会话令牌鉴权），不再依赖 Chrome app-mode / pywebview / Edge 三级窗口回退。

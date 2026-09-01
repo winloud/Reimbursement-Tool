@@ -4,7 +4,7 @@
 
 ## 版本定位
 
-报销管理 V1.4.2 是一个本地单机运行的出差旅费报销管理工具，用于录入出差信息、管理发票、生成公司模板报销 PDF，并查看历史报销统计。桌面端由 Tauri 承载窗口、安装、更新和进程生命周期，业务后端以本机 API sidecar 方式运行。
+报销管理 V1.4.2 是一个本地单机运行的出差旅费报销管理工具，用于录入出差信息、管理发票、生成公司模板报销 PDF，并查看历史报销统计。同一套业务源码同时保留便携 ZIP（Chrome/pywebview）与 Tauri 两种桌面 Target。
 
 ## 核心功能
 
@@ -22,11 +22,22 @@
 ## 运行要求
 
 - Windows 10 / Windows 11 64 位
-- Microsoft Edge WebView2 Runtime；常规安装包在缺失时联网自动安装，离线安装包自带完整安装器
+- ZIP Target：优先使用 Google Chrome app-mode，也可回退到 Microsoft Edge WebView2 / pywebview
+- Tauri Target：使用 Microsoft Edge WebView2 Runtime；常规安装包在缺失时联网安装，离线安装包自带完整安装器
 
 最终用户不需要安装 Python、Node.js、npm、PyInstaller 或其他源码开发依赖。
 
 ## 安装和启动
+
+### 便携 ZIP Target
+
+1. 解压 ZIP，例如 `报销管理-v1.4.2-20260829.zip`。
+2. 保留完整的 `报销管理` 文件夹。
+3. 双击根目录的 `报销管理\报销管理.exe`；launcher 会启动 `versions\<version>\报销管理.exe`。
+
+便携数据保存在这个 `报销管理` 根目录。详细升级与回退说明见 `zip-upgrade-guide.md`。
+
+### Tauri Target
 
 1. 下载安装包，例如 `报销管理_1.4.2_x64-setup.exe`。
 2. 双击运行安装程序，按提示完成安装。安装为当前用户安装，不需要管理员权限。
@@ -36,7 +47,11 @@
 
 ## 从旧版升级
 
-### 从便携 ZIP 版（V1.x）升级
+### ZIP Target 原地升级和版本切换
+
+进入「数据维护 → 程序更新」选择新的便携 ZIP。程序会校验 `portable-release.json` 和数据结构兼容范围，安装到新的 `versions\<version>` 目录并切换 `current-version.json`；旧版本目录不会自动删除，可在维护页切换回兼容版本。
+
+### 从便携 ZIP 版迁移到 Tauri
 
 1. 关闭旧版 `报销管理.exe`。
 2. 安装新版安装包。
@@ -52,7 +67,18 @@
 
 ## 数据位置和备份
 
-运行数据保存在用户本地应用数据目录，与安装目录分离：
+ZIP Target 的运行数据保存在便携安装根目录：
+
+```text
+报销管理\data\expense.db
+报销管理\data\backups\
+报销管理\uploads\
+报销管理\logs\
+报销管理\vendor\
+报销管理\browser-profile\
+```
+
+Tauri Target 的运行数据保存在用户本地应用数据目录，与安装目录分离：
 
 ```text
 %LOCALAPPDATA%\com.winloud.reimbursementtool\runtime\data\expense.db
@@ -83,7 +109,8 @@
 - 删除选中备份，或一键清理旧备份。
 - 检查数据库完整性，覆盖 SQLite、外键、业务一致性和附件状态。
 - 导出诊断包，包含版本号、数据目录、QR 引擎、日志路径、配置摘要、环境信息和日志尾部。
-- 查看更新状态并手动检查更新。
+- ZIP Target：上传更新 ZIP、安装/切换版本、清理旧版本和更新暂存包。
+- Tauri Target：通过签名 updater feed 检查并安装更新。
 
 更新会检查数据结构兼容范围。缺少兼容性信息或不兼容时，程序会拒绝安装，避免旧程序打开新结构数据。
 
@@ -94,6 +121,20 @@
 3. 新建一张测试报销单，录入行程并上传一张发票。
 4. 确认发票金额后，测试 PDF 预览和下载。
 5. 打开「数据维护」，创建一次完整备份，并导出一次诊断包确认路径正常。
+
+## 源码构建 Target
+
+同一个 commit 可以分别执行：
+
+```powershell
+# ZIP 便携预览包
+powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -PreviewSerial 001 -ReleaseDate 20260901
+
+# Tauri NSIS 安装包
+powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate 20260901
+```
+
+ZIP 本地产物使用 `scripts\validate_zip_release.ps1` 校验；Tauri 产物使用 `scripts\validate_tauri_release.ps1` 校验。正式发布总控暂时分别为 `release_publish_zip.ps1` 和 `release_publish.ps1`，阶段 5 再统一双 Target pipeline。
 
 ## 常见问题
 

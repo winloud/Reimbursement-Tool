@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, status
@@ -6,7 +7,7 @@ from fastapi.responses import FileResponse
 
 from backend.app_metadata import APP_TITLE, APP_VERSION
 from backend.database.connection import create_db_and_tables
-from backend.middleware.session_auth import SessionAuthMiddleware
+from backend.middleware.session_auth import SESSION_ENV, SessionAuthMiddleware
 from backend.routers import data_transfer, health, invoices, maintenance, report_attachments, reports, settings, stats, tickets
 from backend.runtime_paths import FRONTEND_DIST_DIR
 
@@ -48,6 +49,10 @@ def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool
     app.include_router(stats.router)
     app.include_router(data_transfer.router)
     app.include_router(maintenance.router)
+    # 阶段 2 的最小 Target 判断：Tauri sidecar 启动前已注入会话令牌，
+    # 因而不暴露 ZIP 整包更新、版本切换和桌面重启 API；ZIP/开发模式无令牌时恢复原路由。
+    if not os.environ.get(SESSION_ENV):
+        app.include_router(maintenance.zip_router)
 
     mount_frontend(app, frontend_dist_dir)
     return app

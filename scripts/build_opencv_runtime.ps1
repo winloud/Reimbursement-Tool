@@ -1,7 +1,7 @@
 ﻿# OpenCV WeChat QRCode 可选运行时包构建脚本（阶段 8）。
 #
 # 从旧 build_release.ps1 拆出：v2.0.0 起桌面发行改为 Tauri NSIS（见 ADR 0009），
-# 便携 ZIP 链路整体删除，但 OpenCV 兼容模式仍作为独立的可选运行时资产随 Release 发布，
+# OpenCV 兼容模式作为独立的可选运行时资产，可供 ZIP 与 Tauri 两个 Target 使用，
 # 用户下载后解压到 runtime 的 vendor/ 目录启用。
 #
 # 产物：release\opencv-wechat-runtime-opencv-<version>-win_amd64.zip
