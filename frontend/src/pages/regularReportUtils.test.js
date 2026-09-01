@@ -233,6 +233,12 @@ test("regular frontend keeps independent routes, flat navigation, and item-bound
   assert.match(fileListShellSource, /count === 0 && readonly/);
   assert.match(invoiceCardListSource, /invoices\.map/);
   assert.match(attachmentCardListSource, /attachments\.map/);
+  // Tauri WebView 没有浏览器标签页：凭据必须在应用内弹窗预览；ZIP/浏览器仍保留新标签页。
+  assert.match(attachmentCardListSource, /isInTauriEnvironment/);
+  assert.match(attachmentCardListSource, /<Dialog open=\{previewOpen\}/);
+  assert.match(attachmentCardListSource, /component="iframe"/);
+  assert.match(attachmentCardListSource, /component="img"/);
+  assert.match(attachmentCardListSource, /target="_blank"/);
   assert.match(viewSource, /暂无报销凭据/);
   assert.doesNotMatch(viewSource, /PaperInvoiceEntry/);
 });
