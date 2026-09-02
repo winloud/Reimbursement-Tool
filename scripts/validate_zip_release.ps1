@@ -485,6 +485,18 @@ function Test-ReleaseZipContent {
         if ($portableManifest.package_type -ne "reimbursement_portable_release") {
             throw "portable-release.json package_type is $($portableManifest.package_type)."
         }
+        if ($portableManifest.distribution_target -cne "zip" -or $currentVersion.distribution_target -cne "zip") {
+            throw "ZIP manifests must declare distribution_target=zip."
+        }
+        if ([string]$portableManifest.commit -notmatch "^[0-9a-fA-F]{40}$") {
+            throw "portable-release.json must contain a full Git commit ID."
+        }
+        if ($portableManifest.commit -cne $currentVersion.commit) {
+            throw "ZIP manifest commit values do not match."
+        }
+        if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and $portableManifest.commit -cne $ExpectedCommit.ToLowerInvariant()) {
+            throw "ZIP manifest commit does not match ExpectedCommit."
+        }
         if ($missingEntries.Count -gt 0) {
             throw "Missing required ZIP entries: $($missingEntries -join ', ')"
         }
@@ -503,6 +515,8 @@ function Test-ReleaseZipContent {
                 forbidden_entries = $forbiddenEntries
             }
             manifest = [ordered]@{
+                distribution_target = $portableManifest.distribution_target
+                commit = $portableManifest.commit
                 current_version = $currentVersion.current_version
                 app_version = $portableManifest.app_version
                 data_schema_version = $portableManifest.data_schema_version

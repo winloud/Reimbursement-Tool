@@ -16,6 +16,7 @@ dist/
 dist/reimbursement-sidecar/
 /release/
 /dist-feed/
+/artifacts/
 /src-tauri/resources/
 
 # Virtual environments

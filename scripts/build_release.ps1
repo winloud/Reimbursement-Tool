@@ -9,7 +9,10 @@ param(
     [switch]$ReuseReleaseVenv,
     [switch]$BuildOpenCvRuntime,
     [string]$OpenCvPackageVersion = "4.10.0.84",
-    [string]$ReleaseDate = ""
+    [string]$ReleaseDate = "",
+    [string]$OutputDir = "",
+    [string]$IntermediateRoot = "",
+    [string]$CommitSha = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -34,9 +37,36 @@ $DataSchemaInfo = ($DataSchemaJson | Select-Object -Last 1) | ConvertFrom-Json
 $DataSchemaVersion = [int]$DataSchemaInfo.data_schema_version
 $MinSupportedDataSchemaVersion = [int]$DataSchemaInfo.min_supported_data_schema_version
 $MaxSupportedDataSchemaVersion = [int]$DataSchemaInfo.max_supported_data_schema_version
-$DistApp = Join-Path $Root "dist\$AppName"
-$LauncherExe = Join-Path $Root "dist\$AppName-launcher.exe"
-$ReleaseDir = Join-Path $Root "release"
+if ([string]::IsNullOrWhiteSpace($OutputDir)) {
+    $OutputDir = Join-Path $Root "release"
+}
+elseif (-not [System.IO.Path]::IsPathRooted($OutputDir)) {
+    $OutputDir = Join-Path $Root $OutputDir
+}
+if ([string]::IsNullOrWhiteSpace($IntermediateRoot)) {
+    $DistRoot = Join-Path $Root "dist"
+    $PyInstallerWorkRoot = Join-Path $Root "build"
+}
+else {
+    if (-not [System.IO.Path]::IsPathRooted($IntermediateRoot)) {
+        $IntermediateRoot = Join-Path $Root $IntermediateRoot
+    }
+    $DistRoot = Join-Path $IntermediateRoot "dist"
+    $PyInstallerWorkRoot = Join-Path $IntermediateRoot "pyinstaller"
+}
+$DistApp = Join-Path $DistRoot $AppName
+$LauncherExe = Join-Path $DistRoot "$AppName-launcher.exe"
+$ReleaseDir = $OutputDir
+if ([string]::IsNullOrWhiteSpace($CommitSha)) {
+    $CommitSha = (& git -C $Root rev-parse HEAD | Select-Object -Last 1).Trim()
+    if ($LASTEXITCODE -ne 0) {
+        throw "Unable to resolve Git commit SHA."
+    }
+}
+if ($CommitSha -notmatch "^[0-9a-fA-F]{40}$") {
+    throw "CommitSha must be a full 40-character Git commit ID."
+}
+$CommitSha = $CommitSha.ToLowerInvariant()
 if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
     $ReleaseDate = Get-Date -Format "yyyyMMdd"
 }
@@ -380,11 +410,19 @@ finally {
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller is not available. Install backend\requirements-packaging.txt first."
 }
-& $Python -m PyInstaller --clean --noconfirm (Join-Path $Root "reimbursement_tool.spec")
+New-Item -ItemType Directory -Path $DistRoot -Force | Out-Null
+New-Item -ItemType Directory -Path $PyInstallerWorkRoot -Force | Out-Null
+& $Python -m PyInstaller --clean --noconfirm `
+    --distpath $DistRoot `
+    --workpath (Join-Path $PyInstallerWorkRoot "desktop") `
+    (Join-Path $Root "reimbursement_tool.spec")
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller build failed with exit code $LASTEXITCODE"
 }
-& $Python -m PyInstaller --clean --noconfirm (Join-Path $Root "reimbursement_launcher.spec")
+& $Python -m PyInstaller --clean --noconfirm `
+    --distpath $DistRoot `
+    --workpath (Join-Path $PyInstallerWorkRoot "launcher") `
+    (Join-Path $Root "reimbursement_launcher.spec")
 if ($LASTEXITCODE -ne 0) {
     throw "PyInstaller launcher build failed with exit code $LASTEXITCODE"
 }
@@ -419,6 +457,8 @@ foreach ($item in Get-ChildItem -LiteralPath $DistApp -Force) {
 $PortableManifest = [ordered]@{
     schema_version = 1
     package_type = "reimbursement_portable_release"
+    distribution_target = "zip"
+    commit = $CommitSha
     app_version = $PackageVersion
     release_date = $ReleaseDate
     app_dir = $AppName
@@ -431,6 +471,8 @@ $PortableManifest = [ordered]@{
     max_supported_data_schema_version = $MaxSupportedDataSchemaVersion
 }
 $CurrentVersion = [ordered]@{
+    distribution_target = "zip"
+    commit = $CommitSha
     current_version = $PackageVersion
     release_date = $ReleaseDate
     data_schema_version = $DataSchemaVersion

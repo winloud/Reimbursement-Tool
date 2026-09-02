@@ -1,136 +1,83 @@
-﻿# 校验 Tauri NSIS 本地构建产物。
-#
-# 校验 NSIS setup exe 存在、签名文件存在、latest.json 与 data-compat.json 格式与字段完整、
-# 签名与更新包匹配（签名内容由 tauri signer 生成，此处校验非空与基本格式）。
-#
-# 发布后校验 GitHub Release 上的公开资产用 scripts/validate_release_asset.ps1。
+# Validate one isolated Tauri installer variant and, for online release builds,
+# its updater feed. Preview validation may explicitly allow unsigned output.
 
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$ReleaseDate = "",
-    [string]$BundleDir = ""
+    [string]$BundleDir = "",
+    [string]$FeedDir = "",
+    [string]$BuildContextPath = "",
+    [string]$ExpectedCommit = "",
+    [ValidateSet("online", "offline")][string]$ExpectedVariant = "online",
+    [switch]$AllowUnsigned,
+    [switch]$SkipFeed
 )
 
 $ErrorActionPreference = "Stop"
-
 $Root = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$TagName = "v$Version"
-
-# 默认从 cargo tauri build 产物目录读取。
-if ([string]::IsNullOrWhiteSpace($BundleDir)) {
-    $BundleDir = Join-Path $Root "src-tauri\target\release\bundle\nsis"
-}
-$FeedDir = Join-Path $Root "dist-feed"
+if ($Version -notmatch "^\d+\.\d+\.\d+$") { throw "Version must use X.Y.Z format." }
+if (-not [string]::IsNullOrWhiteSpace($ReleaseDate) -and $ReleaseDate -notmatch "^\d{8}$") { throw "ReleaseDate must use yyyymmdd format." }
+if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and $ExpectedCommit -notmatch "^[0-9a-fA-F]{40}$") { throw "ExpectedCommit must be a full 40-character Git commit ID." }
+if ([string]::IsNullOrWhiteSpace($BundleDir)) { $BundleDir = Join-Path $Root "src-tauri\target\release\bundle\nsis" }
+if ([string]::IsNullOrWhiteSpace($FeedDir)) { $FeedDir = Join-Path $Root "dist-feed" }
+if ([string]::IsNullOrWhiteSpace($BuildContextPath)) { $BuildContextPath = Join-Path $BundleDir "build-context.json" }
 
 function Assert-FileExists {
     param([Parameter(Mandatory = $true)][string]$Path, [Parameter(Mandatory = $true)][string]$Description)
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "$Description 不存在: $Path"
-    }
-    return (Get-Item -LiteralPath $Path)
+    if (-not (Test-Path -LiteralPath $Path)) { throw "$Description does not exist: $Path" }
+    return Get-Item -LiteralPath $Path
 }
-
 function Assert-JsonField {
     param($Object, [Parameter(Mandatory = $true)][string]$Field, [Parameter(Mandatory = $true)][string]$Description)
     $value = $Object.$Field
-    if ($null -eq $value -or ([string]::IsNullOrWhiteSpace([string]$value) -and $value -ne 0)) {
-        throw "$Description 缺少字段 $Field"
-    }
+    if ($null -eq $value -or ([string]::IsNullOrWhiteSpace([string]$value) -and $value -ne 0)) { throw "$Description is missing $Field" }
 }
-
 function Get-FileSha256 {
     param([Parameter(Mandatory = $true)][string]$Path)
-
-    $stream = [System.IO.File]::OpenRead($Path)
-    $sha256 = [System.Security.Cryptography.SHA256]::Create()
-    try {
-        $hashBytes = $sha256.ComputeHash($stream)
-        return ([BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
-    }
-    finally {
-        $sha256.Dispose()
-        $stream.Dispose()
-    }
+    $stream = [IO.File]::OpenRead($Path); $sha = [Security.Cryptography.SHA256]::Create()
+    try { return ([BitConverter]::ToString($sha.ComputeHash($stream))).Replace("-", "").ToLowerInvariant() }
+    finally { $sha.Dispose(); $stream.Dispose() }
 }
 
-# 1. NSIS setup 产物。
-$setupExe = Get-ChildItem -LiteralPath $BundleDir -Filter "*-setup.exe" -ErrorAction SilentlyContinue |
-    Where-Object { $_.Name -notlike "*.sig" } |
-    Select-Object -First 1
-if (-not $setupExe) {
-    throw "未找到 NSIS setup 产物: $BundleDir"
-}
-Write-Host "NSIS 产物: $($setupExe.FullName)"
-Write-Host "大小: $([math]::Round($setupExe.Length / 1MB, 2)) MB"
+$setups = @(Get-ChildItem -LiteralPath $BundleDir -Filter "*-setup*.exe" -ErrorAction SilentlyContinue)
+if ($setups.Count -ne 1) { throw "Expected exactly one NSIS setup artifact in $BundleDir, found $($setups.Count)." }
+$setup = $setups[0]
+if ($ExpectedVariant -eq "offline" -and $setup.Name -notlike "*-offline.exe") { throw "Offline artifact name must end with -offline.exe." }
+if ($ExpectedVariant -eq "online" -and $setup.Name -like "*-offline.exe") { throw "Online artifact cannot use the offline suffix." }
 
-# 2. 签名文件。
-# `cargo tauri signer sign` 写出的 .sig 是 **base64 编码**的 minisign 签名，
-# 不是明文 minisign 文件：直接按 'untrusted comment:' 前缀断言必然失败。
-# updater 也是拿这段 base64 原样填进 latest.json 的 signature 字段。
-$sigPath = "$($setupExe.FullName).sig"
-Assert-FileExists -Path $sigPath -Description "更新包签名" | Out-Null
-$sigContent = (Get-Content -Raw -Encoding UTF8 -LiteralPath $sigPath).Trim()
-if ($sigContent.Length -lt 100) {
-    throw "签名文件内容过短，可能无效: $sigPath"
-}
-try {
-    $decodedSig = [System.Text.Encoding]::UTF8.GetString([System.Convert]::FromBase64String($sigContent))
-}
-catch {
-    throw "签名文件不是合法 base64: $sigPath"
-}
-if (-not $decodedSig.StartsWith("untrusted comment:")) {
-    throw "签名解码后不符 minisign 格式（应以 'untrusted comment:' 开头）: $sigPath"
-}
-Write-Host "签名: $sigPath"
+$context = Get-Content -Raw -Encoding UTF8 -LiteralPath (Assert-FileExists $BuildContextPath "Build context") | ConvertFrom-Json
+foreach ($field in @("schema_version", "distribution_target", "version", "commit", "release_date", "build_mode", "variant")) { Assert-JsonField $context $field "build-context.json" }
+if ($context.distribution_target -cne "tauri") { throw "Build context target is $($context.distribution_target), expected tauri." }
+if ($context.version -cne $Version) { throw "Build context version is $($context.version), expected $Version." }
+if ($context.variant -cne $ExpectedVariant) { throw "Build context variant is $($context.variant), expected $ExpectedVariant." }
+if ($ReleaseDate -and $context.release_date -cne $ReleaseDate) { throw "Build context release date is $($context.release_date), expected $ReleaseDate." }
+if ($ExpectedCommit -and $context.commit -cne $ExpectedCommit.ToLowerInvariant()) { throw "Build context commit does not match ExpectedCommit." }
 
-# 3. latest.json。
-$latestPath = Join-Path $FeedDir "latest.json"
-Assert-FileExists -Path $latestPath -Description "latest.json" | Out-Null
-$latest = Get-Content -Raw -Encoding UTF8 -LiteralPath $latestPath | ConvertFrom-Json
-Assert-JsonField -Object $latest -Field "version" -Description "latest.json"
-Assert-JsonField -Object $latest -Field "pub_date" -Description "latest.json"
-if ($latest.version -ne $Version) {
-    throw "latest.json version $($latest.version) 与发布版本 $Version 不符"
+$sigPath = "$($setup.FullName).sig"
+if (-not $AllowUnsigned) {
+    $sig = (Get-Content -Raw -Encoding UTF8 -LiteralPath (Assert-FileExists $sigPath "Updater signature")).Trim()
+    if ($sig.Length -lt 100) { throw "Signature is too short: $sigPath" }
+    try { $decoded = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String($sig)) } catch { throw "Signature is not valid base64: $sigPath" }
+    if (-not $decoded.StartsWith("untrusted comment:")) { throw "Decoded signature is not minisign format." }
 }
-$platformKey = "windows-x86_64"
-if (-not $latest.platforms.$platformKey) {
-    throw "latest.json 缺少平台 $platformKey"
-}
-Assert-JsonField -Object $latest.platforms.$platformKey -Field "signature" -Description "latest.json $platformKey"
-Assert-JsonField -Object $latest.platforms.$platformKey -Field "url" -Description "latest.json $platformKey"
-$feedSig = [string]$latest.platforms.$platformKey.signature
-if ([string]::IsNullOrWhiteSpace($feedSig)) {
-    throw "latest.json signature 为空"
-}
-# feed 里的签名必须与 .sig 文件逐字一致，否则客户端验签会失败。
-if ($feedSig -cne $sigContent) {
-    throw "latest.json signature 与 $sigPath 内容不一致"
-}
-Write-Host "latest.json: version=$($latest.version) platform=$platformKey"
 
-# 4. data-compat.json。
-$compatPath = Join-Path $FeedDir "data-compat.json"
-Assert-FileExists -Path $compatPath -Description "data-compat.json" | Out-Null
-$compat = Get-Content -Raw -Encoding UTF8 -LiteralPath $compatPath | ConvertFrom-Json
-Assert-JsonField -Object $compat -Field "min_data_schema_version" -Description "data-compat.json"
-Assert-JsonField -Object $compat -Field "max_data_schema_version" -Description "data-compat.json"
-if ([int]$compat.min_data_schema_version -gt [int]$compat.max_data_schema_version) {
-    throw "data-compat.json min_data_schema_version ($($compat.min_data_schema_version)) 大于 max ($($compat.max_data_schema_version))"
+if (-not $SkipFeed) {
+    if ($AllowUnsigned) { throw "Unsigned validation cannot require an updater feed." }
+    $latestPath = (Assert-FileExists (Join-Path $FeedDir "latest.json") "latest.json").FullName
+    $compatPath = (Assert-FileExists (Join-Path $FeedDir "data-compat.json") "data-compat.json").FullName
+    $latest = Get-Content -Raw -Encoding UTF8 -LiteralPath $latestPath | ConvertFrom-Json
+    if ($latest.version -cne $Version) { throw "latest.json version is $($latest.version), expected $Version." }
+    $platform = $latest.platforms."windows-x86_64"
+    if (-not $platform) { throw "latest.json is missing windows-x86_64." }
+    $sigContent = (Get-Content -Raw -Encoding UTF8 -LiteralPath $sigPath).Trim()
+    if ([string]$platform.signature -cne $sigContent) { throw "latest.json signature differs from the installer signature." }
+    $compat = Get-Content -Raw -Encoding UTF8 -LiteralPath $compatPath | ConvertFrom-Json
+    if ([int]$compat.min_data_schema_version -gt [int]$compat.max_data_schema_version) { throw "Invalid data schema compatibility range." }
 }
-Write-Host "data-compat.json: min=$($compat.min_data_schema_version) max=$($compat.max_data_schema_version)"
 
-# 5. SHA256 清单。
-# 用 .NET 直接算，不走 Get-FileHash：该 cmdlet 依赖 Microsoft.PowerShell.Utility 的
-# 模块自动加载，PSModulePath 被 PowerShell 7 等挤占的机器上会 CommandNotFound。
-# validate_release_asset.ps1 出于同样原因用的也是 .NET 实现。
-$sha256 = Get-FileSha256 -Path $setupExe.FullName
-Write-Host "NSIS SHA256: $sha256"
-
-Write-Host ""
-Write-Host "=== 校验通过 ==="
-Write-Host "tag:         $TagName"
-Write-Host "version:     $Version"
-Write-Host "setup:       $($setupExe.FullName)"
-Write-Host "signature:   $sigPath"
-Write-Host "feed:        $FeedDir"
+Write-Host "=== Tauri validation passed ==="
+Write-Host "target:  tauri/$ExpectedVariant"
+Write-Host "version: $Version"
+Write-Host "commit:  $($context.commit)"
+Write-Host "setup:   $($setup.FullName)"
+Write-Host "sha256:  $(Get-FileSha256 $setup.FullName)"
