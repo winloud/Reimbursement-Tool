@@ -38,12 +38,18 @@ python -m uvicorn backend.main:app --host 127.0.0.1 --port 8000
 
 ## Tauri 源码开发
 
-从仓库根目录启动；Rust 壳会启动 `sidecar_app.py`，而 sidecar 入口会显式指定 Tauri Target：
+进入 `src-tauri` 后可直接启动；debug fallback 会基于 Rust 编译期的 `CARGO_MANIFEST_DIR` 自动定位仓库根目录的 `sidecar_app.py`：
 
 ```powershell
 Set-Location .\src-tauri
-$env:REIMBURSEMENT_SIDECAR_CMD = "python ..\sidecar_app.py --port 0"
 cargo tauri dev
 ```
 
 `cargo tauri dev` 会按 `tauri.conf.json` 的 `beforeDevCommand` 启动共享 Vite 前端。不要另外启动 ZIP 开发后端；Tauri 壳负责 sidecar、随机端口、session token 和 AppLocalData 初始化生命周期。
+
+需要改用其他 Python 或 sidecar 命令时，仍可显式设置最高优先级 override：
+
+```powershell
+$env:REIMBURSEMENT_SIDECAR_CMD = "python ..\sidecar_app.py --port 0"
+cargo tauri dev
+```

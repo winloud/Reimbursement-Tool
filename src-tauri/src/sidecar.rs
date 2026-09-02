@@ -14,7 +14,8 @@
 // （例如 "python sidecar_app.py --port 0"）；打包后由 resolve_sidecar_command 解析
 // resource_dir()/reimbursement-sidecar/reimbursement-sidecar.exe（PyInstaller onedir
 // 产物经 bundle.resources 装入 NSIS，见 scripts/build_tauri_release.ps1）。
-// 两者都不可用时回退到 `python sidecar_app.py`，仅作开发兜底。
+// debug 构建下两者都不可用时，从 CARGO_MANIFEST_DIR 的父目录定位
+// `sidecar_app.py`，不依赖 cargo tauri dev 的当前工作目录。
 
 use serde::Deserialize;
 use std::collections::HashMap;
@@ -162,14 +163,17 @@ fn parse_sidecar_command_env(cmd: &str) -> Result<(String, Vec<String>), String>
 /// tauri.conf.json 里的 "resources/reimbursement-sidecar" 会落到
 /// resource_dir()/resources/reimbursement-sidecar/。漏掉开头的 "resources"
 /// 会让生产安装包永远找不到 exe，静默回退到开发用的 `python sidecar_app.py`。
-const SIDECAR_RESOURCE_SEGMENTS: [&str; 3] =
-    ["resources", "reimbursement-sidecar", "reimbursement-sidecar.exe"];
+const SIDECAR_RESOURCE_SEGMENTS: [&str; 3] = [
+    "resources",
+    "reimbursement-sidecar",
+    "reimbursement-sidecar.exe",
+];
 
 /// 解析 sidecar 启动命令。优先级：
 /// 1. 环境变量 REIMBURSEMENT_SIDECAR_CMD（开发模式，空格分割，首段为程序）。
 /// 2. 打包产物：resource_dir()/resources/reimbursement-sidecar/reimbursement-sidecar.exe
 ///    （生产 NSIS 安装后，sidecar onedir 经 bundle.resources 装入）。
-/// 3. 开发兜底：python sidecar_app.py（源码根）。
+/// 3. 开发兜底：debug 构建从 CARGO_MANIFEST_DIR 定位源码根的 sidecar_app.py。
 fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String>), String> {
     if let Ok(cmd) = std::env::var("REIMBURSEMENT_SIDECAR_CMD") {
         return parse_sidecar_command_env(&cmd);
@@ -181,11 +185,46 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
             .iter()
             .fold(resource_dir, |path, segment| path.join(segment));
         if sidecar_exe.exists() {
-            return Ok((sidecar_exe.to_string_lossy().into_owned(), vec!["--port".into(), "0".into()]));
+            return Ok((
+                sidecar_exe.to_string_lossy().into_owned(),
+                vec!["--port".into(), "0".into()],
+            ));
         }
     }
 
-    // 开发兜底：python 源码。
+    fallback_sidecar_command()
+}
+
+/// debug 源码开发兜底：Cargo 编译期目录固定为 src-tauri，父目录即仓库根。
+/// canonicalize 同时保证传给 Python 的是已存在的绝对路径，避免依赖启动 cwd。
+#[cfg(debug_assertions)]
+fn fallback_sidecar_command() -> Result<(String, Vec<String>), String> {
+    let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let repository_root = manifest_dir.parent().ok_or_else(|| {
+        format!(
+            "无法从 CARGO_MANIFEST_DIR 定位仓库根目录: {}",
+            manifest_dir.display()
+        )
+    })?;
+    let script_path = repository_root
+        .join("sidecar_app.py")
+        .canonicalize()
+        .map_err(|e| format!("无法定位源码 sidecar_app.py: {e}"))?;
+
+    Ok((
+        "python".to_string(),
+        vec![
+            script_path.to_string_lossy().into_owned(),
+            "--port".into(),
+            "0".into(),
+        ],
+    ))
+}
+
+/// release 构建保持既有缺资源 fallback 行为；正常正式安装始终命中上面的
+/// bundle resource sidecar，不读取编译机仓库路径。
+#[cfg(not(debug_assertions))]
+fn fallback_sidecar_command() -> Result<(String, Vec<String>), String> {
     Ok((
         "python".to_string(),
         vec!["sidecar_app.py".to_string(), "--port".into(), "0".into()],
@@ -195,7 +234,8 @@ fn resolve_sidecar_command(app: &tauri::AppHandle) -> Result<(String, Vec<String
 #[cfg(test)]
 mod tests {
     use super::{
-        parse_ready_line, parse_sidecar_command_env, wait_for_ready, SIDECAR_RESOURCE_SEGMENTS,
+        fallback_sidecar_command, parse_ready_line, parse_sidecar_command_env, wait_for_ready,
+        SIDECAR_RESOURCE_SEGMENTS,
     };
     use tauri_plugin_shell::process::CommandEvent;
 
@@ -271,6 +311,24 @@ mod tests {
     fn parse_sidecar_command_env_rejects_empty_value() {
         assert!(parse_sidecar_command_env("").is_err());
         assert!(parse_sidecar_command_env("   ").is_err());
+    }
+
+    #[cfg(debug_assertions)]
+    #[test]
+    fn development_fallback_resolves_sidecar_from_repository_root() {
+        let (program, args) = fallback_sidecar_command().unwrap();
+        let script_path = std::path::Path::new(&args[0]);
+        let expected = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("sidecar_app.py")
+            .canonicalize()
+            .unwrap();
+
+        assert_eq!(program, "python");
+        assert!(script_path.is_absolute());
+        assert_eq!(script_path, expected);
+        assert_eq!(args[1..], ["--port", "0"]);
     }
 
     /// 生产路径回归：sidecar 在安装包里的位置由 tauri.conf.json 的 bundle.resources 决定，
