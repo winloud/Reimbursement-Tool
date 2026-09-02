@@ -25,9 +25,10 @@ import {
   previewMaintenanceRestore,
   previewMaintenanceRestoreFromBackupDialog,
   restartMaintenanceApp,
+  saveBackendResource,
   switchMaintenanceVersion,
 } from "../api/client";
-import { saveBlobDownload } from "../utils/browserDownload";
+import PlatformUpdateSection from "../platform/UpdateSection";
 import {
   defaultUpdateStagingSelection,
   formatFileSize,
@@ -38,7 +39,6 @@ import {
 import {
   MaintenanceBackupSection,
   MaintenanceDiagnosticsSection,
-  MaintenanceUpdateSection,
   cardContentSx,
   cardSx,
   dataCompatibilityMessage,
@@ -190,7 +190,12 @@ export default function MaintenancePanel() {
     setBusy("download");
     setBackupError("");
     try {
-      saveBlobDownload(await downloadMaintenanceBackup(backup.backup_id));
+      const result = await saveBackendResource(
+        `/api/maintenance/backups/${encodeURIComponent(backup.backup_id)}/download`,
+        backup.filename || "backup.zip",
+        () => downloadMaintenanceBackup(backup.backup_id),
+      );
+      if (result?.error) throw new Error(result.error);
     } catch (err) {
       setBackupError(getApiErrorMessage(err, "下载备份失败"));
     } finally {
@@ -245,7 +250,12 @@ export default function MaintenancePanel() {
     setBusy("diagnostics");
     setDiagnosticsError("");
     try {
-      saveBlobDownload(await downloadMaintenanceDiagnostics());
+      const result = await saveBackendResource(
+        "/api/maintenance/diagnostics",
+        "reimbursement-diagnostics.zip",
+        () => downloadMaintenanceDiagnostics(),
+      );
+      if (result?.error) throw new Error(result.error);
     } catch (err) {
       setDiagnosticsError(getApiErrorMessage(err, "导出诊断信息失败"));
     } finally {
@@ -601,7 +611,7 @@ export default function MaintenancePanel() {
         </Card>
       ) : (
         <Stack spacing={2}>
-          <MaintenanceUpdateSection
+          <PlatformUpdateSection
             busy={busy}
             info={info}
             installedVersions={installedVersions}

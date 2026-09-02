@@ -1,0 +1,447 @@
+name: Publish ZIP Release
+run-name: Publish ZIP Release ${{ inputs.tag }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing immutable release tag to rebuild (vX.Y.Z)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-zip-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build ZIP and publish GitHub Release
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      RELEASE_TAG: ${{ inputs.tag }}
+
+    steps:
+      - name: Checkout immutable release tag
+        uses: actions/checkout@v7
+        with:
+          ref: refs/tags/${{ env.RELEASE_TAG }}
+          fetch-depth: 0
+
+      - name: Validate release tag and main ancestry
+        shell: pwsh
+        run: |
+          $tag = $env:RELEASE_TAG
+          if ($tag -notmatch '^v(?<version>0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$') {
+            throw "Release tag must use strict SemVer vX.Y.Z format: $tag"
+          }
+          $version = $tag.Substring(1)
+
+          git fetch origin main:refs/remotes/origin/main --no-tags
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to fetch origin/main."
+          }
+
+          $tagCommit = git rev-parse "refs/tags/$tag^{commit}"
+          if ($LASTEXITCODE -ne 0 -or -not $tagCommit) {
+            throw "Cannot resolve commit for immutable tag $tag."
+          }
+          $tagCommit = $tagCommit.Trim()
+          $headCommit = (git rev-parse HEAD).Trim()
+          if ($LASTEXITCODE -ne 0 -or $tagCommit -ne $headCommit) {
+            throw "Checked out commit $headCommit does not match immutable tag $tag ($tagCommit)."
+          }
+
+          git merge-base --is-ancestor $tagCommit origin/main
+          if ($LASTEXITCODE -ne 0) {
+            throw "Tag $tag does not point to a commit contained in origin/main."
+          }
+
+          "RELEASE_VERSION=$version" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+          "RELEASE_COMMIT=$tagCommit" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.10"
+          cache: pip
+          cache-dependency-path: |
+            backend/requirements-dev.txt
+            backend/requirements-packaging.txt
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install frontend dependencies
+        run: npm ci
+        working-directory: frontend
+
+      - name: Install backend test dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r backend/requirements-dev.txt
+          $fontDir = Join-Path $env:WINDIR "Fonts"
+          $fallbackNames = @("arial.ttf", "segoeui.ttf", "tahoma.ttf", "calibri.ttf")
+          $fallback = $fallbackNames |
+            ForEach-Object { Join-Path $fontDir $_ } |
+            Where-Object { Test-Path -LiteralPath $_ } |
+            Select-Object -First 1
+          if (-not $fallback) {
+            throw "No fallback TrueType font was found in $fontDir."
+          }
+
+          foreach ($alias in @("simkai.ttf", "simhei.ttf")) {
+            $target = Join-Path $fontDir $alias
+            if (-not (Test-Path -LiteralPath $target)) {
+              Copy-Item -LiteralPath $fallback -Destination $target
+              Write-Host "Prepared $alias from $(Split-Path -Leaf $fallback)."
+            }
+          }
+
+      - name: Run backend tests
+        run: python -m pytest -q
+
+      - name: Run frontend tests
+        run: npm test
+        working-directory: frontend
+
+      - name: Extract release notes and metadata from CHANGELOG
+        shell: pwsh
+        run: |
+          python scripts/extract_changelog_section.py `
+            --version $env:RELEASE_VERSION `
+            --output release-notes.md `
+            --metadata-output release-metadata.json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to extract release metadata from CHANGELOG.md."
+          }
+
+          $metadata = Get-Content -Raw -LiteralPath "release-metadata.json" | ConvertFrom-Json
+          if ($metadata.version -ne $env:RELEASE_VERSION -or $metadata.tag -ne $env:RELEASE_TAG) {
+            throw "CHANGELOG metadata does not match release tag $env:RELEASE_TAG."
+          }
+          $parsedDate = [DateTime]::MinValue
+          if (-not [DateTime]::TryParseExact(
+            [string]$metadata.release_date,
+            "yyyy-MM-dd",
+            [Globalization.CultureInfo]::InvariantCulture,
+            [Globalization.DateTimeStyles]::None,
+            [ref]$parsedDate
+          )) {
+            throw "CHANGELOG release date must use YYYY-MM-DD format."
+          }
+          $releaseDate = $parsedDate.ToString("yyyyMMdd")
+          "RELEASE_DATE=$releaseDate" | Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
+
+      - name: Restore and verify OpenCV runtime asset
+        id: opencv-runtime
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $scriptText = Get-Content -Raw -LiteralPath "scripts\build_release.ps1"
+          if ($scriptText -notmatch '\[string\]\$OpenCvPackageVersion\s*=\s*"([^"]+)"') {
+            throw "Cannot resolve OpenCV package version from scripts\build_release.ps1."
+          }
+          $runtimeVersion = $Matches[1]
+          $runtimeName = "opencv-wechat-runtime-opencv-$runtimeVersion-win_amd64.zip"
+          $releaseDir = New-Item -ItemType Directory -Path "release" -Force
+
+          $restored = $false
+          $sourceTag = ""
+          $releases = gh api "repos/$env:GITHUB_REPOSITORY/releases?per_page=30" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0) {
+            throw "Failed to list existing GitHub Releases."
+          }
+
+          foreach ($release in @($releases)) {
+            if ($release.draft -or $release.prerelease) {
+              continue
+            }
+            $asset = @($release.assets) | Where-Object { $_.name -eq $runtimeName } | Select-Object -First 1
+            if (-not $asset) {
+              continue
+            }
+
+            $candidateDir = Join-Path $env:RUNNER_TEMP "opencv-runtime-$($release.id)"
+            New-Item -ItemType Directory -Path $candidateDir -Force | Out-Null
+            gh release download $release.tag_name --pattern $runtimeName --dir $candidateDir --clobber
+            if ($LASTEXITCODE -ne 0) {
+              Write-Warning "Failed to download $runtimeName from $($release.tag_name); trying another release."
+              continue
+            }
+
+            $candidatePath = Join-Path $candidateDir $runtimeName
+            $checksumPath = Join-Path $candidateDir "SHA256SUMS.txt"
+            gh release download $release.tag_name --pattern "SHA256SUMS.txt" --dir $candidateDir --clobber *> $null
+            if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $checksumPath)) {
+              Write-Warning "Release $($release.tag_name) has no SHA256SUMS.txt; rejecting runtime candidate."
+              continue
+            }
+            $escapedName = [Regex]::Escape($runtimeName)
+            $checksumLine = Get-Content -LiteralPath $checksumPath |
+              Where-Object { $_ -match "^(?<hash>[0-9a-fA-F]{64})\s+\*?$escapedName$" } |
+              Select-Object -First 1
+            if (-not $checksumLine) {
+              Write-Warning "SHA256SUMS.txt in $($release.tag_name) does not cover $runtimeName; rejecting candidate."
+              continue
+            }
+            $expectedHash = [Regex]::Match($checksumLine, '^[0-9a-fA-F]{64}').Value.ToLowerInvariant()
+            $actualHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $candidatePath).Hash.ToLowerInvariant()
+            if ($actualHash -ne $expectedHash) {
+              Write-Warning "SHA256 mismatch for $runtimeName from $($release.tag_name); rejecting candidate."
+              continue
+            }
+
+            $expandDir = Join-Path $candidateDir "expanded"
+            try {
+              Expand-Archive -LiteralPath $candidatePath -DestinationPath $expandDir -Force
+              $runtimeManifestPath = Join-Path $expandDir "runtime.json"
+              if (-not (Test-Path -LiteralPath $runtimeManifestPath)) {
+                throw "Runtime ZIP is missing runtime.json."
+              }
+              $runtimeManifest = Get-Content -Raw -LiteralPath $runtimeManifestPath | ConvertFrom-Json
+              if ($runtimeManifest.opencv_package_version -ne $runtimeVersion -or $runtimeManifest.platform -ne "win_amd64") {
+                throw "Runtime manifest version or platform does not match $runtimeName."
+              }
+              $requiredModels = @(
+                "wechat_qrcode/detect.prototxt",
+                "wechat_qrcode/detect.caffemodel",
+                "wechat_qrcode/sr.prototxt",
+                "wechat_qrcode/sr.caffemodel"
+              )
+              $requiredRuntimePaths = @("cv2", "numpy") + $requiredModels
+              foreach ($relativePath in $requiredRuntimePaths) {
+                $requiredPath = Join-Path $expandDir ($relativePath -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $requiredPath)) {
+                  throw "Runtime ZIP is missing $relativePath."
+                }
+              }
+              foreach ($modelPath in $requiredModels) {
+                if (@($runtimeManifest.model_files) -notcontains $modelPath) {
+                  throw "Runtime manifest does not declare required model file $modelPath."
+                }
+                $fullModelPath = Join-Path $expandDir ($modelPath -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $fullModelPath) -or (Get-Item -LiteralPath $fullModelPath).Length -le 0) {
+                  throw "Runtime model file is missing or empty: $modelPath."
+                }
+              }
+              if (@(Get-ChildItem -LiteralPath (Join-Path $expandDir "cv2") -File -Recurse).Count -eq 0) {
+                throw "Runtime cv2 directory has no files."
+              }
+              if (@(Get-ChildItem -LiteralPath (Join-Path $expandDir "numpy") -File -Recurse).Count -eq 0) {
+                throw "Runtime numpy directory has no files."
+              }
+            }
+            catch {
+              Write-Warning "Invalid runtime ZIP from $($release.tag_name): $($_.Exception.Message)"
+              continue
+            }
+
+            Copy-Item -LiteralPath $candidatePath -Destination (Join-Path $releaseDir $runtimeName) -Force
+            $restored = $true
+            $sourceTag = $release.tag_name
+            break
+          }
+
+          # A rejected optional asset may leave gh's non-zero exit code behind even
+          # though rebuilding the runtime is the expected fallback path.
+          $global:LASTEXITCODE = 0
+
+          "runtime_version=$runtimeVersion" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "runtime_name=$runtimeName" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "restored=$($restored.ToString().ToLowerInvariant())" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+          "source_tag=$sourceTag" | Out-File -FilePath $env:GITHUB_OUTPUT -Append -Encoding utf8
+
+          if ($restored) {
+            Write-Host "Reusing verified $runtimeName from release $sourceTag."
+          }
+          else {
+            Write-Host "No reusable verified $runtimeName asset found; it will be rebuilt."
+          }
+
+      - name: Build release ZIPs
+        shell: pwsh
+        env:
+          OPENCV_RUNTIME_RESTORED: ${{ steps.opencv-runtime.outputs.restored }}
+          OPENCV_PACKAGE_VERSION: ${{ steps.opencv-runtime.outputs.runtime_version }}
+        run: |
+          $buildParams = @{
+            Version = $env:RELEASE_VERSION
+            ReleaseDate = $env:RELEASE_DATE
+          }
+          if ($env:OPENCV_RUNTIME_RESTORED -eq "true") {
+            Write-Host "Skipping OpenCV runtime rebuild; restored existing verified runtime asset."
+          }
+          else {
+            $buildParams.BuildOpenCvRuntime = $true
+            $buildParams.OpenCvPackageVersion = $env:OPENCV_PACKAGE_VERSION
+          }
+          & .\scripts\build_release.ps1 @buildParams
+          if ($LASTEXITCODE -ne 0) {
+            throw "Release build failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Validate local release ZIP
+        shell: pwsh
+        run: |
+          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
+            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+            Select-Object -First 1
+          if (-not $mainZip) {
+            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          }
+          & .\scripts\validate_release_asset.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -ZipPath $mainZip.FullName -SkipOpenCvRuntimeCheck
+          if (-not $?) {
+            throw "Local release ZIP validation failed."
+          }
+
+      - name: Prepare assets, manifest, and checksums
+        shell: pwsh
+        run: |
+          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
+            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+            Select-Object -First 1
+          if (-not $mainZip) {
+            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          }
+
+          $githubMainZip = Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip"
+          Copy-Item -LiteralPath $mainZip.FullName -Destination $githubMainZip -Force
+
+          $runtimeAssets = @(Get-ChildItem -LiteralPath "release" -Filter "opencv-wechat-runtime-*.zip" | Sort-Object Name)
+          foreach ($runtimeAsset in $runtimeAssets) {
+            $validationDir = Join-Path $env:RUNNER_TEMP "validate-runtime-$([Guid]::NewGuid().ToString('N'))"
+            try {
+              Expand-Archive -LiteralPath $runtimeAsset.FullName -DestinationPath $validationDir -Force
+              if ($runtimeAsset.Name -notmatch '^opencv-wechat-runtime-opencv-(?<version>.+)-win_amd64\.zip$') {
+                throw "Runtime ZIP name is invalid: $($runtimeAsset.Name)."
+              }
+              $runtimeVersion = $Matches.version
+              $runtimeManifestPath = Join-Path $validationDir "runtime.json"
+              if (-not (Test-Path -LiteralPath $runtimeManifestPath)) {
+                throw "Runtime ZIP is missing runtime.json."
+              }
+              $runtimeManifest = Get-Content -Raw -LiteralPath $runtimeManifestPath | ConvertFrom-Json
+              if ($runtimeManifest.opencv_package_version -ne $runtimeVersion -or $runtimeManifest.platform -ne "win_amd64") {
+                throw "Runtime manifest version or platform does not match $($runtimeAsset.Name)."
+              }
+              $requiredModels = @(
+                "wechat_qrcode/detect.prototxt",
+                "wechat_qrcode/detect.caffemodel",
+                "wechat_qrcode/sr.prototxt",
+                "wechat_qrcode/sr.caffemodel"
+              )
+              $requiredRuntimePaths = @("cv2", "numpy") + $requiredModels
+              foreach ($relativePath in $requiredRuntimePaths) {
+                $requiredPath = Join-Path $validationDir ($relativePath -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $requiredPath)) {
+                  throw "Runtime ZIP is missing $relativePath."
+                }
+              }
+              foreach ($modelPath in $requiredModels) {
+                if (@($runtimeManifest.model_files) -notcontains $modelPath) {
+                  throw "Runtime manifest does not declare required model file $modelPath."
+                }
+                $fullModelPath = Join-Path $validationDir ($modelPath -replace '/', '\')
+                if (-not (Test-Path -LiteralPath $fullModelPath) -or (Get-Item -LiteralPath $fullModelPath).Length -le 0) {
+                  throw "Runtime model file is missing or empty: $modelPath."
+                }
+              }
+              if (@(Get-ChildItem -LiteralPath (Join-Path $validationDir "cv2") -File -Recurse).Count -eq 0) {
+                throw "Runtime cv2 directory has no files."
+              }
+              if (@(Get-ChildItem -LiteralPath (Join-Path $validationDir "numpy") -File -Recurse).Count -eq 0) {
+                throw "Runtime numpy directory has no files."
+              }
+            }
+            catch {
+              throw "Runtime ZIP validation failed for $($runtimeAsset.Name): $($_.Exception.Message)"
+            }
+          }
+
+          $zipAssets = @(Get-Item -LiteralPath $githubMainZip) + $runtimeAssets
+          if ($zipAssets.Count -lt 2) {
+            throw "Expected the main release ZIP and an OpenCV runtime ZIP."
+          }
+
+          $assetRecords = @($zipAssets | ForEach-Object {
+            [ordered]@{
+              name = $_.Name
+              size = $_.Length
+              sha256 = (Get-FileHash -Algorithm SHA256 -LiteralPath $_.FullName).Hash.ToLowerInvariant()
+            }
+          })
+          $manifest = [ordered]@{
+            tag = $env:RELEASE_TAG
+            commit = $env:RELEASE_COMMIT
+            release_date = ([DateTime]::ParseExact($env:RELEASE_DATE, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)).ToString("yyyy-MM-dd")
+            assets = $assetRecords
+          }
+          $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "release\release-manifest.json" -Encoding utf8
+          @($assetRecords | ForEach-Object { "$($_.sha256)  $($_.name)" }) |
+            Set-Content -LiteralPath "release\SHA256SUMS.txt" -Encoding ascii
+
+      - name: Publish or update GitHub Release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tag = $env:RELEASE_TAG
+          $assets = @(
+            Get-Item -LiteralPath (Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip")
+            Get-ChildItem -LiteralPath "release" -Filter "opencv-wechat-runtime-*.zip" | Sort-Object Name
+            Get-Item -LiteralPath "release\release-manifest.json"
+            Get-Item -LiteralPath "release\SHA256SUMS.txt"
+          )
+          $assetPaths = @($assets | ForEach-Object { $_.FullName })
+
+          $existing = $null
+          gh release view $tag *> $null
+          if ($LASTEXITCODE -eq 0) {
+            $existing = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to inspect existing GitHub Release $tag."
+            }
+            gh release edit $tag --title $tag --notes-file release-notes.md
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to update GitHub Release metadata for $tag."
+            }
+            & gh release upload $tag @assetPaths --clobber
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to upload target release assets for $tag."
+            }
+          }
+          else {
+            & gh release create $tag @assetPaths --draft --title $tag --notes-file release-notes.md --verify-tag
+            if ($LASTEXITCODE -ne 0) {
+              throw "Failed to create draft GitHub Release $tag."
+            }
+            $existing = [pscustomobject]@{ draft = $true }
+          }
+
+          if ($existing.draft) {
+            gh release edit $tag --draft=false
+            if ($LASTEXITCODE -ne 0) {
+              throw "Assets were uploaded, but draft GitHub Release $tag could not be published."
+            }
+          }
+
+          $published = gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag" | ConvertFrom-Json
+          if ($LASTEXITCODE -ne 0 -or $published.draft -or $published.prerelease) {
+            throw "GitHub Release $tag is not publicly available after publication."
+          }
+          $publishedNames = @($published.assets | ForEach-Object { $_.name })
+          foreach ($asset in $assets) {
+            if ($publishedNames -notcontains $asset.Name) {
+              throw "Published GitHub Release is missing target asset $($asset.Name)."
+            }
+          }
+          Write-Host "Published $tag from $env:RELEASE_COMMIT with $($assets.Count) verified target assets."

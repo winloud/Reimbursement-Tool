@@ -6,16 +6,30 @@ from fastapi.responses import FileResponse
 
 from backend.app_metadata import APP_TITLE, APP_VERSION
 from backend.database.connection import create_db_and_tables
+from backend.distribution import DistributionTarget, get_distribution_target
+from backend.middleware.session_auth import SessionAuthMiddleware
 from backend.routers import data_transfer, health, invoices, maintenance, report_attachments, reports, settings, stats, tickets
 from backend.runtime_paths import FRONTEND_DIST_DIR
 
 
 def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool = True) -> FastAPI:
+    distribution_target = get_distribution_target()
     app = FastAPI(title=APP_TITLE, version=APP_VERSION)
+    app.state.distribution_target = distribution_target
+
+    # 会话鉴权先于 CORS：未授权请求不应拿到 CORS 响应头。
+    # 放行 /api/health（sidecar 启动探活）与开发模式（未设令牌）。
+    app.add_middleware(SessionAuthMiddleware)
 
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+        # Tauri 桌面壳前端用 tauri://localhost（WebView2 经 http://tauri.localhost 代理）。
+        allow_origins=[
+            "http://localhost:5173",
+            "http://127.0.0.1:5173",
+            "tauri://localhost",
+            "http://tauri.localhost",
+        ],
         allow_origin_regex=r"^http://(localhost|127\.0\.0\.1):\d+$",
         allow_credentials=True,
         allow_methods=["*"],
@@ -37,6 +51,8 @@ def create_app(frontend_dist_dir: Path = FRONTEND_DIST_DIR, enable_startup: bool
     app.include_router(stats.router)
     app.include_router(data_transfer.router)
     app.include_router(maintenance.router)
+    if distribution_target is DistributionTarget.ZIP:
+        app.include_router(maintenance.zip_router)
 
     mount_frontend(app, frontend_dist_dir)
     return app

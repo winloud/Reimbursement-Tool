@@ -1,4 +1,5 @@
 import {
+  Alert,
   Box,
   Button,
   CssBaseline,
@@ -25,7 +26,7 @@ import RequestQuoteIcon from "@mui/icons-material/RequestQuote";
 import StorageIcon from "@mui/icons-material/Storage";
 import SettingsIcon from "@mui/icons-material/Settings";
 import { useState } from "react";
-import { Route, Routes, useLocation } from "react-router-dom";
+import { Link, Route, Routes, useLocation } from "react-router-dom";
 import {
   SIDEBAR_COLLAPSED_WIDTH,
   SIDEBAR_EXPANDED_WIDTH,
@@ -33,6 +34,7 @@ import {
   writeSidebarCollapsed,
 } from "./appLayoutUtils";
 import { NavigationGuardProvider, useNavigationGuard } from "./navigationGuard";
+import useStartupUpdateCheck from "./features/useStartupUpdateCheck";
 import Dashboard from "./pages/Dashboard";
 import MaintenancePage from "./pages/MaintenancePage";
 import ReportEdit from "./pages/ReportEdit";
@@ -263,9 +265,26 @@ function AppRoutes() {
 }
 
 export default function App() {
+  const [updateAvailable, setUpdateAvailable] = useState(null);
+  useStartupUpdateCheck((info) => setUpdateAvailable(info));
+
   return (
     <NavigationGuardProvider>
       <CssBaseline />
+      {updateAvailable && (
+        <Alert
+          severity="info"
+          sx={{ borderRadius: 0, position: "sticky", top: 0, zIndex: 1200 }}
+          action={
+            <Button color="inherit" size="small" component={Link} to="/maintenance">
+              去更新
+            </Button>
+          }
+          onClose={() => setUpdateAvailable(null)}
+        >
+          发现新版本 {updateAvailable.version}，可在数据维护页安装更新。
+        </Alert>
+      )}
       <AppRoutes />
     </NavigationGuardProvider>
   );

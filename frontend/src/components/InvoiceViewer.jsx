@@ -23,12 +23,12 @@ import FactCheckIcon from "@mui/icons-material/FactCheck";
 import ImageIcon from "@mui/icons-material/Image";
 import OpenInNewIcon from "@mui/icons-material/OpenInNew";
 import {
-  getInvoiceFileUrl,
   getInvoiceOpenCapability,
   openInvoiceLocally,
   parseInvoice,
   updateInvoice,
 } from "../api/client";
+import { openProtectedResource } from "../platform/index.js";
 import { shouldOpenInvoiceLocally } from "./invoiceViewerUtils";
 
 const formatAmount = (value) =>
@@ -221,7 +221,32 @@ export default function InvoiceViewer({ invoice, open, readonly = false, onClose
   const [localPdfOpenSupported, setLocalPdfOpenSupported] = useState(false);
   const [openingOriginal, setOpeningOriginal] = useState(false);
 
-  const fileUrl = invoice ? getInvoiceFileUrl(invoice.id) : "";
+  // 鉴权资源 URL：Tauri 下经 Rust 取字节构造 blob URL（带会话令牌），
+  // 浏览器开发模式下回退为直接 URL（后端无令牌放行）。
+  const [fileUrl, setFileUrl] = useState("");
+  useEffect(() => {
+    if (!invoice) {
+      setFileUrl("");
+      return;
+    }
+    let revoked = false;
+    let createdUrl = "";
+    openProtectedResource(`/api/invoices/${invoice.id}/file`)
+      .then((url) => {
+        if (!revoked) {
+          createdUrl = url;
+          setFileUrl(url);
+        }
+      })
+      .catch(() => {
+        if (!revoked) setFileUrl("");
+      });
+    return () => {
+      revoked = true;
+      // 仅 Tauri 模式返回 blob: URL 时需要 revoke；普通 URL revoke 无害但无意义，统一不 revoke。
+      if (createdUrl.startsWith("blob:")) URL.revokeObjectURL(createdUrl);
+    };
+  }, [invoice?.id]);
   const parsed = diagnosticsParsed || invoice?.parsed || {};
   const hasDiagnostics = Boolean(parsed.raw?.parse_method || parsed.raw?.parse_attempts?.length);
   const previewImage = parsed.preview_image || parsed.raw?.preview_image;

@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { BrowserRouter } from "react-router-dom";
 import { ThemeProvider, createTheme } from "@mui/material/styles";
 import App from "./App";
+import RuntimeBoundary from "./platform/RuntimeBoundary";
 
 const theme = createTheme({
   palette: {
@@ -175,10 +176,12 @@ const theme = createTheme({
 
 ReactDOM.createRoot(document.getElementById("root")).render(
   <React.StrictMode>
-    <BrowserRouter>
-      <ThemeProvider theme={theme}>
-        <App />
-      </ThemeProvider>
-    </BrowserRouter>
+    <ThemeProvider theme={theme}>
+      <RuntimeBoundary>
+        <BrowserRouter>
+          <App />
+        </BrowserRouter>
+      </RuntimeBoundary>
+    </ThemeProvider>
   </React.StrictMode>,
 );

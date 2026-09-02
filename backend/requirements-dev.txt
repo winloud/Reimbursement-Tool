@@ -1,3 +1,4 @@
 -r requirements.txt
 pytest
 PyYAML==6.0.3
+httpx

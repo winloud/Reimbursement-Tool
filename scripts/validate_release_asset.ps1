@@ -1,9 +1,18 @@
+﻿# 校验已发布的 GitHub Release 资产（v2.0.0 起为 Tauri NSIS + updater feed）。
+#
+# 与 validate_tauri_release.ps1 的分工：
+#   - validate_tauri_release.ps1 校验本地 cargo tauri build 的产物（发布前）。
+#   - 本脚本校验 GitHub Release 上已公开的资产、manifest 和 checksum（发布后），
+#     由 scripts/release_publish.ps1 在发布状态机中调用。
+#
+# 阶段 8 随便携 ZIP 链路一并改造：主资产从 报销管理-vX.Y.Z-yyyymmdd.zip 改为
+# NSIS setup exe，并新增更新包签名（.sig）、latest.json、data-compat.json 的校验。
+
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$ReleaseDate = "",
     [string]$TagName = "",
     [string]$ExpectedCommit = "",
-    [string]$ZipPath = "",
     [switch]$MetadataOnly,
     [string]$DownloadDir = "",
     [string]$OutputJson = "",
@@ -12,6 +21,11 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+
+# gh 以 UTF-8 输出 JSON，而 Windows PowerShell 默认按控制台 OEM 代码页解码子进程 stdout。
+# 中文 Windows（CP936）上这会把安装包名 报销管理_X.Y.Z_x64-setup.exe 解成乱码，
+# 后续按名字比对 manifest/checksum 的断言就会全部错位。
+[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 
 $strictVersionPattern = "^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$"
 if ($Version -notmatch $strictVersionPattern) {
@@ -38,14 +52,12 @@ if (-not [string]::IsNullOrWhiteSpace($ReleaseDate)) {
         throw "ReleaseDate is not a valid calendar date: $ReleaseDate"
     }
 }
-if ($MetadataOnly -and -not [string]::IsNullOrWhiteSpace($ZipPath)) {
-    throw "-MetadataOnly cannot be combined with -ZipPath."
-}
 
-$AppName = -join ([char[]](0x62A5, 0x9500, 0x7BA1, 0x7406))
-$AppExeName = "$AppName.exe"
 $ManifestAssetName = "release-manifest.json"
 $ChecksumsAssetName = "SHA256SUMS.txt"
+$LatestFeedAssetName = "latest.json"
+$CompatFeedAssetName = "data-compat.json"
+$UpdaterPlatformKey = "windows-x86_64"
 
 function ConvertTo-SizeMb {
     param([Parameter(Mandatory = $true)][double]$Bytes)
@@ -174,34 +186,37 @@ function Get-ReleaseMetadata {
         throw "GitHub Release $TagName has a publishedAt timestamp in the future: $($release.publishedAt)"
     }
 
-    $escapedVersion = [regex]::Escape($Version)
-    $mainAssetPattern = "^reimbursement-tool-v$escapedVersion-(\d{8})\.zip$"
-    $mainAssets = @($release.assets | Where-Object { $_.name -match $mainAssetPattern })
-    if ($mainAssets.Count -eq 0) {
-        throw "No main release ZIP asset found for $TagName."
+    # 主资产：NSIS 安装包。产物名由 Tauri 生成（productName_version_arch-setup.exe），
+    # 离线包带 -offline 后缀，两者都可作为主资产发布。
+    $installerAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe" -or $_.name -like "*-setup-offline.exe" })
+    if ($installerAssets.Count -eq 0) {
+        throw "No NSIS installer asset found for $TagName."
     }
-    if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
-        if ($mainAssets.Count -ne 1) {
-            throw "Multiple main release ZIP assets found; provide -ReleaseDate."
+    foreach ($installerAsset in $installerAssets) {
+        if ([int64]$installerAsset.size -le 0) {
+            throw "NSIS installer asset is empty: $($installerAsset.name)"
         }
-        [void]($mainAssets[0].name -match $mainAssetPattern)
-        $script:ReleaseDate = $Matches[1]
-        try {
-            [void][DateTime]::ParseExact($script:ReleaseDate, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)
-        }
-        catch {
-            throw "Main release ZIP contains an invalid release date: $($mainAssets[0].name)"
+        if ([string]$installerAsset.name -notmatch [regex]::Escape($Version)) {
+            throw "NSIS installer asset does not carry version $Version : $($installerAsset.name)"
         }
     }
 
-    $mainAssetName = "reimbursement-tool-v$Version-$ReleaseDate.zip"
-    $mainAssetMatches = @($release.assets | Where-Object { $_.name -ceq $mainAssetName })
-    if ($mainAssetMatches.Count -ne 1) {
-        throw "Expected exactly one main release ZIP asset named $mainAssetName."
+    # 每个安装包都必须带 updater 签名，否则客户端无法验签升级。
+    $signatureNames = @($release.assets | Where-Object { $_.name -like "*.sig" } | ForEach-Object { $_.name })
+    foreach ($installerAsset in $installerAssets) {
+        $expectedSignature = "$($installerAsset.name).sig"
+        if ($signatureNames -notcontains $expectedSignature) {
+            throw "Updater signature asset is missing: $expectedSignature"
+        }
     }
-    $mainAsset = $mainAssetMatches[0]
-    if ([int64]$mainAsset.size -le 0) {
-        throw "Main release ZIP asset is empty: $mainAssetName"
+
+    $feedAssets = @{}
+    foreach ($feedName in @($LatestFeedAssetName, $CompatFeedAssetName)) {
+        $matched = @($release.assets | Where-Object { $_.name -ceq $feedName })
+        if ($matched.Count -ne 1 -or [int64]$matched[0].size -le 0) {
+            throw "GitHub Release must contain one non-empty $feedName asset."
+        }
+        $feedAssets[$feedName] = $matched[0]
     }
 
     $runtimeAssets = @($release.assets | Where-Object { $_.name -like "opencv-wechat-runtime-*.zip" })
@@ -223,11 +238,16 @@ function Get-ReleaseMetadata {
         throw "GitHub Release must contain one non-empty $ChecksumsAssetName asset."
     }
 
+    $signatureAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe.sig" -or $_.name -like "*-setup-offline.exe.sig" })
+    $primaryInstaller = @($installerAssets | Sort-Object name | Select-Object -First 1)[0]
+
     return [ordered]@{
         release = $release
         published_at = $publishedAt
-        main_asset = $mainAsset
-        main_asset_name = $mainAssetName
+        installer_assets = $installerAssets
+        primary_installer = $primaryInstaller
+        signature_assets = $signatureAssets
+        feed_assets = $feedAssets
         runtime_assets = $runtimeAssets
         manifest_asset = $manifestAssets[0]
         checksums_asset = $checksumsAssets[0]
@@ -239,7 +259,7 @@ function Read-ChecksumFile {
 
     $checksums = @{}
     $lineNumber = 0
-    foreach ($line in Get-Content -LiteralPath $Path) {
+    foreach ($line in Get-Content -Encoding UTF8 -LiteralPath $Path) {
         $lineNumber++
         if ([string]::IsNullOrWhiteSpace($line)) {
             continue
@@ -267,7 +287,7 @@ function Test-ReleaseIntegrity {
     )
 
     try {
-        $manifest = Get-Content -Raw -LiteralPath $ManifestPath | ConvertFrom-Json
+        $manifest = Get-Content -Raw -Encoding UTF8 -LiteralPath $ManifestPath | ConvertFrom-Json
     }
     catch {
         throw "$ManifestAssetName is not valid JSON: $($_.Exception.Message)"
@@ -280,6 +300,12 @@ function Test-ReleaseIntegrity {
     }
     if (-not [string]::IsNullOrWhiteSpace($ExpectedCommit) -and [string]$manifest.commit -ine $ExpectedCommit) {
         throw "Release manifest commit is $($manifest.commit), expected $ExpectedCommit."
+    }
+    if ([string]::IsNullOrWhiteSpace($ReleaseDate)) {
+        if ([string]$manifest.release_date -notmatch "^\d{4}-\d{2}-\d{2}$") {
+            throw "Release manifest date is missing or malformed: $($manifest.release_date)"
+        }
+        $script:ReleaseDate = ([DateTime]::ParseExact([string]$manifest.release_date, "yyyy-MM-dd", [Globalization.CultureInfo]::InvariantCulture)).ToString("yyyyMMdd")
     }
     $expectedReleaseDate = [DateTime]::ParseExact($ReleaseDate, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture).ToString("yyyy-MM-dd")
     if ([string]$manifest.release_date -cne $expectedReleaseDate) {
@@ -308,33 +334,32 @@ function Test-ReleaseIntegrity {
         $recordsByName[$name] = $record
     }
 
-    if (-not $recordsByName.ContainsKey($Metadata.main_asset_name)) {
-        throw "Release manifest is missing the main ZIP asset record: $($Metadata.main_asset_name)"
-    }
+    # 目标资产集合：安装包 + 其签名 + updater feed + 可选 OpenCV runtime。
+    $releaseAssets = @()
+    $releaseAssets += @($Metadata.installer_assets)
+    $releaseAssets += @($Metadata.signature_assets)
+    $releaseAssets += @($Metadata.feed_assets[$LatestFeedAssetName], $Metadata.feed_assets[$CompatFeedAssetName])
     $runtimeRecordNames = @($recordsByName.Keys | Where-Object { $_ -like "opencv-wechat-runtime-*.zip" } | Sort-Object)
-    $unexpectedRecordNames = @($recordsByName.Keys | Where-Object {
-        $_ -cne $Metadata.main_asset_name -and $_ -notlike "opencv-wechat-runtime-*.zip"
-    })
-    if ($unexpectedRecordNames.Count -gt 0) {
-        throw "Release manifest contains unexpected asset records: $($unexpectedRecordNames -join ', ')"
+    foreach ($runtimeName in $runtimeRecordNames) {
+        $matched = @($Metadata.runtime_assets | Where-Object { $_.name -ceq $runtimeName })
+        if ($matched.Count -ne 1) {
+            throw "Expected exactly one GitHub runtime asset declared by the manifest: $runtimeName"
+        }
+        $releaseAssets += $matched[0]
     }
     if (-not $SkipOpenCvRuntimeCheck -and $runtimeRecordNames.Count -eq 0) {
         throw "Release manifest contains no OpenCV runtime asset record."
     }
 
-    $targetRuntimeAssets = @()
-    foreach ($runtimeName in $runtimeRecordNames) {
-        $matches = @($Metadata.runtime_assets | Where-Object { $_.name -ceq $runtimeName })
-        if ($matches.Count -ne 1) {
-            throw "Expected exactly one GitHub runtime asset declared by the manifest: $runtimeName"
-        }
-        $targetRuntimeAssets += $matches[0]
+    $expectedNames = @($releaseAssets | ForEach-Object { [string]$_.name })
+    $unexpectedRecordNames = @($recordsByName.Keys | Where-Object { $expectedNames -notcontains $_ })
+    if ($unexpectedRecordNames.Count -gt 0) {
+        throw "Release manifest contains unexpected asset records: $($unexpectedRecordNames -join ', ')"
     }
 
     $checksums = Read-ChecksumFile -Path $ChecksumsPath
-    $releaseAssets = @($Metadata.main_asset) + $targetRuntimeAssets
     if ($recordsByName.Count -ne $releaseAssets.Count) {
-        throw "Release manifest asset count does not match its declared main ZIP and runtime assets."
+        throw "Release manifest asset count does not match its declared installer, signature, feed and runtime assets."
     }
     if ($checksums.Count -ne $recordsByName.Count) {
         throw "$ChecksumsAssetName entry count does not match the release manifest."
@@ -371,8 +396,8 @@ function Test-ReleaseIntegrity {
     return [ordered]@{
         checked = $true
         metadata_assets_downloaded = @($ManifestAssetName, $ChecksumsAssetName)
-        main_zip_downloaded = $false
-        main_zip_sha256_verified = $false
+        installer_downloaded = $false
+        installer_sha256_verified = $false
         manifest = [ordered]@{
             name = $ManifestAssetName
             size_bytes = [int64]$Metadata.manifest_asset.size
@@ -397,204 +422,117 @@ function Test-ReleaseIntegrity {
     }
 }
 
-function Resolve-ReleaseDateFromZip {
-    param([Parameter(Mandatory = $true)][string]$Path)
+function Test-UpdaterFeed {
+    param(
+        [Parameter(Mandatory = $true)][string]$LatestPath,
+        [Parameter(Mandatory = $true)][string]$CompatPath,
+        [Parameter(Mandatory = $true)]$Metadata
+    )
 
-    if (-not [string]::IsNullOrWhiteSpace($ReleaseDate)) {
-        return
-    }
-    $escapedVersion = [regex]::Escape($Version)
-    $zipName = Split-Path -Leaf $Path
-    if ($zipName -match "^(reimbursement-tool|$([regex]::Escape($AppName)))-v$escapedVersion-(\d{8})\.zip$") {
-        $script:ReleaseDate = $Matches[2]
-        try {
-            [void][DateTime]::ParseExact($script:ReleaseDate, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)
-        }
-        catch {
-            throw "ZIP name contains an invalid release date: $zipName"
-        }
-        return
-    }
-    throw "ReleaseDate is required when ZipPath name does not contain v$Version-yyyymmdd."
-}
-
-function Test-ReleaseZipContent {
-    param([Parameter(Mandatory = $true)][string]$Path)
-
-    if (-not (Test-Path -LiteralPath $Path)) {
-        throw "ZIP not found: $Path"
-    }
-
-    Add-Type -AssemblyName System.IO.Compression.FileSystem
-    $archive = [System.IO.Compression.ZipFile]::OpenRead($Path)
     try {
-        $entries = @($archive.Entries | ForEach-Object { $_.FullName })
-        $requiredEntries = @(
-            "$AppName/README.md",
-            "$AppName/zip-upgrade-guide.md",
-            "$AppName/upgrade_zip_release.ps1",
-            "$AppName/portable-release.json",
-            "$AppName/current-version.json",
-            "$AppName/$AppExeName",
-            "$AppName/versions/$Version/portable-release.json",
-            "$AppName/versions/$Version/$AppExeName"
-        )
-        $missingEntries = @($requiredEntries | Where-Object { $entries -notcontains $_ })
-        $forbiddenPatterns = @(
-            "/data/",
-            "/uploads/",
-            "/logs/",
-            "/browser-profile/",
-            "/vendor/",
-            "/release/",
-            "/test example/",
-            "window-state.json"
-        )
-        $forbiddenEntries = @($entries | Where-Object {
-            $entryName = $_
-            @($forbiddenPatterns | Where-Object { $entryName -like "*$_*" }).Count -gt 0
-        })
-
-        $currentVersionEntry = $archive.GetEntry("$AppName/current-version.json")
-        $portableManifestEntry = $archive.GetEntry("$AppName/portable-release.json")
-        if (-not $currentVersionEntry -or -not $portableManifestEntry) {
-            throw "Required manifest entries are missing."
-        }
-
-        $reader = New-Object System.IO.StreamReader($currentVersionEntry.Open(), [System.Text.Encoding]::UTF8)
-        try {
-            $currentVersion = $reader.ReadToEnd() | ConvertFrom-Json
-        }
-        finally {
-            $reader.Dispose()
-        }
-        $reader = New-Object System.IO.StreamReader($portableManifestEntry.Open(), [System.Text.Encoding]::UTF8)
-        try {
-            $portableManifest = $reader.ReadToEnd() | ConvertFrom-Json
-        }
-        finally {
-            $reader.Dispose()
-        }
-
-        if ($currentVersion.current_version -ne $Version) {
-            throw "current-version.json has $($currentVersion.current_version), expected $Version."
-        }
-        if ($portableManifest.app_version -ne $Version) {
-            throw "portable-release.json has $($portableManifest.app_version), expected $Version."
-        }
-        if ($portableManifest.package_type -ne "reimbursement_portable_release") {
-            throw "portable-release.json package_type is $($portableManifest.package_type)."
-        }
-        if ($missingEntries.Count -gt 0) {
-            throw "Missing required ZIP entries: $($missingEntries -join ', ')"
-        }
-        if ($forbiddenEntries.Count -gt 0) {
-            throw "Forbidden runtime ZIP entries found: $($forbiddenEntries -join ', ')"
-        }
-
-        return [ordered]@{
-            zip = [ordered]@{
-                path = $Path
-                size_bytes = (Get-Item -LiteralPath $Path).Length
-                size_mb = ConvertTo-SizeMb -Bytes (Get-Item -LiteralPath $Path).Length
-                entry_count = $entries.Count
-                content_checked = $true
-                missing_required_entries = $missingEntries
-                forbidden_entries = $forbiddenEntries
-            }
-            manifest = [ordered]@{
-                current_version = $currentVersion.current_version
-                app_version = $portableManifest.app_version
-                data_schema_version = $portableManifest.data_schema_version
-                min_supported_data_schema_version = $portableManifest.min_supported_data_schema_version
-                max_supported_data_schema_version = $portableManifest.max_supported_data_schema_version
-                supported_range = "$($portableManifest.min_supported_data_schema_version)-$($portableManifest.max_supported_data_schema_version)"
-            }
-        }
+        $latest = Get-Content -Raw -Encoding UTF8 -LiteralPath $LatestPath | ConvertFrom-Json
     }
-    finally {
-        $archive.Dispose()
+    catch {
+        throw "$LatestFeedAssetName is not valid JSON: $($_.Exception.Message)"
     }
-}
+    if ([string]$latest.version -cne $Version) {
+        throw "$LatestFeedAssetName version is $($latest.version), expected $Version."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$latest.pub_date)) {
+        throw "$LatestFeedAssetName is missing pub_date."
+    }
+    $platform = $latest.platforms.$UpdaterPlatformKey
+    if (-not $platform) {
+        throw "$LatestFeedAssetName is missing platform $UpdaterPlatformKey."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$platform.signature)) {
+        throw "$LatestFeedAssetName platform $UpdaterPlatformKey has an empty signature."
+    }
+    $updateUrl = [string]$platform.url
+    if ([string]::IsNullOrWhiteSpace($updateUrl)) {
+        throw "$LatestFeedAssetName platform $UpdaterPlatformKey has an empty url."
+    }
+    if ($updateUrl -notlike "*/download/$TagName/*") {
+        throw "$LatestFeedAssetName update url does not point at $TagName : $updateUrl"
+    }
+    $urlAssetName = [System.Uri]::UnescapeDataString(($updateUrl -split "/")[-1])
+    $installerNames = @($Metadata.installer_assets | ForEach-Object { [string]$_.name })
+    if ($installerNames -notcontains $urlAssetName) {
+        throw "$LatestFeedAssetName update url asset $urlAssetName is not published on $TagName."
+    }
 
-function New-MetadataOnlyContentResult {
+    try {
+        $compat = Get-Content -Raw -Encoding UTF8 -LiteralPath $CompatPath | ConvertFrom-Json
+    }
+    catch {
+        throw "$CompatFeedAssetName is not valid JSON: $($_.Exception.Message)"
+    }
+    $minSchema = [int]$compat.min_data_schema_version
+    $maxSchema = [int]$compat.max_data_schema_version
+    if ($minSchema -le 0 -or $maxSchema -le 0) {
+        throw "$CompatFeedAssetName declares a non-positive data schema range."
+    }
+    if ($minSchema -gt $maxSchema) {
+        throw "$CompatFeedAssetName min_data_schema_version ($minSchema) is greater than max ($maxSchema)."
+    }
+
     return [ordered]@{
-        zip = [ordered]@{
-            path = $null
-            size_bytes = $null
-            size_mb = $null
-            entry_count = $null
-            content_checked = $false
-            missing_required_entries = @()
-            forbidden_entries = @()
-        }
-        manifest = [ordered]@{
-            current_version = $null
-            app_version = $null
-            data_schema_version = $null
-            min_supported_data_schema_version = $null
-            max_supported_data_schema_version = $null
-            supported_range = $null
-        }
+        checked = $true
+        latest_version = [string]$latest.version
+        pub_date = [string]$latest.pub_date
+        platform = $UpdaterPlatformKey
+        update_asset_name = $urlAssetName
+        signature_present = $true
+        min_data_schema_version = $minSchema
+        max_data_schema_version = $maxSchema
     }
 }
 
 function New-ValidationResult {
     param(
         [Parameter(Mandatory = $true)][string]$Source,
-        $Release = $null,
-        $MainAsset = $null,
-        [array]$RuntimeAssets = @(),
-        [Parameter(Mandatory = $true)]$Content,
+        [Parameter(Mandatory = $true)]$Metadata,
+        [Parameter(Mandatory = $true)]$Feed,
         $Integrity = $null
     )
 
-    $mainAssetName = if ($MainAsset) { $MainAsset.name } else { Split-Path -Leaf $Content.zip.path }
-    $mainAssetSizeBytes = if ($MainAsset) { [int64]$MainAsset.size } else { [int64]$Content.zip.size_bytes }
-
+    $release = $Metadata.release
     return [ordered]@{
         ok = $true
         source = $Source
         version = $Version
-        tag_name = if ($Release) { $Release.tagName } else { $TagName }
+        tag_name = $release.tagName
         release_date = $ReleaseDate
-        release_url = if ($Release) { $Release.url } else { $null }
-        is_draft = if ($Release) { [bool]$Release.isDraft } else { $null }
-        is_prerelease = if ($Release) { [bool]$Release.isPrerelease } else { $null }
-        published_at = if ($Release) { $Release.publishedAt } else { $null }
-        release_health_verified = [bool]$Release
-        main_asset = [ordered]@{
-            name = $mainAssetName
-            size_bytes = $mainAssetSizeBytes
-            size_mb = ConvertTo-SizeMb -Bytes ([double]$mainAssetSizeBytes)
-        }
-        opencv_runtime_assets = @($RuntimeAssets | ForEach-Object {
+        release_url = $release.url
+        is_draft = [bool]$release.isDraft
+        is_prerelease = [bool]$release.isPrerelease
+        published_at = $release.publishedAt
+        release_health_verified = $true
+        installers = @($Metadata.installer_assets | ForEach-Object {
             [ordered]@{
                 name = $_.name
                 size_bytes = [int64]$_.size
                 size_mb = ConvertTo-SizeMb -Bytes ([double]$_.size)
             }
         })
+        signatures = @($Metadata.signature_assets | ForEach-Object { $_.name })
+        opencv_runtime_assets = @($Metadata.runtime_assets | ForEach-Object {
+            [ordered]@{
+                name = $_.name
+                size_bytes = [int64]$_.size
+                size_mb = ConvertTo-SizeMb -Bytes ([double]$_.size)
+            }
+        })
+        updater_feed = $Feed
         integrity = if ($Integrity) { $Integrity } else {
             [ordered]@{
                 checked = $false
                 metadata_assets_downloaded = @()
-                main_zip_downloaded = $false
-                main_zip_sha256_verified = $false
+                installer_downloaded = $false
+                installer_sha256_verified = $false
             }
         }
-        zip = $Content.zip
-        manifest = $Content.manifest
     }
-}
-
-if (-not [string]::IsNullOrWhiteSpace($ZipPath)) {
-    Resolve-ReleaseDateFromZip -Path $ZipPath
-    $resolvedZipPath = (Resolve-Path -LiteralPath $ZipPath).Path
-    $content = Test-ReleaseZipContent -Path $resolvedZipPath
-    $result = New-ValidationResult -Source "local_zip" -Content $content
-    Write-JsonOutput -Value $result -Path $OutputJson
-    return
 }
 
 $metadata = Get-ReleaseMetadata
@@ -607,30 +545,33 @@ New-Item -ItemType Directory -Path $DownloadDir -Force | Out-Null
 
 $manifestPath = Join-Path $DownloadDir $ManifestAssetName
 $checksumsPath = Join-Path $DownloadDir $ChecksumsAssetName
-$downloadedZipPath = Join-Path $DownloadDir $metadata.main_asset_name
+$latestPath = Join-Path $DownloadDir $LatestFeedAssetName
+$compatPath = Join-Path $DownloadDir $CompatFeedAssetName
+$installerName = [string]$metadata.primary_installer.name
+$downloadedInstallerPath = Join-Path $DownloadDir $installerName
 try {
     Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $ManifestAssetName -Directory $DownloadDir -ExpectedPath $manifestPath
     Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $ChecksumsAssetName -Directory $DownloadDir -ExpectedPath $checksumsPath
+    Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $LatestFeedAssetName -Directory $DownloadDir -ExpectedPath $latestPath
+    Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $CompatFeedAssetName -Directory $DownloadDir -ExpectedPath $compatPath
     $integrity = Test-ReleaseIntegrity -Metadata $metadata -ManifestPath $manifestPath -ChecksumsPath $checksumsPath
-    $verifiedRuntimeAssets = @($metadata.runtime_assets | Where-Object { $integrity.verified_runtime_asset_names -contains $_.name })
+    $feed = Test-UpdaterFeed -LatestPath $latestPath -CompatPath $compatPath -Metadata $metadata
 
     if ($MetadataOnly) {
-        $content = New-MetadataOnlyContentResult
-        $result = New-ValidationResult -Source "github_release_metadata" -Release $metadata.release -MainAsset $metadata.main_asset -RuntimeAssets $verifiedRuntimeAssets -Content $content -Integrity $integrity
+        $result = New-ValidationResult -Source "github_release_metadata" -Metadata $metadata -Feed $feed -Integrity $integrity
         Write-JsonOutput -Value $result -Path $OutputJson
         return
     }
 
-    Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $metadata.main_asset_name -Directory $DownloadDir -ExpectedPath $downloadedZipPath
-    $mainRecord = @((Get-Content -Raw -LiteralPath $manifestPath | ConvertFrom-Json).assets | Where-Object { $_.name -ceq $metadata.main_asset_name })[0]
-    $downloadedMainSha256 = Get-FileSha256 -Path $downloadedZipPath
-    if ($downloadedMainSha256 -cne ([string]$mainRecord.sha256).ToLowerInvariant()) {
-        throw "Downloaded main release ZIP SHA256 does not match the release manifest."
+    Invoke-ReleaseAssetDownload -Tag $TagName -Pattern $installerName -Directory $DownloadDir -ExpectedPath $downloadedInstallerPath
+    $installerRecord = @((Get-Content -Raw -Encoding UTF8 -LiteralPath $manifestPath | ConvertFrom-Json).assets | Where-Object { $_.name -ceq $installerName })[0]
+    $downloadedInstallerSha256 = Get-FileSha256 -Path $downloadedInstallerPath
+    if ($downloadedInstallerSha256 -cne ([string]$installerRecord.sha256).ToLowerInvariant()) {
+        throw "Downloaded NSIS installer SHA256 does not match the release manifest."
     }
-    $integrity.main_zip_downloaded = $true
-    $integrity.main_zip_sha256_verified = $true
-    $content = Test-ReleaseZipContent -Path $downloadedZipPath
-    $result = New-ValidationResult -Source "github_release_download" -Release $metadata.release -MainAsset $metadata.main_asset -RuntimeAssets $verifiedRuntimeAssets -Content $content -Integrity $integrity
+    $integrity.installer_downloaded = $true
+    $integrity.installer_sha256_verified = $true
+    $result = New-ValidationResult -Source "github_release_download" -Metadata $metadata -Feed $feed -Integrity $integrity
     Write-JsonOutput -Value $result -Path $OutputJson
 }
 finally {

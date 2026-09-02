@@ -1,5 +1,5 @@
-param(
-    [ValidateSet("Backend", "Frontend", "Release", "All")]
+﻿param(
+    [ValidateSet("Backend", "Frontend", "Release", "Desktop", "All")]
     [string]$Profile = "All"
 )
 
@@ -79,6 +79,74 @@ function Invoke-ReleaseStaticChecks {
         -ArgumentList @("diff", "--check", "HEAD", "--")
 }
 
+function Invoke-DesktopStaticChecks {
+    Write-Host "==> Tauri configuration"
+    $tauriRoot = Join-Path $Root "src-tauri"
+    $configPath = Join-Path $tauriRoot "tauri.conf.json"
+    $config = Get-Content -Raw -Encoding UTF8 -LiteralPath $configPath | ConvertFrom-Json
+
+    if ($config.identifier -cne "com.winloud.reimbursementtool") {
+        throw "tauri.conf.json identifier must stay com.winloud.reimbursementtool (ADR 0009)."
+    }
+    if (@($config.bundle.targets) -notcontains "nsis") {
+        throw "tauri.conf.json bundle.targets must include nsis."
+    }
+    if ($config.bundle.windows.nsis.installMode -cne "currentUser") {
+        throw "NSIS installMode must stay currentUser (no admin rights required)."
+    }
+    if (@($config.bundle.resources) -notcontains "resources/reimbursement-sidecar") {
+        throw "tauri.conf.json bundle.resources must carry the PyInstaller sidecar onedir."
+    }
+    if (-not $config.plugins.updater.active) {
+        throw "Updater plugin must stay active."
+    }
+    if (@($config.plugins.updater.endpoints).Count -eq 0) {
+        throw "Updater plugin must declare at least one latest.json endpoint."
+    }
+    if ([string]::IsNullOrWhiteSpace([string]$config.plugins.updater.pubkey)) {
+        throw "Updater plugin must declare the signing public key."
+    }
+    if ($config.version -notmatch "^\d+\.\d+\.\d+$") {
+        throw "tauri.conf.json version must use X.Y.Z format."
+    }
+
+    $cargoToml = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $tauriRoot "Cargo.toml")
+    if ($cargoToml -notmatch '(?m)^version\s*=\s*"([^"]+)"') {
+        throw "Cannot resolve version from src-tauri/Cargo.toml."
+    }
+    if ($Matches[1] -cne [string]$config.version) {
+        throw "Cargo.toml version $($Matches[1]) does not match tauri.conf.json $($config.version)."
+    }
+
+    Write-Host "==> Tauri capabilities"
+    # 前端只应拿到窗口相关的最小权限：sidecar 启动、文件保存和更新安装都由 Rust 端发起，
+    # 一旦把 shell/fs/dialog 的执行权限暴露给 WebView，会话令牌鉴权就形同虚设。
+    foreach ($capability in Get-ChildItem -LiteralPath (Join-Path $tauriRoot "capabilities") -Filter "*.json") {
+        $permissions = @((Get-Content -Raw -Encoding UTF8 -LiteralPath $capability.FullName | ConvertFrom-Json).permissions)
+        foreach ($permission in $permissions) {
+            $name = [string]$permission
+            if ($name -match "^(shell|fs|http):") {
+                throw "$($capability.Name) must not expose $name to the frontend."
+            }
+        }
+    }
+}
+
+function Invoke-DesktopVerification {
+    $tauriRoot = Join-Path $Root "src-tauri"
+    Invoke-DesktopStaticChecks
+    Invoke-External `
+        -Name "Tauri Rust unit tests" `
+        -FilePath "cargo" `
+        -ArgumentList @("test", "--lib") `
+        -WorkingDirectory $tauriRoot
+    Invoke-External `
+        -Name "Tauri clippy" `
+        -FilePath "cargo" `
+        -ArgumentList @("clippy", "--all-targets", "--", "-D", "warnings") `
+        -WorkingDirectory $tauriRoot
+}
+
 switch ($Profile) {
     "Backend" {
         Invoke-BackendVerification
@@ -90,9 +158,13 @@ switch ($Profile) {
         Invoke-ReleaseTests
         Invoke-ReleaseStaticChecks
     }
+    "Desktop" {
+        Invoke-DesktopVerification
+    }
     "All" {
         Invoke-BackendVerification
         Invoke-FrontendVerification
+        Invoke-DesktopVerification
         Invoke-ReleaseStaticChecks
     }
 }

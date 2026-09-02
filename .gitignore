@@ -11,13 +11,18 @@ build/
 dist/
 *.egg-info/
 
-# PyInstaller release artifacts
+# PyInstaller sidecar artifacts
 *.spec.bak
-dist/报销管理/
-dist/报销管理/data/
-dist/报销管理/uploads/
-dist/报销管理/logs/
+dist/reimbursement-sidecar/
 /release/
+/dist-feed/
+/artifacts/
+/src-tauri/resources/
+/.tauri-key
+/.tauri-key.pub
+/src-tauri/.tauri-key*
+/src-tauri/*.key
+/src-tauri/*.key.pub
 
 # Virtual environments
 .venv/
@@ -50,6 +55,7 @@ data/update_staging/
 logs/
 browser-profile/
 window-state.json
+/runtime-test-data/
 
 # Backend uploads
 backend/uploads/
@@ -67,3 +73,11 @@ templates/*.dwg
 
 # 发票测试样本
 test example/
+
+# Rust / Tauri build artifacts
+/src-tauri/target/
+/src-tauri/gen/
+
+# Frontend build output
+frontend/dist/
+

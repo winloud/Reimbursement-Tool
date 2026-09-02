@@ -1,0 +1,58 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "报销管理",
+  "version": "2.0.0",
+  "identifier": "com.winloud.reimbursementtool",
+  "build": {
+    "frontendDist": "../frontend/dist",
+    "devUrl": "http://localhost:5173",
+    "beforeDevCommand": { "script": "npm run dev", "cwd": "../frontend" },
+    "beforeBuildCommand": { "script": "npm run build", "cwd": "../frontend" }
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "出差旅费报销管理工具",
+        "label": "main",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 1024,
+        "minHeight": 700,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "updater": {
+      "active": true,
+      "endpoints": [
+        "https://github.com/winloud/Reimbursement-Tool/releases/latest/download/latest.json"
+      ],
+      "dialog": false,
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDVDQkY3QjZGRTA3RjVGNUUKUldSZVgzL2diM3UvWE1Hekp2NG9yV2V3VDEwNXVKQlBzU1hrQkFkMGYrZEF6dVdtb0l0SGlRd3AK"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": [
+      "icons/icon.png"
+    ],
+    "resources": ["resources/reimbursement-sidecar"],
+    "publisher": "winloud",
+    "category": "Utility",
+    "shortDescription": "出差旅费报销管理工具",
+    "longDescription": "本地单机运行的出差旅费报销管理工具",
+    "windows": {
+      "nsis": {
+        "installMode": "currentUser",
+        "languages": ["SimpChinese"],
+        "displayLanguageSelector": false
+      }
+    }
+  }
+}

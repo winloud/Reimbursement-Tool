@@ -25,6 +25,7 @@ import RestoreIcon from "@mui/icons-material/Restore";
 import StorageIcon from "@mui/icons-material/Storage";
 import SystemUpdateAltIcon from "@mui/icons-material/SystemUpdateAlt";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
+import { capabilities } from "../platform/index.js";
 import {
   browserRuntimeSummary,
   databaseCheckSeverity,
@@ -711,7 +712,9 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
                   : "-"
               }
             />
-            <InfoRow label="浏览器/WebView2" value={browserRuntimeSummary(info?.browser_runtime)} />
+            {capabilities.browserDiagnostics && (
+              <InfoRow label="浏览器/WebView2" value={browserRuntimeSummary(info?.browser_runtime)} />
+            )}
           </Box>
 
           <Box sx={{ minWidth: 0 }}>

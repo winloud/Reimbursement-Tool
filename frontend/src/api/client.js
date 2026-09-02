@@ -1,13 +1,62 @@
 import axios from "axios";
 import { buildReportExportPayload, buildReportQueryParams } from "./reportFilters.js";
+import { capabilities, platform } from "../platform/index.js";
 
 const API_BASE_URL = import.meta.env?.VITE_API_BASE_URL || "";
 
+export const apiClient = axios.create({
+  baseURL: API_BASE_URL,
+  timeout: 10000,
+});
+
+// 请求拦截器在模块加载时同步注册，内部 await runtimeConfigReady，
+// 确保首个业务请求不会在配置就绪前发出。配置必须延迟到首个请求再加载：
+// Tauri 全新安装尚无 runtime 时，RuntimeBoundary 需要先显示初始化引导。
+let runtimeConfigReady = null;
+let sessionToken = "";
+export const initRuntimeConfig = () => {
+  if (!runtimeConfigReady) {
+    runtimeConfigReady = platform.bootstrap().then((config) => {
+      if (config.apiBaseUrl) {
+        apiClient.defaults.baseURL = config.apiBaseUrl.replace(/\/$/, "");
+      }
+      sessionToken = config.sessionToken || "";
+      return config;
+    });
+  }
+  return runtimeConfigReady;
+};
+
+// 同步注册请求拦截器：每个请求 await 配置就绪后再注入令牌。
+// 配置加载失败时 await 会抛错，请求失败——此时 sidecar 未就绪，属启动错误。
+apiClient.interceptors.request.use(async (requestConfig) => {
+  if (!runtimeConfigReady) initRuntimeConfig();
+  let runtimeConfig = null;
+  try {
+    runtimeConfig = await runtimeConfigReady;
+  } catch {
+    // 配置加载失败：令牌缺失，放行请求让其按原逻辑失败，避免永久卡死后续请求。
+  }
+  // Axios 会在进入请求拦截器前把 defaults 合并到当前请求配置；只更新
+  // apiClient.defaults.baseURL 不会影响这一次已经创建的请求。
+  if (runtimeConfig?.apiBaseUrl) {
+    requestConfig.baseURL = runtimeConfig.apiBaseUrl.replace(/\/$/, "");
+  }
+  if (sessionToken) {
+    requestConfig.headers = requestConfig.headers || {};
+    requestConfig.headers["X-Session-Token"] = sessionToken;
+  }
+  return requestConfig;
+});
+
+// 需要原生保存的平台保留相对路径；浏览器保存则补全 API 基址。
 const resolveApiDownloadUrl = (downloadUrl) => {
-  if (!downloadUrl || !API_BASE_URL || /^https?:\/\//i.test(downloadUrl)) {
+  if (!downloadUrl || capabilities.nativeSave || /^https?:\/\//i.test(downloadUrl)) {
     return downloadUrl;
   }
-  return `${API_BASE_URL.replace(/\/$/, "")}/${downloadUrl.replace(/^\//, "")}`;
+  const base = (apiClient.defaults.baseURL || API_BASE_URL).replace(/\/$/, "");
+  if (!base) return downloadUrl;
+  return `${base}/${downloadUrl.replace(/^\//, "")}`;
 };
 
 const resolvePreparedDownload = (responseData) => ({
@@ -18,11 +67,6 @@ const resolvePreparedDownload = (responseData) => ({
         download_url: resolveApiDownloadUrl(responseData.data.download_url),
       }
     : responseData?.data,
-});
-
-export const apiClient = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 10000,
 });
 
 export const getHealth = async () => {
@@ -342,6 +386,35 @@ export const downloadReportBatchPdf = async (reportIds) => {
 export const prepareReportBatchPdfDownload = async (reportIds) => {
   const response = await apiClient.post("/api/reports/batch/pdf/prepare", { report_ids: reportIds });
   return resolvePreparedDownload(response.data);
+};
+
+/**
+ * 保存 prepared-download 描述符指向的内容到磁盘。
+ * 具体保存方式由 Platform Adapter 决定。
+ * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
+ */
+export const triggerBackendDownload = async (prepared) => {
+  const downloadUrl = prepared?.data?.download_url;
+  const filename = prepared?.data?.filename || "download";
+  if (!downloadUrl) throw new Error("下载链接无效，请重新生成");
+
+  return platform.saveDownload({ url: downloadUrl, filename });
+};
+
+/**
+ * 保存直接文件流端点（备份 ZIP、诊断包）到磁盘。
+ * 与 triggerBackendDownload 的区别：这里不走 prepare 描述符，而是直接给定端点 URL。
+ * Platform Adapter 决定使用原生保存或浏览器 blob 下载。
+ * 返回 { saved: true, saved_path } | { cancelled: true } | { browser: true } | { error }。
+ *
+ * @param url 资源端点相对/绝对 URL
+ * @param filename 保存对话框默认文件名
+ * @param fetchBlob 浏览器回退用的取 blob 函数，返回 { blob, filename }
+ */
+export const saveBackendResource = async (url, filename, fetchBlob) => {
+  if (!url) throw new Error("下载链接无效，请重新生成");
+
+  return platform.saveDownload({ url, filename, fetchBlob });
 };
 
 export const uploadInvoice = async ({ reportId, tripId, regularItemId, expenseCategory, file }) => {

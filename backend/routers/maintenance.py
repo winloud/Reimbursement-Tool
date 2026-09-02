@@ -54,6 +54,8 @@ from backend.services.maintenance_service import (
 )
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
+# ZIP 便携更新、版本切换和桌面重启由 backend.main 按显式 Distribution Target 注册。
+zip_router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 
 @router.get("/info", response_model=ApiResponse[MaintenanceInfoRead])
@@ -109,39 +111,39 @@ def post_restore_execute(payload: RestoreExecuteRequest) -> ApiResponse[RestoreE
     return ApiResponse(data=execute_restore(payload.preview_id, payload.confirm_restore), message="恢复完成")
 
 
-@router.post("/updates/preview", response_model=ApiResponse[UpdatePreviewRead])
+@zip_router.post("/updates/preview", response_model=ApiResponse[UpdatePreviewRead])
 def post_update_preview(file: Annotated[UploadFile, File()]) -> ApiResponse[UpdatePreviewRead]:
     return ApiResponse(data=create_update_preview(file), message="更新包预览已生成")
 
 
-@router.post("/updates/execute", response_model=ApiResponse[UpdateExecuteRead])
+@zip_router.post("/updates/execute", response_model=ApiResponse[UpdateExecuteRead])
 def post_update_execute(payload: UpdateExecuteRequest) -> ApiResponse[UpdateExecuteRead]:
     return ApiResponse(data=execute_update(payload.preview_id, payload.confirm_update), message="更新已安装，重启后生效")
 
 
-@router.post("/updates/staging/cleanup", response_model=ApiResponse[UpdateStagingCleanupRead])
+@zip_router.post("/updates/staging/cleanup", response_model=ApiResponse[UpdateStagingCleanupRead])
 def post_update_staging_cleanup(payload: UpdateStagingCleanupRequest) -> ApiResponse[UpdateStagingCleanupRead]:
     result = cleanup_selected_update_staging(payload.preview_ids, payload.confirm_cleanup)
     message = "更新暂存包已清理" if not result.failed_packages else "部分更新暂存包清理失败"
     return ApiResponse(data=result, message=message)
 
 
-@router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])
+@zip_router.post("/versions/switch", response_model=ApiResponse[VersionSwitchRead])
 def post_version_switch(payload: VersionSwitchRequest) -> ApiResponse[VersionSwitchRead]:
     return ApiResponse(data=switch_installed_version(payload.version, payload.confirm_switch), message="版本已切换，重启后生效")
 
 
-@router.delete("/versions/{version}", response_model=ApiResponse[VersionDeleteRead])
+@zip_router.delete("/versions/{version}", response_model=ApiResponse[VersionDeleteRead])
 def delete_version(version: str, payload: VersionDeleteRequest) -> ApiResponse[VersionDeleteRead]:
     return ApiResponse(data=delete_installed_version(version, payload.confirm_delete), message="版本已删除")
 
 
-@router.post("/versions/cleanup", response_model=ApiResponse[VersionCleanupRead])
+@zip_router.post("/versions/cleanup", response_model=ApiResponse[VersionCleanupRead])
 def post_version_cleanup(payload: VersionCleanupRequest) -> ApiResponse[VersionCleanupRead]:
     return ApiResponse(data=cleanup_old_installed_versions(payload.confirm_cleanup), message="旧版本已清理")
 
 
-@router.post("/restart", response_model=ApiResponse[RestartRead])
+@zip_router.post("/restart", response_model=ApiResponse[RestartRead])
 def post_restart() -> ApiResponse[RestartRead]:
     return ApiResponse(data=request_application_restart(), message="正在重启程序")
 

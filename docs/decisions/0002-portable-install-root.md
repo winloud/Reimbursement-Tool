@@ -2,7 +2,7 @@
 
 ## 状态
 
-已接受。
+已重新启用，作为与 Tauri 并行的 ZIP Target；双 Target 最终边界见 [ADR 0011](0011-final-dual-target-architecture.md)。
 
 ## 背景
 

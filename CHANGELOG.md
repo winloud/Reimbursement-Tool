@@ -4,6 +4,27 @@
 
 ## Unreleased
 
+- 恢复便携 ZIP 桌面壳、launcher、PyInstaller、整包升级/版本切换和独立构建校验链，与现有 Tauri Target 在同一源码提交中并存。
+- Tauri 的 AppLocalData、会话令牌、原生保存和 updater 路线保持独立；ZIP 继续使用便携目录和无 session token 的本机 API。
+- 新增统一双 Target 正式构建入口：同一版本和 commit 可分别生成隔离的 ZIP、Tauri 在线安装包、离线安装包及 updater feed，并继续使用各自 validator。
+
+### Changed
+
+- 在保留便携 ZIP 桌面壳的同时新增 Tauri 桌面壳；Tauri 使用 PyInstaller API sidecar、随机本机端口和会话令牌，ZIP 继续使用 Chrome app-mode / pywebview / Edge 回退。
+- Tauri 提供当前用户 NSIS 在线包与离线包，并通过 GitHub Releases `latest.json` feed 完成验签更新；ZIP 继续使用便携整包更新和版本切换。
+- Tauri 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，首次启动可新建数据或只读迁移旧便携目录；ZIP 数据位置与升级路径保持不变。
+- 数据维护页按当前 Target 展示对应更新能力：ZIP 保留更新、版本切换、版本清理和浏览器诊断，Tauri 展示签名 updater；共享的备份、恢复、数据库检查和诊断导出保持不变。
+- `scripts/verify.ps1` 新增 `Desktop` 档位（Tauri 配置与权限静态检查、Rust 单测、`cargo clippy -D warnings`），并纳入 `All` 档位与两个 GitHub Actions 工作流。
+- 发布链路改为 `scripts/build_tauri_release.ps1` 构建签名 NSIS 与 updater feed，`scripts/validate_release_asset.ps1` 改为校验已发布 Release 上的安装包、签名和 feed；OpenCV 可选运行时包拆到独立脚本 `scripts/build_opencv_runtime.ps1`。
+
+### Fixed
+
+- 修复全新安装首次启动时，前端在运行数据初始化引导出现前读取尚未就绪的 sidecar 配置，导致 Tauri 主进程 panic 并闪退的问题；无 `runtime` 目录时现在会正常进入“首次使用设置”。
+- 修复选择“新建空白数据”或迁移旧数据后，异步启动流程嵌套调用 Tokio `block_on`，导致 sidecar 已拉起但界面长期停在“处理中”的问题；初始化与启动现在使用同一异步命令，并防止重复拉起及失败后遗留子进程。
+
+### Packaging
+
+- Tauri sidecar 不携带前端静态文件；ZIP 的 PyInstaller 产物继续包含共享前端和 `pywebview` 依赖。
 ## v1.4.2 - 2026-08-29
 
 ### Fixed

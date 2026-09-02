@@ -1,0 +1,38 @@
+[package]
+name = "reimbursement-tauri"
+version = "2.0.0"
+description = "出差旅费报销管理工具桌面壳"
+edition = "2021"
+rust-version = "1.77"
+
+[lib]
+name = "reimbursement_tauri_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-shell = "2"
+tauri-plugin-single-instance = "2"
+tauri-plugin-window-state = "2"
+tauri-plugin-dialog = "2"
+tauri-plugin-updater = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+tokio = { version = "1", features = ["time", "sync", "rt", "fs"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls"] }
+base64 = "0.22"
+rusqlite = { version = "0.32", features = ["bundled", "backup"] }
+sha2 = "0.10"
+windows = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
+[features]
+default = []

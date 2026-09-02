@@ -1,0 +1,12 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "报销管理默认权限：仅允许窗口和应用基本操作。sidecar 进程管理由 Rust 端发起，不暴露给前端。",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
+    "core:webview:allow-internal-toggle-devtools"
+  ]
+}

@@ -10,6 +10,7 @@ import {
   getReportPdfPreview,
   getSettings,
   prepareReportPdfDownload,
+  triggerBackendDownload,
   updateReport,
   updateReportStatus,
   uploadInvoice,
@@ -18,7 +19,6 @@ import {
 import { useNavigationGuard } from "../navigationGuard";
 import { getApiErrorMessage } from "../features/report-edit-shared/apiError";
 import { getSaveStateMeta } from "../features/report-edit-shared/saveStateMeta";
-import { triggerBrowserDownload } from "../utils/browserDownload";
 import {
   createInvoiceUploadIssue,
   createInvoiceUploadWarnings,
@@ -625,7 +625,9 @@ export default function RegularReportEdit() {
       if (!result.success || !result.data?.download_url) {
         throw new Error(result.message || "生成下载链接失败");
       }
-      triggerBrowserDownload(result.data.download_url);
+      const saveResult = await triggerBackendDownload(result);
+      if (saveResult?.error) throw new Error(saveResult.error);
+      if (saveResult?.cancelled) return;
       setToast("PDF 已生成，请在下载窗口选择保存位置");
     } catch (downloadError) {
       setError(getApiErrorMessage(downloadError, "下载 PDF 失败"));

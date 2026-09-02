@@ -4,8 +4,11 @@ import os
 import sys
 from pathlib import Path
 
+from backend.distribution import DistributionTarget, TAURI_SOURCE_FALLBACK_ENV, get_distribution_target
+
 
 SOURCE_ROOT = Path(__file__).resolve().parents[1]
+APP_ROOT_ENV = "REIMBURSEMENT_APP_ROOT"
 
 
 def is_frozen_app() -> bool:
@@ -17,7 +20,18 @@ def bundle_root() -> Path:
 
 
 def app_root() -> Path:
-    configured_root = os.environ.get("REIMBURSEMENT_APP_ROOT")
+    target = get_distribution_target()
+    configured_root = os.environ.get(APP_ROOT_ENV)
+
+    if target is DistributionTarget.TAURI:
+        if configured_root:
+            return Path(configured_root).resolve()
+        if not is_frozen_app() and os.environ.get(TAURI_SOURCE_FALLBACK_ENV) == "1":
+            return SOURCE_ROOT
+        raise RuntimeError(
+            f"Tauri Target 缺少 {APP_ROOT_ENV}，拒绝回退到 ZIP 便携目录"
+        )
+
     if configured_root:
         return Path(configured_root).resolve()
     if is_frozen_app():
@@ -28,12 +42,26 @@ def app_root() -> Path:
     return SOURCE_ROOT
 
 
+def upload_root() -> Path:
+    target = get_distribution_target()
+    configured_root = os.environ.get(APP_ROOT_ENV)
+    if target is DistributionTarget.TAURI:
+        if configured_root:
+            return app_root() / "uploads"
+        if not is_frozen_app() and os.environ.get(TAURI_SOURCE_FALLBACK_ENV) == "1":
+            return SOURCE_ROOT / "backend" / "uploads"
+        return app_root() / "uploads"
+    if configured_root or is_frozen_app():
+        return app_root() / "uploads"
+    return SOURCE_ROOT / "backend" / "uploads"
+
+
 PROJECT_ROOT = SOURCE_ROOT
 BUNDLE_ROOT = bundle_root()
 APP_ROOT = app_root()
 DATA_DIR = APP_ROOT / "data"
 DATABASE_PATH = DATA_DIR / "expense.db"
-UPLOAD_ROOT = APP_ROOT / "uploads" if is_frozen_app() else PROJECT_ROOT / "backend" / "uploads"
+UPLOAD_ROOT = upload_root()
 LOG_DIR = APP_ROOT / "logs"
 FRONTEND_DIST_DIR = BUNDLE_ROOT / "frontend" / "dist"
 

@@ -53,6 +53,7 @@ def main() -> int:
         version = _read_current_version(root)
         exe_path = _resolve_version_exe(root, version)
         env = os.environ.copy()
+        env["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"
         env["REIMBURSEMENT_APP_ROOT"] = str(root)
         env["REIMBURSEMENT_APP_VERSION"] = version
         subprocess.Popen([str(exe_path)], cwd=str(root), env=env)

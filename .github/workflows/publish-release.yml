@@ -21,7 +21,7 @@ concurrency:
 
 jobs:
   release:
-    name: Build ZIP and publish GitHub Release
+    name: Build NSIS and publish GitHub Release
     runs-on: windows-latest
     timeout-minutes: 90
     env:
@@ -82,6 +82,27 @@ jobs:
           cache: npm
           cache-dependency-path: frontend/package-lock.json
 
+      - name: Set up Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Cache Rust build
+        uses: actions/cache@v4
+        with:
+          path: |
+            src-tauri/target
+            ~/.cargo/registry
+            ~/.cargo/git
+          key: tauri-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: tauri-${{ runner.os }}-
+
+      - name: Install Tauri CLI
+        shell: pwsh
+        run: |
+          cargo install tauri-cli --version "^2" --locked
+          cargo tauri --version
+
       - name: Install frontend dependencies
         run: npm ci
         working-directory: frontend
@@ -90,6 +111,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r backend/requirements-dev.txt
+          python -m pip install -r backend/requirements-packaging.txt
           $fontDir = Join-Path $env:WINDIR "Fonts"
           $fallbackNames = @("arial.ttf", "segoeui.ttf", "tahoma.ttf", "calibri.ttf")
           $fallback = $fallbackNames |
@@ -114,6 +136,14 @@ jobs:
       - name: Run frontend tests
         run: npm test
         working-directory: frontend
+
+      - name: Run desktop shell checks
+        shell: pwsh
+        run: |
+          & .\scripts\verify.ps1 -Profile Desktop
+          if (-not $?) {
+            throw "Desktop verification profile failed."
+          }
 
       - name: Extract release notes and metadata from CHANGELOG
         shell: pwsh
@@ -149,9 +179,9 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          $scriptText = Get-Content -Raw -LiteralPath "scripts\build_release.ps1"
+          $scriptText = Get-Content -Raw -LiteralPath "scripts\build_opencv_runtime.ps1"
           if ($scriptText -notmatch '\[string\]\$OpenCvPackageVersion\s*=\s*"([^"]+)"') {
-            throw "Cannot resolve OpenCV package version from scripts\build_release.ps1."
+            throw "Cannot resolve OpenCV package version from scripts\build_opencv_runtime.ps1."
           }
           $runtimeVersion = $Matches[1]
           $runtimeName = "opencv-wechat-runtime-opencv-$runtimeVersion-win_amd64.zip"
@@ -270,55 +300,75 @@ jobs:
             Write-Host "No reusable verified $runtimeName asset found; it will be rebuilt."
           }
 
-      - name: Build release ZIPs
+      - name: Rebuild OpenCV runtime asset when reuse failed
+        if: steps.opencv-runtime.outputs.restored != 'true'
         shell: pwsh
         env:
-          OPENCV_RUNTIME_RESTORED: ${{ steps.opencv-runtime.outputs.restored }}
           OPENCV_PACKAGE_VERSION: ${{ steps.opencv-runtime.outputs.runtime_version }}
         run: |
+          & .\scripts\build_opencv_runtime.ps1 -OpenCvPackageVersion $env:OPENCV_PACKAGE_VERSION -UseSystemPython
+          if ($LASTEXITCODE -ne 0) {
+            throw "OpenCV runtime build failed with exit code $LASTEXITCODE."
+          }
+
+      - name: Build Tauri NSIS release
+        shell: pwsh
+        env:
+          TAURI_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          # 注入签名私钥（GitHub Secret base64 编码）。
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY_B64)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY secret is required for a formal Tauri release."
+          }
+          [System.IO.File]::WriteAllBytes(
+            "$env:GITHUB_WORKSPACE\.tauri-key",
+            [System.Convert]::FromBase64String($env:TAURI_PRIVATE_KEY_B64)
+          )
+          $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:GITHUB_WORKSPACE\.tauri-key"
           $buildParams = @{
             Version = $env:RELEASE_VERSION
             ReleaseDate = $env:RELEASE_DATE
+            RequireSignature = $true
           }
-          if ($env:OPENCV_RUNTIME_RESTORED -eq "true") {
-            Write-Host "Skipping OpenCV runtime rebuild; restored existing verified runtime asset."
-          }
-          else {
-            $buildParams.BuildOpenCvRuntime = $true
-            $buildParams.OpenCvPackageVersion = $env:OPENCV_PACKAGE_VERSION
-          }
-          & .\scripts\build_release.ps1 @buildParams
+          & .\scripts\build_tauri_release.ps1 @buildParams
           if ($LASTEXITCODE -ne 0) {
-            throw "Release build failed with exit code $LASTEXITCODE."
+            throw "Tauri release build failed with exit code $LASTEXITCODE."
           }
 
-      - name: Validate local release ZIP
+      - name: Validate Tauri release
         shell: pwsh
         run: |
-          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
-            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
-            Select-Object -First 1
-          if (-not $mainZip) {
-            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
-          }
-          & .\scripts\validate_release_asset.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE -ZipPath $mainZip.FullName -SkipOpenCvRuntimeCheck
+          & .\scripts\validate_tauri_release.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE
           if (-not $?) {
-            throw "Local release ZIP validation failed."
+            throw "Local Tauri release validation failed."
           }
 
       - name: Prepare assets, manifest, and checksums
         shell: pwsh
         run: |
-          $mainZip = Get-ChildItem -LiteralPath "release" -Filter "*-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" |
-            Where-Object { $_.Name -notlike "reimbursement-tool-*" } |
+          $nsisDir = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release\bundle\nsis"
+          $setupExe = Get-ChildItem -LiteralPath $nsisDir -Filter "*-setup.exe" |
+            Where-Object { $_.Name -notlike "*.sig" } |
             Select-Object -First 1
-          if (-not $mainZip) {
-            throw "Main release ZIP was not generated for version $env:RELEASE_VERSION and date $env:RELEASE_DATE."
+          if (-not $setupExe) {
+            throw "NSIS setup exe was not generated."
+          }
+          $sigPath = "$($setupExe.FullName).sig"
+          $feedDir = Join-Path $env:GITHUB_WORKSPACE "dist-feed"
+          $latestPath = Join-Path $feedDir "latest.json"
+          $compatPath = Join-Path $feedDir "data-compat.json"
+
+          $assetFiles = @($setupExe.FullName)
+          if (Test-Path -LiteralPath $sigPath) { $assetFiles += $sigPath }
+          foreach ($feedFile in @($latestPath, $compatPath)) {
+            if (-not (Test-Path -LiteralPath $feedFile)) {
+              throw "Feed asset missing: $feedFile"
+            }
+            $assetFiles += $feedFile
           }
 
-          $githubMainZip = Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip"
-          Copy-Item -LiteralPath $mainZip.FullName -Destination $githubMainZip -Force
-
+          # OpenCV runtime ZIP（保留旧逻辑，作为可选运行时组件发布）。
           $runtimeAssets = @(Get-ChildItem -LiteralPath "release" -Filter "opencv-wechat-runtime-*.zip" | Sort-Object Name)
           foreach ($runtimeAsset in $runtimeAssets) {
             $validationDir = Join-Path $env:RUNNER_TEMP "validate-runtime-$([Guid]::NewGuid().ToString('N'))"
@@ -370,12 +420,8 @@ jobs:
             }
           }
 
-          $zipAssets = @(Get-Item -LiteralPath $githubMainZip) + $runtimeAssets
-          if ($zipAssets.Count -lt 2) {
-            throw "Expected the main release ZIP and an OpenCV runtime ZIP."
-          }
-
-          $assetRecords = @($zipAssets | ForEach-Object {
+          $allAssets = @($assetFiles | ForEach-Object { Get-Item -LiteralPath $_ }) + $runtimeAssets
+          $assetRecords = @($allAssets | ForEach-Object {
             [ordered]@{
               name = $_.Name
               size = $_.Length
@@ -388,9 +434,23 @@ jobs:
             release_date = ([DateTime]::ParseExact($env:RELEASE_DATE, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)).ToString("yyyy-MM-dd")
             assets = $assetRecords
           }
-          $manifest | ConvertTo-Json -Depth 5 | Set-Content -LiteralPath "release\release-manifest.json" -Encoding utf8
-          @($assetRecords | ForEach-Object { "$($_.sha256)  $($_.name)" }) |
-            Set-Content -LiteralPath "release\SHA256SUMS.txt" -Encoding ascii
+          # 安装包名含中文（报销管理_X.Y.Z_x64-setup.exe），manifest 与 checksum 必须写
+          # 无 BOM 的 UTF-8：写成 ASCII 会把中文变成 ?，而 Set-Content 的 utf8 又会加 BOM
+          # 破坏 sha256sum -c。
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText(
+            (Join-Path $env:GITHUB_WORKSPACE "release\release-manifest.json"),
+            ($manifest | ConvertTo-Json -Depth 5),
+            $utf8NoBom
+          )
+          [System.IO.File]::WriteAllLines(
+            (Join-Path $env:GITHUB_WORKSPACE "release\SHA256SUMS.txt"),
+            [string[]]@($assetRecords | ForEach-Object { "$($_.sha256)  $($_.name)" }),
+            $utf8NoBom
+          )
+          # 保留资产路径供发布步骤使用。
+          "ASSET_PATHS=$($allAssets.FullName -join ';');release\release-manifest.json;release\SHA256SUMS.txt" |
+            Out-File -FilePath $env:GITHUB_ENV -Append -Encoding utf8
 
       - name: Publish or update GitHub Release
         shell: pwsh
@@ -398,13 +458,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $tag = $env:RELEASE_TAG
-          $assets = @(
-            Get-Item -LiteralPath (Join-Path "release" "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip")
-            Get-ChildItem -LiteralPath "release" -Filter "opencv-wechat-runtime-*.zip" | Sort-Object Name
-            Get-Item -LiteralPath "release\release-manifest.json"
-            Get-Item -LiteralPath "release\SHA256SUMS.txt"
-          )
-          $assetPaths = @($assets | ForEach-Object { $_.FullName })
+          $assetPaths = $env:ASSET_PATHS -split ';'
+          $assets = @($assetPaths | Where-Object { $_ -and (Test-Path -LiteralPath $_) } |
+            ForEach-Object { Get-Item -LiteralPath $_ })
 
           $existing = $null
           gh release view $tag *> $null
@@ -417,13 +473,13 @@ jobs:
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to update GitHub Release metadata for $tag."
             }
-            & gh release upload $tag @assetPaths --clobber
+            & gh release upload $tag @($assets.FullName) --clobber
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to upload target release assets for $tag."
             }
           }
           else {
-            & gh release create $tag @assetPaths --draft --title $tag --notes-file release-notes.md --verify-tag
+            & gh release create $tag @($assets.FullName) --draft --title $tag --notes-file release-notes.md --verify-tag
             if ($LASTEXITCODE -ne 0) {
               throw "Failed to create draft GitHub Release $tag."
             }
