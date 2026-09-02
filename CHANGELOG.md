@@ -6,6 +6,7 @@
 
 - 恢复便携 ZIP 桌面壳、launcher、PyInstaller、整包升级/版本切换和独立构建校验链，与现有 Tauri Target 在同一源码提交中并存。
 - Tauri 的 AppLocalData、会话令牌、原生保存和 updater 路线保持独立；ZIP 继续使用便携目录和无 session token 的本机 API。
+- 新增统一双 Target 正式构建入口：同一版本和 commit 可分别生成隔离的 ZIP、Tauri 在线安装包、离线安装包及 updater feed，并继续使用各自 validator。
 
 ### Changed
 

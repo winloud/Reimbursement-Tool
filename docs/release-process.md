@@ -10,11 +10,24 @@
 - 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
 - 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
-## 双 Target 过渡期入口
+## 双 Target 构建入口
 
 - ZIP：`scripts/build_release.ps1`、`scripts/validate_zip_release.ps1`、`scripts/release_publish_zip.ps1`，远端任务为手动触发的 `Publish ZIP Release`。
 - Tauri：`scripts/build_tauri_release.ps1`、`scripts/validate_tauri_release.ps1`、`scripts/release_publish.ps1`，远端任务为 `Publish Release`。
-- 两条链共享业务版本文件和测试，但运行数据、桌面壳、更新器及构建输出隔离。阶段 5 再统一命令与 CI 编排。
+- 本地正式构建统一从 `scripts/build_target.ps1` 进入；两条内部构建器与 validator 保持独立。
+- 两条链共享同一个版本、发布日期和 Git commit，运行数据、桌面壳、更新器及构建输出保持隔离。
+
+```powershell
+# Tauri 正式构建还必须先配置下文的签名私钥与密码。
+powershell -File scripts\build_target.ps1 -Target Zip -Version 2.0.0 -ReleaseDate 20260902
+powershell -File scripts\build_target.ps1 -Target Tauri -Version 2.0.0 -ReleaseDate 20260902
+powershell -File scripts\build_target.ps1 -Target All -Version 2.0.0 -ReleaseDate 20260902
+```
+
+最终产物分别写入 `artifacts/zip`、`artifacts/tauri/online`、`artifacts/tauri/offline` 和
+`artifacts/tauri/updater`；临时 PyInstaller 输出位于 `artifacts/.build`。正式入口拒绝 tracked
+文件有修改的 worktree，并在构建后调用对应 Target validator。ZIP preview 仍使用下方原入口，
+不会生成或触发 Tauri updater feed。
 
 ZIP 本地预览示例：
 

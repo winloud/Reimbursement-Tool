@@ -127,14 +127,16 @@ Tauri Target 的运行数据保存在用户本地应用数据目录，与安装�
 同一个 commit 可以分别执行：
 
 ```powershell
-# ZIP 便携预览包
-powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -PreviewSerial 001 -ReleaseDate 20260901
+# 正式构建（Tauri / All 需要配置 updater 签名私钥）
+powershell -File scripts\build_target.ps1 -Target Zip -Version 2.0.0 -ReleaseDate 20260902
+powershell -File scripts\build_target.ps1 -Target Tauri -Version 2.0.0 -ReleaseDate 20260902
+powershell -File scripts\build_target.ps1 -Target All -Version 2.0.0 -ReleaseDate 20260902
 
-# Tauri NSIS 安装包
-powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate 20260901
+# ZIP 便携预览包仍使用原入口
+powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -PreviewSerial 001 -ReleaseDate 20260902
 ```
 
-ZIP 本地产物使用 `scripts\validate_zip_release.ps1` 校验；Tauri 产物使用 `scripts\validate_tauri_release.ps1` 校验。正式发布总控暂时分别为 `release_publish_zip.ps1` 和 `release_publish.ps1`，阶段 5 再统一双 Target pipeline。
+统一入口会分别调用 `scripts\validate_zip_release.ps1` 与 `scripts\validate_tauri_release.ps1`，产物隔离在 `artifacts\zip` 和 `artifacts\tauri`。远端发布总控仍按 Target 分离，避免 ZIP 与 Tauri updater 资产交叉触发。
 
 ## 常见问题
 

@@ -155,7 +155,7 @@ def test_tauri_build_script_stages_sidecar_and_generates_feed():
     script = (ROOT / "scripts" / "build_tauri_release.ps1").read_text(encoding="utf-8")
 
     assert "reimbursement_sidecar.spec" in script
-    assert "src-tauri\\resources\\reimbursement-sidecar" in script
+    assert 'Join-Path $Root "src-tauri\\resources\\reimbursement-sidecar"' in script
     assert '"tauri", "build"' in script
     assert "offlineInstaller" in script
     assert "generate_updater_feed.ps1" in script
@@ -214,9 +214,14 @@ def test_zip_build_script_keeps_the_v142_portable_contract():
 def test_target_build_outputs_are_separate():
     zip_script = (ROOT / "scripts" / "build_release.ps1").read_text(encoding="utf-8-sig")
     tauri_script = (ROOT / "scripts" / "build_tauri_release.ps1").read_text(encoding="utf-8-sig")
+    orchestrator = (ROOT / "scripts" / "build_target.ps1").read_text(encoding="utf-8-sig")
 
-    assert 'dist\\$AppName' in zip_script
+    assert '[string]$IntermediateRoot' in zip_script
     assert 'Join-Path $Root "release"' in zip_script
-    assert 'dist\\reimbursement-sidecar' in tauri_script
+    assert '[string]$IntermediateRoot' in tauri_script
     assert 'Join-Path $TauriSrcDir "target\\release\\bundle\\nsis"' in tauri_script
     assert 'Join-Path $Root "dist-feed"' in tauri_script
+    assert 'Join-Path $OutputRoot "zip"' in orchestrator
+    assert 'Join-Path $OutputRoot "tauri\\online"' in orchestrator
+    assert 'Join-Path $OutputRoot "tauri\\offline"' in orchestrator
+    assert 'Join-Path $OutputRoot "tauri\\updater"' in orchestrator
