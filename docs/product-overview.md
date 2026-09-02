@@ -24,7 +24,7 @@
 - 当前开发范围与状态：[当前开发计划](releases/active-plan.md)
 - ZIP 产物命名：`报销管理-vX.Y.Z-yyyymmdd.zip`；Tauri 产物命名：`报销管理_X.Y.Z_x64-setup.exe`
 - 可选兼容包：`release/opencv-wechat-runtime-opencv-<opencv-package-version>-win_amd64.zip`
-- 发布方式：ZIP 与 Tauri 使用独立构建/校验入口；阶段 5 再统一双 Target pipeline。正式发布仍遵循 `main` 与不可变 tag 治理。
+- 发布方式：ZIP 与 Tauri 保留独立构建器和 validator，由 `scripts/build_target.ps1` 统一编排正式双 Target 构建。正式发布仍遵循 `main` 与不可变 tag 治理。
 - 默认发票二维码识别路线：`zxing-cpp`
 - 可选兼容路线：`OpenCV + NumPy + WeChatQRCode`，通过解压 runtime ZIP 到 `runtime/vendor/` 本地安装
 

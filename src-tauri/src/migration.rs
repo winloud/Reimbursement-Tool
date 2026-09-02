@@ -331,7 +331,7 @@ pub fn is_runtime_ready(app: &tauri::AppHandle) -> bool {
         .unwrap_or(false)
 }
 
-/// 占位：阶段 5 收尾时把 runtime 目录通过 REIMBURSEMENT_APP_ROOT 注入 sidecar。
+/// 返回通过 REIMBURSEMENT_APP_ROOT 注入 sidecar 的 runtime 目录。
 /// 实际注入在 sidecar::spawn_and_wait 的 envs 里完成（见 sidecar.rs）。
 #[allow(dead_code)]
 pub fn runtime_root_for_sidecar(app: &tauri::AppHandle) -> Option<String> {

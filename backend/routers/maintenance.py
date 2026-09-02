@@ -54,8 +54,7 @@ from backend.services.maintenance_service import (
 )
 
 router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
-# 阶段 2 临时边界：ZIP 便携更新/版本切换只在未启用 Tauri 会话令牌时注册。
-# 阶段 3/4 再把这个判断收敛到正式的平台与后端 Target 配置层。
+# ZIP 便携更新、版本切换和桌面重启由 backend.main 按显式 Distribution Target 注册。
 zip_router = APIRouter(prefix="/api/maintenance", tags=["maintenance"])
 
 

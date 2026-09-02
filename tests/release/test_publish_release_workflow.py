@@ -36,6 +36,19 @@ def test_release_workflow_is_serialized_and_bounded_per_tag():
     assert "timeout-minutes: 90" in workflow
 
 
+def test_formal_release_requires_production_updater_signing_key():
+    workflow = workflow_text()
+
+    assert "TAURI_SIGNING_PRIVATE_KEY secret is required for a formal Tauri release" in workflow
+    assert "RequireSignature = $true" in workflow
+    assert "TAURI_PRIVATE_KEY_B64" in workflow
+    assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in workflow
+
+    gitignore = (WORKFLOW_PATH.parents[2] / ".gitignore").read_text(encoding="utf-8")
+    assert "/.tauri-key" in gitignore
+    assert "/src-tauri/*.key" in gitignore
+
+
 def test_release_workflow_uses_changelog_metadata_for_release_date():
     workflow = workflow_text()
 

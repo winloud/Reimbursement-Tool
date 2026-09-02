@@ -1,5 +1,5 @@
 // Tauri 桌面壳主逻辑。
-// 阶段 2：启动 Python sidecar，注入 runtime config，应用退出/崩溃时回收 sidecar。
+// 启动 Python sidecar，注入 runtime config，应用退出/崩溃时回收 sidecar。
 
 use std::sync::Mutex;
 use tauri::Manager;
@@ -178,7 +178,7 @@ pub fn run() {
                 .get_webview_window("main")
                 .ok_or_else(|| tauri::Error::WindowNotFound)?;
 
-            // 阶段 5：判断 runtime 是否已初始化。
+            // 判断 runtime 是否已初始化。
             // 已就绪：启动 sidecar，前端首屏直接进业务界面。
             // 未就绪：不启动 sidecar，置 NeedsInit，前端首屏渲染迁移/新建引导，
             // 用户完成选择后前端调 start_sidecar_after_init 启动 sidecar。
@@ -223,7 +223,7 @@ pub fn run() {
 
 fn generate_session_token() -> String {
     // 不引入 uuid 依赖：用系统时间纳秒构造本地唯一性足够的令牌。
-    // 阶段 3 起由 FastAPI 校验，强度足够防本地随机端口被外部探测。
+    // 由 FastAPI 校验，强度足够防本地随机端口被外部探测。
     use std::time::{SystemTime, UNIX_EPOCH};
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

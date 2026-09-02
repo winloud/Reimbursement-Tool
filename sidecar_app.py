@@ -5,7 +5,7 @@
   - sidecar 入口明确设置 REIMBURSEMENT_DISTRIBUTION_TARGET=tauri。
   - 环境变量 REIMBURSEMENT_APP_ROOT 指向运行数据根（复用 runtime_paths.app_root）。
   - 环境变量 REIMBURSEMENT_APP_VERSION 为当前版本号。
-  - 环境变量 REIMBURSEMENT_SESSION_TOKEN 为随机会话令牌（阶段 3 起用于鉴权）。
+  - 环境变量 REIMBURSEMENT_SESSION_TOKEN 为随机会话令牌，用于本机 API 鉴权。
   - --port 0 让 OS 分配随机本机端口。
   - 启动并健康检查通过后，向 stdout 输出唯一一行 ready JSON：
       {"event":"ready","api_base_url":"http://127.0.0.1:<port>"}

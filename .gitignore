@@ -18,6 +18,11 @@ dist/reimbursement-sidecar/
 /dist-feed/
 /artifacts/
 /src-tauri/resources/
+/.tauri-key
+/.tauri-key.pub
+/src-tauri/.tauri-key*
+/src-tauri/*.key
+/src-tauri/*.key.pub
 
 # Virtual environments
 .venv/

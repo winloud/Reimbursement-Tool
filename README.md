@@ -1,10 +1,8 @@
-# 报销管理 V1.4.2 发布说明
-
-发布日期：2026-08-29
+# 报销管理
 
 ## 版本定位
 
-报销管理 V1.4.2 是一个本地单机运行的出差旅费报销管理工具，用于录入出差信息、管理发票、生成公司模板报销 PDF，并查看历史报销统计。同一套业务源码同时保留便携 ZIP（Chrome/pywebview）与 Tauri 两种桌面 Target。
+报销管理是一个本地单机运行的出差旅费报销管理工具，用于录入出差信息、管理发票、生成公司模板报销 PDF，并查看历史报销统计。同一套业务源码同时保留便携 ZIP（Chrome/pywebview）与 Tauri 两种桌面 Target。
 
 ## 核心功能
 
@@ -39,7 +37,7 @@
 
 ### Tauri Target
 
-1. 下载安装包，例如 `报销管理_1.4.2_x64-setup.exe`。
+1. 下载安装包，例如 `报销管理_X.Y.Z_x64-setup.exe`。
 2. 双击运行安装程序，按提示完成安装。安装为当前用户安装，不需要管理员权限。
 3. 从开始菜单或桌面快捷方式启动“报销管理”。
 
@@ -124,6 +122,8 @@ Tauri Target 的运行数据保存在用户本地应用数据目录，与安装�
 
 ## 源码构建 Target
 
+源码启动与显式 Distribution Target 设置见 `docs/dev-server.md`；正式构建、validator、产物目录及签名要求见 `docs/release-process.md`。
+
 同一个 commit 可以分别执行：
 
 ```powershell
@@ -162,7 +162,7 @@ Get-Content "$env:LOCALAPPDATA\com.winloud.reimbursementtool\runtime\logs\sideca
 
 ### OpenCV 兼容模式
 
-V1.4.2 主包默认使用 `zxing-cpp` 识别发票二维码，不包含 OpenCV、NumPy 或 WeChatQRCode 模型。需要兼容模式时，把 `opencv-wechat-runtime-opencv-<opencv_package_version>-win_amd64.zip` 解压到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime\vendor\`，再到「个性化设置」切换为 OpenCV WeChatQRCode。
+主包默认使用 `zxing-cpp` 识别发票二维码，不包含 OpenCV、NumPy 或 WeChatQRCode 模型。需要兼容模式时，把 `opencv-wechat-runtime-opencv-<opencv_package_version>-win_amd64.zip` 解压到当前 Target 的 `vendor\`：ZIP 使用便携根目录，Tauri 使用 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime\vendor\`。然后到「个性化设置」切换为 OpenCV WeChatQRCode。
 
 ### 如何回退旧版本
 

@@ -1,4 +1,5 @@
 import csv
+import os
 import shutil
 import sys
 import tempfile
@@ -10,6 +11,9 @@ from typing import Any
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+# This source-data comparison uses the ordinary repository/runtime layout.
+os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"
 
 from backend.services.invoice_parser import (
     extract_fields_from_text,

@@ -334,6 +334,7 @@ if ($CheckOnly) {
 
 $managedProcesses = @()
 $previousApiBaseUrl = $env:VITE_API_BASE_URL
+$previousDistributionTarget = $env:REIMBURSEMENT_DISTRIBUTION_TARGET
 
 try {
     Write-Host "Restarting reimbursement dev servers in this window..."
@@ -347,11 +348,22 @@ try {
 
     Start-Sleep -Seconds 1
 
-    $backendProcess = Start-ManagedProcess `
-        -Name "backend" `
-        -FilePath "python" `
-        -ArgumentList @("-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "$BackendPort") `
-        -WorkingDirectory $ProjectRoot
+    $env:REIMBURSEMENT_DISTRIBUTION_TARGET = "zip"
+    try {
+        $backendProcess = Start-ManagedProcess `
+            -Name "backend" `
+            -FilePath "python" `
+            -ArgumentList @("-m", "uvicorn", "backend.main:app", "--host", "127.0.0.1", "--port", "$BackendPort") `
+            -WorkingDirectory $ProjectRoot
+    }
+    finally {
+        if ($null -eq $previousDistributionTarget) {
+            Remove-Item Env:\REIMBURSEMENT_DISTRIBUTION_TARGET -ErrorAction SilentlyContinue
+        }
+        else {
+            $env:REIMBURSEMENT_DISTRIBUTION_TARGET = $previousDistributionTarget
+        }
+    }
     $managedProcesses += $backendProcess
 
     $env:VITE_API_BASE_URL = $BackendUrl
@@ -389,6 +401,11 @@ try {
         Remove-Item Env:\VITE_API_BASE_URL -ErrorAction SilentlyContinue
     } else {
         $env:VITE_API_BASE_URL = $previousApiBaseUrl
+    }
+    if ($null -eq $previousDistributionTarget) {
+        Remove-Item Env:\REIMBURSEMENT_DISTRIBUTION_TARGET -ErrorAction SilentlyContinue
+    } else {
+        $env:REIMBURSEMENT_DISTRIBUTION_TARGET = $previousDistributionTarget
     }
     Stop-ManagedProcesses -Processes $managedProcesses
     Clear-ControllerPid

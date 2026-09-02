@@ -29,9 +29,10 @@ def test_invalid_distribution_target_fails_clearly(raw: str):
         parse_distribution_target(raw)
 
 
-def test_missing_distribution_target_uses_temporary_zip_compatibility_default(monkeypatch: pytest.MonkeyPatch):
+def test_missing_distribution_target_fails_clearly(monkeypatch: pytest.MonkeyPatch):
     monkeypatch.delenv(DISTRIBUTION_TARGET_ENV, raising=False)
-    assert get_distribution_target() is DistributionTarget.ZIP
+    with pytest.raises(RuntimeError, match="必须显式指定 zip 或 tauri"):
+        get_distribution_target()
 
 
 def test_explicit_invalid_distribution_target_never_falls_back(monkeypatch: pytest.MonkeyPatch):
@@ -48,3 +49,13 @@ def test_desktop_entries_inject_their_distribution_targets():
     assert 'os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"' in desktop_source
     assert 'env["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"' in launcher_source
     assert 'os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "tauri"' in sidecar_source
+
+
+def test_source_and_linux_entries_declare_zip_target():
+    restart_source = (ROOT / "scripts" / "restart-dev.ps1").read_text(encoding="utf-8-sig")
+    comparison_source = (ROOT / "scripts" / "compare_invoice_qr_routes.py").read_text(encoding="utf-8")
+    linux_doc = (ROOT / "docs" / "deployment" / "linux-server.md").read_text(encoding="utf-8")
+
+    assert '$env:REIMBURSEMENT_DISTRIBUTION_TARGET = "zip"' in restart_source
+    assert 'os.environ["REIMBURSEMENT_DISTRIBUTION_TARGET"] = "zip"' in comparison_source
+    assert "Environment=REIMBURSEMENT_DISTRIBUTION_TARGET=zip" in linux_doc

@@ -5,7 +5,7 @@
 1. **打包说明**：在虚拟机中从源码安装开发/打包依赖，并生成 Tauri NSIS 安装包。
 2. **安装说明**：把安装包复制到用户电脑后，安装和运行需要哪些依赖、程序会自动处理什么。
 
-v2.0.0 起桌面发行改为 Tauri NSIS 安装包 + API sidecar（见 `docs/decisions/0009-tauri-nsis-applocaldata.md`），
+v2.0.0 起新增并行的 Tauri NSIS 安装包 + API sidecar（见 `docs/decisions/0011-final-dual-target-architecture.md`），
 Tauri 安装包自身不包含便携 ZIP 的 `versions/`、Chrome app-mode 或 pywebview；这些能力只属于并行的 ZIP Target。
 
 ---

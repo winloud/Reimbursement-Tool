@@ -249,6 +249,7 @@ User=winloud
 Group=winloud
 WorkingDirectory=/opt/reimbursement-tool
 Environment=PYTHONUNBUFFERED=1
+Environment=REIMBURSEMENT_DISTRIBUTION_TARGET=zip
 ExecStart=/opt/reimbursement-tool/.venv/bin/uvicorn backend.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=3

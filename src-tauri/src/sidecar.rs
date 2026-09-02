@@ -1,11 +1,11 @@
-// Sidecar 进程管理（阶段 2）。
+// Tauri sidecar 进程管理。
 //
 // 由 Tauri 在 setup 或迁移完成后启动 Python API sidecar，解析其 stdout 的
 // ready JSON，拿到 api_base_url 后注入前端。进程生命周期由 Tauri 管理：
 // - 正常关闭：Tauri 退出时 kill sidecar（见 lib.rs 的 ExitRequested）。
 // - 崩溃/更新：Windows Job Object 保证回收（见 job.rs）。
 //
-// 阶段 5 起，spawn 前通过 REIMBURSEMENT_APP_ROOT 注入 runtime 目录
+// spawn 前通过 REIMBURSEMENT_APP_ROOT 注入 runtime 目录
 // （%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime，见 migration.rs），
 // 使 sidecar 的数据库/附件/日志离开安装目录。开发模式下若 runtime 不存在
 // 则不注入，sidecar 回退到源码根。
@@ -43,8 +43,7 @@ pub struct RuntimeConfig {
 
 /// 启动 sidecar 并等待 ready。返回 (RuntimeConfig, sidecar 进程句柄)。
 ///
-/// `session_token` 由 Rust 生成传入 sidecar 环境变量；阶段 2 暂不校验，
-/// 阶段 3 起由 FastAPI 中间件校验。
+/// `session_token` 由 Rust 生成并传入 sidecar 环境变量，由 FastAPI 中间件校验。
 pub async fn spawn_and_wait(
     app: &tauri::AppHandle,
     session_token: String,
@@ -58,7 +57,7 @@ pub async fn spawn_and_wait(
         session_token.clone(),
     );
     envs.insert("REIMBURSEMENT_APP_VERSION".to_string(), app_version.clone());
-    // 阶段 5：把 runtime 目录经 REIMBURSEMENT_APP_ROOT 注入 sidecar，
+    // 把 runtime 目录经 REIMBURSEMENT_APP_ROOT 注入 sidecar，
     // 使数据库/附件/日志落到 %LOCALAPPDATA%\com.winloud.reimbursementtool\runtime，
     // 离开安装目录。runtime 已由迁移/新建流程就绪（见 migration.rs）；
     // 开发模式下若 runtime 不存在则不注入，sidecar 回退到源码根（开发兜底）。

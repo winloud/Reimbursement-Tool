@@ -24,6 +24,17 @@ powershell -File scripts\build_target.ps1 -Target Tauri -Version 2.0.0 -ReleaseD
 powershell -File scripts\build_target.ps1 -Target All -Version 2.0.0 -ReleaseDate 20260902
 ```
 
+统一入口参数语义：
+
+- `-Target Zip|Tauri|All`：选择构建目标；`All` 在同一 HEAD 依次执行两条链。
+- `-Version X.Y.Z`：必填，传给两条构建器和 validator。
+- `-ReleaseDate yyyymmdd`：可选，缺省为当天；两种产物使用同一日期。
+- `-BuildOrder ZipFirst|TauriFirst`：只影响 `All` 的执行顺序，默认 `ZipFirst`，不改变产物内容。
+- `-OutputRoot <path>`：可选，默认仓库 `artifacts`；所有目标和中间目录都隔离在该根下。
+- `-PlanOnly`：只输出解析后的目标、顺序、版本、日期、commit 和输出根，不构建或删除产物。
+
+`build_target.ps1` 是正式构建入口，不是 preview 模式。ZIP preview 继续使用 `build_release.ps1 -PreviewBuild`；Tauri 的无签名直接构建只用于本地安装或流水线验证，不能作为正式 release。
+
 最终产物分别写入 `artifacts/zip`、`artifacts/tauri/online`、`artifacts/tauri/offline` 和
 `artifacts/tauri/updater`；临时 PyInstaller 输出位于 `artifacts/.build`。正式入口拒绝 tracked
 文件有修改的 worktree，并在构建后调用对应 Target validator。ZIP preview 仍使用下方原入口，
@@ -38,21 +49,21 @@ powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -Preview
 
 ## Tauri NSIS Target
 
-Tauri 桌面发行使用 NSIS 安装包 + GitHub Releases updater feed（见 ADR 0009、0010），与便携 ZIP Target 并行。构建脚本为 `scripts/build_tauri_release.ps1`：
+Tauri 桌面发行使用 NSIS 安装包 + GitHub Releases updater feed（见 ADR 0011），与便携 ZIP Target 并行。底层构建脚本为 `scripts/build_tauri_release.ps1`：
 
 ```powershell
-# 本地构建（测试密钥，不签名）
+# 本地无签名构建（仅安装/流水线验证，不是正式 release）
 powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyyymmdd
 
-# 正式构建（私钥/密码由环境变量注入）
+# 正式构建通过统一入口，私钥/密码由受控环境变量注入
 $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "path\to\.key"
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "..."
-powershell -File scripts\build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate yyyymmdd
+powershell -File scripts\build_target.ps1 -Target Tauri -Version 2.0.0 -ReleaseDate yyyymmdd
 ```
 
 流程：前端构建 → PyInstaller onedir（`reimbursement_sidecar.spec`）→ 复制到 `src-tauri/resources/reimbursement-sidecar` → `cargo tauri build` 产出 NSIS → `tauri signer sign` 签名更新包 → `generate_updater_feed.ps1` 产出 `latest.json` + `data-compat.json`。
 
-更新包与 feed 上传到 GitHub Release（tag 对应），`tauri.conf.json` 的 `plugins.updater.endpoints` 指向 `latest.json`，客户端自动验签安装。私钥保存在本地安全位置 + GitHub Secrets，公钥写入 `tauri.conf.json`，私钥永不入仓库。
+更新包与 feed 上传到 GitHub Release（tag 对应），`tauri.conf.json` 的 `plugins.updater.endpoints` 指向正式 `latest.json`，客户端自动验签安装。生产私钥必须与应用内公钥匹配，保存在 CI secret 或受控构建环境中，绝不写入仓库。缺少生产签名私钥时，统一正式入口和正式发布 workflow 都必须明确失败，不允许降级为未签名正式发布。
 
 ### updater 签名密钥
 
@@ -83,15 +94,15 @@ cargo tauri signer generate -w "$env:USERPROFILE\.tauri\reimbursement.key"
      （`[Convert]::ToBase64String([IO.File]::ReadAllBytes("$env:USERPROFILE\.tauri\reimbursement.key"))`）
    - `TAURI_SIGNING_PRIVATE_KEY_PASSWORD`：上面那个密码
 
-本地构建正式包时通过环境变量注入，脚本不持有私钥：
+测试私钥只能用于构建、签名和 feed 工具链验证，不能签署正式产物。正式发布必须使用与 `tauri.conf.json` 内公钥匹配的生产私钥。本地构建正式包时通过环境变量注入，脚本不持有私钥：
 
 ```powershell
 $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:USERPROFILE\.tauri\reimbursement.key"
 $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD = "你的密码"
-powershell -File scripts\build_tauri_release.ps1 -Version X.Y.Z -ReleaseDate yyyymmdd
+powershell -File scripts\build_target.ps1 -Target Tauri -Version X.Y.Z -ReleaseDate yyyymmdd
 ```
 
-未设这两个变量时构建脚本会跳过签名并给出警告，产出的包只能用于安装测试，不能用于更新测试。
+直接运行底层 `build_tauri_release.ps1` 时，未设私钥可生成仅供本地安装验证的无签名包；正式入口会传入 `-RequireSignature`，缺少或无法使用私钥即失败，不存在测试密钥或未签名 fallback。
 
 便携 ZIP 流程继续保留 `build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 和 `portable-release.json`；其校验入口为 `validate_zip_release.ps1`。Tauri 的 `validate_release_asset.ps1` 继续校验已发布 Release 上的 NSIS、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
 
@@ -161,6 +172,11 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须校验下载文件的 SHA256 和 ZIP 内容；校验失败时重新构建，不能只依赖文件名和非零大小。
 
 ## 独立验证工具
+
+合并与发布前固定运行：
+
+- `scripts/verify.ps1 -Profile All`：后端 pytest、前端测试与生产构建、Tauri 配置/权限静态检查、Rust 单测与 clippy，以及 release 静态检查。
+- `scripts/verify.ps1 -Profile Release`：release 工具 pytest 与发布脚本/workflow 静态契约；它不生成大型 ZIP 或 NSIS 产物。
 
 发布治理脚本和状态机可先用固定档位定向验证：
 

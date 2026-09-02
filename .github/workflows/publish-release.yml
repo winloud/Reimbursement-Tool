@@ -318,16 +318,18 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         run: |
           # 注入签名私钥（GitHub Secret base64 编码）。
-          if ($env:TAURI_PRIVATE_KEY_B64) {
-            [System.IO.File]::WriteAllBytes(
-              "$env:GITHUB_WORKSPACE\.tauri-key",
-              [System.Convert]::FromBase64String($env:TAURI_PRIVATE_KEY_B64)
-            )
-            $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:GITHUB_WORKSPACE\.tauri-key"
+          if ([string]::IsNullOrWhiteSpace($env:TAURI_PRIVATE_KEY_B64)) {
+            throw "TAURI_SIGNING_PRIVATE_KEY secret is required for a formal Tauri release."
           }
+          [System.IO.File]::WriteAllBytes(
+            "$env:GITHUB_WORKSPACE\.tauri-key",
+            [System.Convert]::FromBase64String($env:TAURI_PRIVATE_KEY_B64)
+          )
+          $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:GITHUB_WORKSPACE\.tauri-key"
           $buildParams = @{
             Version = $env:RELEASE_VERSION
             ReleaseDate = $env:RELEASE_DATE
+            RequireSignature = $true
           }
           & .\scripts\build_tauri_release.ps1 @buildParams
           if ($LASTEXITCODE -ne 0) {

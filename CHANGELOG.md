@@ -10,10 +10,10 @@
 
 ### Changed
 
-- 桌面版改由 Tauri 承载窗口、安装、更新和进程生命周期，业务后端改为只提供 HTTP API 的 PyInstaller sidecar（随机本机端口 + 会话令牌鉴权），不再依赖 Chrome app-mode / pywebview / Edge 三级窗口回退。
-- 发行方式从便携 ZIP 改为当前用户 NSIS 安装包，同时提供联网 bootstrap WebView2 的常规包和自带 WebView2 安装器的完全离线包；程序更新改用 GitHub Releases `latest.json` feed，自动验签、升级前备份、`passive` 安装并重启。
-- 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，离开安装目录，卸载重装不丢数据；首次启动可选择新建空白数据或从旧便携目录迁移，迁移在临时目录完成哈希与数据库完整性校验后原子启用，失败不改动新旧任一目录。
-- 数据维护页移除 ZIP 更新、版本切换、版本清理和浏览器/WebView2 运行时诊断，改为展示 Tauri 更新状态与数据结构兼容性门禁；备份、恢复、数据库检查和诊断包导出保持不变。
+- 在保留便携 ZIP 桌面壳的同时新增 Tauri 桌面壳；Tauri 使用 PyInstaller API sidecar、随机本机端口和会话令牌，ZIP 继续使用 Chrome app-mode / pywebview / Edge 回退。
+- Tauri 提供当前用户 NSIS 在线包与离线包，并通过 GitHub Releases `latest.json` feed 完成验签更新；ZIP 继续使用便携整包更新和版本切换。
+- Tauri 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，首次启动可新建数据或只读迁移旧便携目录；ZIP 数据位置与升级路径保持不变。
+- 数据维护页按当前 Target 展示对应更新能力：ZIP 保留更新、版本切换、版本清理和浏览器诊断，Tauri 展示签名 updater；共享的备份、恢复、数据库检查和诊断导出保持不变。
 - `scripts/verify.ps1` 新增 `Desktop` 档位（Tauri 配置与权限静态检查、Rust 单测、`cargo clippy -D warnings`），并纳入 `All` 档位与两个 GitHub Actions 工作流。
 - 发布链路改为 `scripts/build_tauri_release.ps1` 构建签名 NSIS 与 updater feed，`scripts/validate_release_asset.ps1` 改为校验已发布 Release 上的安装包、签名和 feed；OpenCV 可选运行时包拆到独立脚本 `scripts/build_opencv_runtime.ps1`。
 
@@ -22,10 +22,9 @@
 - 修复全新安装首次启动时，前端在运行数据初始化引导出现前读取尚未就绪的 sidecar 配置，导致 Tauri 主进程 panic 并闪退的问题；无 `runtime` 目录时现在会正常进入“首次使用设置”。
 - 修复选择“新建空白数据”或迁移旧数据后，异步启动流程嵌套调用 Tokio `block_on`，导致 sidecar 已拉起但界面长期停在“处理中”的问题；初始化与启动现在使用同一异步命令，并防止重复拉起及失败后遗留子进程。
 
-### Removed
+### Packaging
 
-- 删除便携 ZIP 桌面发行链路：旧桌面壳与启动器、`versions/` 多版本目录、`current-version.json` / `portable-release.json` 清单、ZIP 升级辅助脚本与指南，以及 `browser-profile` 浏览器配置目录。旧便携版用户改用安装包安装后，首次启动通过迁移引导带走数据。
-- 打包依赖移除 `pywebview`；sidecar 不再携带前端静态文件。
+- Tauri sidecar 不携带前端静态文件；ZIP 的 PyInstaller 产物继续包含共享前端和 `pywebview` 依赖。
 ## v1.4.2 - 2026-08-29
 
 ### Fixed

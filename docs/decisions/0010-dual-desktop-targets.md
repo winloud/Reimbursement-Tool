@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳。
+已被 [ADR 0011](0011-final-dual-target-architecture.md) 取代并保留为迁移期历史决策。双 Target 最终契约以 ADR 0011 为准。
 
 ## 背景
 

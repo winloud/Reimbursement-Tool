@@ -2,7 +2,7 @@
 
 ## 状态
 
-已采纳；“取代 ZIP”的单轨结论已被 [ADR 0010](0010-dual-desktop-targets.md) 修订，Tauri 现在是并行 Target。
+已被 [ADR 0011](0011-final-dual-target-architecture.md) 取代并保留为历史决策。“Tauri 取代 ZIP”的单轨结论不再适用。
 
 ## 背景
 

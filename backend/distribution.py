@@ -26,7 +26,7 @@ def parse_distribution_target(value: str) -> DistributionTarget:
 def get_distribution_target() -> DistributionTarget:
     raw_target = os.environ.get(DISTRIBUTION_TARGET_ENV)
     if raw_target is None:
-        # 兼容 pytest、uvicorn backend.main:app 和现有源码开发入口。
-        # 正式 ZIP/Tauri 桌面入口均会显式注入；待阶段 6 清点所有 CLI 调用者后移除此默认值。
-        return DistributionTarget.ZIP
+        raise RuntimeError(
+            f"未设置 {DISTRIBUTION_TARGET_ENV}；必须显式指定 zip 或 tauri"
+        )
     return parse_distribution_target(raw_target)

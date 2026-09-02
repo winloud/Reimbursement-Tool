@@ -17,7 +17,7 @@
 
 ## 范围
 
-- 本轮包含：在共享业务源码上并行保留 ZIP 与 Tauri 两种桌面 Target，详见 `docs/decisions/0010-dual-desktop-targets.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
+- 本轮包含：在共享业务源码上并行保留 ZIP 与 Tauri 两种桌面 Target，最终架构契约见 `docs/decisions/0011-final-dual-target-architecture.md`。业务逻辑、React、FastAPI、SQLite、schema v7 不变。
 - 本轮不包含：Authenticode 代码签名（首期不做，保留 SmartScreen 风险说明）；差分更新；Linux 服务器部署同步（未明确版本号和发布前验证前不主动同步或部署）。
 
 ## 验收条件
@@ -28,7 +28,7 @@
 - [ ] 安装矩阵：Windows 10/11 x64；在线包有/无 WebView2；离线包断网无 WebView2 干净环境；卸载重装不删 AppLocalData 数据。
 - [ ] 更新矩阵：测试签名和测试 feed 完成预览版间升级、安装后重启、升级前备份、签名篡改拒绝、不兼容数据结构拒绝。
 - [ ] 业务烟测：报销单 CRUD、发票/附件上传与预览、PDF 生成与保存、数据导入导出、备份恢复、OpenCV 兼容模式。
-- [ ] `scripts/verify.ps1` 全档位（含新增 `Desktop`）通过。
+- [x] `scripts/verify.ps1` 全档位（含新增 `Desktop`）通过。
 
 ## 阻塞
 
