@@ -48,17 +48,17 @@ def test_release_workflow_extracts_changelog_before_publishing():
     assert "scripts/extract_changelog_section.py" in workflow
     assert "gh release create" in workflow
     assert "release-notes.md" in workflow
-    assert "build_tauri_release.ps1" in workflow
-    assert "validate_tauri_release.ps1" in workflow
+    assert "build_target.ps1" in workflow
+    assert 'Target = "All"' in workflow
     assert "verify.ps1 -Profile Desktop" in workflow
     assert "build_opencv_runtime.ps1" in workflow
     assert "ReleaseDate = $env:RELEASE_DATE" in workflow
-    assert "Validate Tauri release" in workflow
-    assert "if (-not $?)" in workflow
+    assert 'artifacts\\zip' in workflow
+    assert 'artifacts\\tauri\\online' in workflow
     assert "--metadata-output release-metadata.json" in workflow
     assert '$metadata.release_date' in workflow
     assert "*-setup.exe" in workflow
-    assert "dist-feed" in workflow
+    assert 'artifacts\\tauri\\updater' in workflow
     assert 'gh api "repos/$env:GITHUB_REPOSITORY/releases/tags/$tag"' in workflow
     assert "release-manifest.json" in workflow
     assert "SHA256SUMS.txt" in workflow
@@ -157,7 +157,8 @@ def test_release_asset_validator_checks_nsis_and_updater_feed_contract():
     assert "windows-x86_64" in script
     assert "min_data_schema_version" in script
     assert "opencv-wechat-runtime-*.zip" in script
-    # Tauri 远端 validator 不混入 ZIP 契约；ZIP 使用 validate_zip_release.ps1。
+    assert "reimbursement-tool-v$Version-*.zip" in script
+    # 远端统一 validator 校验 ZIP 资产完整性；ZIP 内部结构仍由本地 validator 负责。
     assert "portable-release.json" not in script
     assert "current-version.json" not in script
     assert "ZipPath" not in script

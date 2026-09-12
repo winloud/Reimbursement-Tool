@@ -29,6 +29,7 @@ dist/reimbursement-sidecar/
 venv/
 env/
 .release-venv/
+.build-venv/
 
 # Local editor / OS files
 .vscode/

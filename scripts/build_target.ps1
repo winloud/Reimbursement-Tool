@@ -12,7 +12,9 @@ param(
     [string]$Python = "python",
     [switch]$UseSystemPython,
     [switch]$SkipDependencyInstall,
-    [switch]$PlanOnly
+    [switch]$PlanOnly,
+    [string]$SigningKeyPath = $env:TAURI_SIGNING_PRIVATE_KEY_PATH,
+    [Security.SecureString]$SigningPassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,7 +29,6 @@ if ($LASTEXITCODE -ne 0 -or $CommitSha -notmatch "^[0-9a-f]{40}$") { throw "Unab
 
 $ZipOutput = Join-Path $OutputRoot "zip"
 $TauriOnlineOutput = Join-Path $OutputRoot "tauri\online"
-$TauriOfflineOutput = Join-Path $OutputRoot "tauri\offline"
 $TauriFeedOutput = Join-Path $OutputRoot "tauri\updater"
 $BuildRoot = Join-Path $OutputRoot ".build"
 
@@ -58,25 +59,23 @@ function Build-ZipTarget {
     Invoke-Script "Validate ZIP target" (Join-Path $PSScriptRoot "validate_zip_release.ps1") @("-Version", $Version, "-ReleaseDate", $ReleaseDate, "-ExpectedCommit", $CommitSha, "-ZipPath", $zips[0].FullName, "-SkipOpenCvRuntimeCheck")
 }
 
-function Build-TauriVariant {
-    param([Parameter(Mandatory = $true)][ValidateSet("online", "offline")][string]$Variant)
-    $isOffline = $Variant -eq "offline"
-    $output = if ($isOffline) { $TauriOfflineOutput } else { $TauriOnlineOutput }
-    $intermediate = Join-Path $BuildRoot "tauri\$Variant"
-    Remove-IsolatedDirectory $output
-    Remove-IsolatedDirectory $intermediate
-    if (-not $isOffline) { Remove-IsolatedDirectory $TauriFeedOutput }
-    $args = @("-Version", $Version, "-ReleaseDate", $ReleaseDate, "-Python", $Python, "-OutputDir", $output, "-IntermediateRoot", $intermediate, "-FeedOutputDir", $TauriFeedOutput, "-CommitSha", $CommitSha, "-RequireSignature")
-    if ($isOffline) { $args += @("-Offline", "-SkipFeed") }
-    Invoke-Script "Build Tauri $Variant target" (Join-Path $PSScriptRoot "build_tauri_release.ps1") $args
-    $validate = @("-Version", $Version, "-ReleaseDate", $ReleaseDate, "-BundleDir", $output, "-BuildContextPath", (Join-Path $output "build-context.json"), "-ExpectedCommit", $CommitSha, "-ExpectedVariant", $Variant)
-    if ($isOffline) { $validate += "-SkipFeed" } else { $validate += @("-FeedDir", $TauriFeedOutput) }
-    Invoke-Script "Validate Tauri $Variant target" (Join-Path $PSScriptRoot "validate_tauri_release.ps1") $validate
-}
-
 function Build-TauriTarget {
-    Build-TauriVariant "online"
-    Build-TauriVariant "offline"
+    $intermediate = Join-Path $BuildRoot "tauri\online"
+    Remove-IsolatedDirectory $TauriOnlineOutput
+    Remove-IsolatedDirectory $intermediate
+    Remove-IsolatedDirectory $TauriFeedOutput
+    # In-process invocation keeps SecureString out of command-line arguments.
+    $tauriParameters = @{
+        Version = $Version; ReleaseDate = $ReleaseDate; Python = $Python
+        OutputDir = $TauriOnlineOutput; IntermediateRoot = $intermediate; FeedOutputDir = $TauriFeedOutput
+        CommitSha = $CommitSha; RequireSignature = $true
+        SigningKeyPath = $SigningKeyPath; SigningPassword = $SigningPassword
+    }
+    & (Join-Path $PSScriptRoot "build_tauri_release.ps1") @tauriParameters
+    $validate = @("-Version", $Version, "-ReleaseDate", $ReleaseDate, "-BundleDir", $TauriOnlineOutput,
+        "-BuildContextPath", (Join-Path $TauriOnlineOutput "build-context.json"), "-ExpectedCommit", $CommitSha,
+        "-FeedDir", $TauriFeedOutput)
+    Invoke-Script "Validate Tauri online target" (Join-Path $PSScriptRoot "validate_tauri_release.ps1") $validate
 }
 
 $targets = if ($Target -eq "All") {

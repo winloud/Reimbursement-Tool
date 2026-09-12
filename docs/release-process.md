@@ -10,12 +10,41 @@
 - 发布失败保留 release commit 和 tag，从同一 tag 续跑；源码需要修改时发布新的 patch 版本。
 - 正常发布成功后不再自动修改文档或进行第二次 push。重要安装、升级、数据迁移等人工验证可按需作为普通 docs commit 补充。
 
+## 一键本地构建
+
+首次完成下文的生产密钥配置后，日常只需双击仓库根目录中的对应脚本，输入一次生产 updater 私钥密码：
+
+| 入口 | 产物与检查 |
+| --- | --- |
+| `构建测试版.cmd` | 生产签名在线安装包，文件名含 `test-日期时间-编号`；允许未提交改动并记录 dirty；运行 `verify.ps1 -Profile Release`，生成后验签；不生成 feed。 |
+| `构建正式版.cmd` | 生产签名在线安装包及 updater feed；要求工作区干净（含未跟踪文件），运行 `verify.ps1 -Profile All` 并调用 `build_target.ps1 -Target Tauri`。 |
+
+两个入口只生成**本地包**，不会提交、push、创建 tag 或发布 GitHub Release；正式公开发布仍遵循本文发布流程。它们仅针对 Tauri，便携 ZIP 继续使用原有入口。
+
+- 默认私钥位于 `%USERPROFILE%\.tauri\reimbursement.key`，配套 `.pub` 必须与 `src-tauri/tauri.conf.json` 的 `plugins.updater.pubkey` 一致；缺失或不匹配时停止，不自动生成、覆盖或替换密钥。
+- 版本自动读取 `src-tauri/tauri.conf.json`，并校对 `Cargo.toml`；日期和构建编号自动生成。测试包内部版本仍是 `X.Y.Z`，文件名与 `build-context.json` 的 `preview` 标记区分测试身份；不是 SemVer `-rc` 版本。
+- 测试包仍沿用 Tauri 的应用标识及 AppLocalData，安装测试包会使用同一份 Tauri 数据。请在虚拟机或测试用户下验证；同版本正式包需手动安装覆盖，不依赖 updater 升级。
+- 自动补充当前进程的 Rust、Node.js、Git 常用 PATH，并通过 Python launcher 定位 Python。首次需已有 Python 3.10+ x64、Node.js 20+ x64、Rust/MSVC/Windows SDK 和 Tauri CLI。脚本在 `.build-venv` 安装 Python 依赖，并运行 `npm ci`，首次及依赖准备可能需要联网。
+- 密码只在终端遮罩输入；先对一次性探测文件签名并用内嵌公钥验证，密码错误立即终止。密码通过 `SecureString` 在脚本间传递，仅在 signer 子进程环境中短暂解密，不出现在命令行、构建摘要或文件里。签名采用 Tauri 的 minisign 格式，产物校验使用 Node.js 内置 Ed25519/BLAKE2b 能力（[minisign 格式](https://jedisct1.github.io/minisign/)、[Node.js crypto](https://nodejs.org/api/crypto.html)）。
+- 每次输出到 `artifacts/local-test/<版本>-<编号>` 或 `artifacts/local-release/<版本>-<编号>`，保留以往产物。`build-summary.json` 记录模式、提交、dirty 状态、检查档位、公钥指纹和安装包 SHA-256；只有全部成功才写入。失败窗口显示原因并保留本次工作目录。
+- 一键构建持有本仓库构建锁，避免两个入口同时覆盖临时 sidecar 资源。构建期间请不要改源码，也不要另行运行底层构建器。
+
+无需密码的只读预检查：
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_local.ps1 -Mode Test -PlanOnly
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\build_local.ps1 -Mode Release -PlanOnly
+```
+
+自定义密钥位置时，在命令行添加 `-KeyPath "D:\受控目录\reimbursement.key"`；密码始终交互输入。更改公钥后先提交，再运行正式版入口。生产 updater 签名不替代 Windows Authenticode，安装、迁移及真实更新验收仍需完成。
+
 ## 双 Target 构建入口
 
-- ZIP：`scripts/build_release.ps1`、`scripts/validate_zip_release.ps1`、`scripts/release_publish_zip.ps1`，远端任务为手动触发的 `Publish ZIP Release`。
-- Tauri：`scripts/build_tauri_release.ps1`、`scripts/validate_tauri_release.ps1`、`scripts/release_publish.ps1`，远端任务为 `Publish Release`。
+- ZIP：`scripts/build_release.ps1` 与 `scripts/validate_zip_release.ps1`。
+- Tauri：`scripts/build_tauri_release.ps1` 与 `scripts/validate_tauri_release.ps1`；只维护在线安装包及 updater feed。
 - 本地正式构建统一从 `scripts/build_target.ps1` 进入；两条内部构建器与 validator 保持独立。
 - 两条链共享同一个版本、发布日期和 Git commit，运行数据、桌面壳、更新器及构建输出保持隔离。
+- 远端只保留 `Publish Release`：它调用 `build_target.ps1 -Target All`，将 ZIP 和 Tauri 在线安装包发布到同一个 GitHub Release。
 
 ```powershell
 # Tauri 正式构建还必须先配置下文的签名私钥与密码。
@@ -35,8 +64,8 @@ powershell -File scripts\build_target.ps1 -Target All -Version 2.0.0 -ReleaseDat
 
 `build_target.ps1` 是正式构建入口，不是 preview 模式。ZIP preview 继续使用 `build_release.ps1 -PreviewBuild`；Tauri 的无签名直接构建只用于本地安装或流水线验证，不能作为正式 release。
 
-最终产物分别写入 `artifacts/zip`、`artifacts/tauri/online`、`artifacts/tauri/offline` 和
-`artifacts/tauri/updater`；临时 PyInstaller 输出位于 `artifacts/.build`。正式入口拒绝 tracked
+最终产物分别写入 `artifacts/zip`、`artifacts/tauri/online` 和 `artifacts/tauri/updater`；
+临时 PyInstaller 输出位于 `artifacts/.build`。正式入口拒绝 tracked
 文件有修改的 worktree，并在构建后调用对应 Target validator。ZIP preview 仍使用下方原入口，
 不会生成或触发 Tauri updater feed。
 
@@ -104,7 +133,7 @@ powershell -File scripts\build_target.ps1 -Target Tauri -Version X.Y.Z -ReleaseD
 
 直接运行底层 `build_tauri_release.ps1` 时，未设私钥可生成仅供本地安装验证的无签名包；正式入口会传入 `-RequireSignature`，缺少或无法使用私钥即失败，不存在测试密钥或未签名 fallback。
 
-便携 ZIP 流程继续保留 `build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 和 `portable-release.json`；其校验入口为 `validate_zip_release.ps1`。Tauri 的 `validate_release_asset.ps1` 继续校验已发布 Release 上的 NSIS、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
+便携 ZIP 流程继续保留 `build_release.ps1`、`upgrade_zip_release.ps1`、`versions/` 和 `portable-release.json`；其校验入口为 `validate_zip_release.ps1`。`validate_release_asset.ps1` 统一校验已发布 Release 上的便携 ZIP、Tauri NSIS、更新签名和 updater feed。OpenCV 可选运行时包由独立脚本 `scripts/build_opencv_runtime.ps1` 构建。
 
 ## 当前计划生命周期
 
@@ -162,12 +191,12 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\release_publish.ps1 
 
 ## GitHub Release 工作流
 
-`Publish Release` 支持两种入口：
+`Publish Release` 是唯一正式发布 workflow，支持两种入口：
 
 - 推送严格匹配 `vX.Y.Z` 的 tag。
 - 手工触发并传入既有 `tag`，用于从原 tag commit 重建或修复 Release 资产。
 
-工作流必须确认 tag commit 属于 `origin/main`，从 `CHANGELOG.md` 对应版本标题读取发布日期，并为同一 tag 设置并发锁和超时。新 Release 先作为 draft 创建；测试、桌面壳检查、NSIS 构建、本地产物校验、`release-manifest.json` 和 `SHA256SUMS.txt` 全部成功后再公开。重跑已有 Release 只覆盖本次目标资产，不删除额外资产。
+工作流必须确认 tag commit 属于 `origin/main`，从 `CHANGELOG.md` 对应版本标题读取发布日期，并为同一 tag 设置并发锁和超时。它从同一 tag 依次构建便携 ZIP 与生产签名的 Tauri 在线 NSIS；新 Release 先作为 draft 创建，两种包、本地产物校验、updater feed、`release-manifest.json` 和 `SHA256SUMS.txt` 全部成功后再公开。重跑已有 Release 只覆盖本次目标资产，不删除额外资产。
 
 OpenCV runtime 可以复用旧 Release 的同版本资产，但复用前必须校验下载文件的 SHA256 和 ZIP 内容；校验失败时重新构建，不能只依赖文件名和非零大小。
 

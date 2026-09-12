@@ -6,25 +6,26 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_zip_release_entrypoints_are_parallel_to_tauri():
-    zip_publish = (ROOT / "scripts" / "release_publish_zip.ps1").read_text(encoding="utf-8-sig")
+def test_zip_and_tauri_share_one_formal_release_entrypoint():
+    release_publish = (ROOT / "scripts" / "release_publish.ps1").read_text(encoding="utf-8-sig")
     zip_validator = (ROOT / "scripts" / "validate_zip_release.ps1").read_text(encoding="utf-8-sig")
 
-    assert "prepare_zip_release.ps1" in zip_publish
-    assert "validate_zip_release.ps1" in zip_publish
-    assert 'gh workflow run "Publish ZIP Release"' in zip_publish
+    assert 'gh workflow run "Publish Release"' in release_publish
+    assert "validate_release_asset.ps1" in release_publish
+    assert not (ROOT / "scripts" / "release_publish_zip.ps1").exists()
     assert "ZipPath" in zip_validator
     assert "portable-release.json" in zip_validator
 
 
-def test_zip_release_workflow_is_manual_during_pipeline_transition():
-    workflow_path = ROOT / ".github" / "workflows" / "publish-zip-release.yml"
-    workflow = yaml.load(workflow_path.read_text(encoding="utf-8"), Loader=yaml.BaseLoader)
+def test_one_workflow_publishes_both_distribution_targets():
+    workflow_path = ROOT / ".github" / "workflows" / "publish-release.yml"
+    workflow_text = workflow_path.read_text(encoding="utf-8")
+    workflow = yaml.load(workflow_text, Loader=yaml.BaseLoader)
 
-    assert workflow["name"] == "Publish ZIP Release"
-    assert "workflow_dispatch" in workflow["on"]
-    assert "push" not in workflow["on"]
-    assert workflow["jobs"]["release"]["name"] == "Build ZIP and publish GitHub Release"
+    assert workflow["name"] == "Publish Release"
+    assert workflow["jobs"]["release"]["name"] == "Build ZIP and Tauri packages, then publish GitHub Release"
+    assert 'Target = "All"' in workflow_text
+    assert not (ROOT / ".github" / "workflows" / "publish-zip-release.yml").exists()
 
 
 def test_zip_preview_workflow_uses_a_distinct_artifact_name():

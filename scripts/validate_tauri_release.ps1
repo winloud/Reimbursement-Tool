@@ -1,5 +1,5 @@
-# Validate one isolated Tauri installer variant and, for online release builds,
-# its updater feed. Preview validation may explicitly allow unsigned output.
+# Validate the maintained Tauri online installer and its updater feed.
+# Preview validation may explicitly allow unsigned output.
 
 param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -8,7 +8,6 @@ param(
     [string]$FeedDir = "",
     [string]$BuildContextPath = "",
     [string]$ExpectedCommit = "",
-    [ValidateSet("online", "offline")][string]$ExpectedVariant = "online",
     [switch]$AllowUnsigned,
     [switch]$SkipFeed
 )
@@ -42,14 +41,13 @@ function Get-FileSha256 {
 $setups = @(Get-ChildItem -LiteralPath $BundleDir -Filter "*-setup*.exe" -ErrorAction SilentlyContinue)
 if ($setups.Count -ne 1) { throw "Expected exactly one NSIS setup artifact in $BundleDir, found $($setups.Count)." }
 $setup = $setups[0]
-if ($ExpectedVariant -eq "offline" -and $setup.Name -notlike "*-offline.exe") { throw "Offline artifact name must end with -offline.exe." }
-if ($ExpectedVariant -eq "online" -and $setup.Name -like "*-offline.exe") { throw "Online artifact cannot use the offline suffix." }
+if ($setup.Name -like "*-offline.exe") { throw "Offline Tauri artifacts are no longer supported." }
 
 $context = Get-Content -Raw -Encoding UTF8 -LiteralPath (Assert-FileExists $BuildContextPath "Build context") | ConvertFrom-Json
 foreach ($field in @("schema_version", "distribution_target", "version", "commit", "release_date", "build_mode", "variant")) { Assert-JsonField $context $field "build-context.json" }
 if ($context.distribution_target -cne "tauri") { throw "Build context target is $($context.distribution_target), expected tauri." }
 if ($context.version -cne $Version) { throw "Build context version is $($context.version), expected $Version." }
-if ($context.variant -cne $ExpectedVariant) { throw "Build context variant is $($context.variant), expected $ExpectedVariant." }
+if ($context.variant -cne "online") { throw "Build context variant is $($context.variant), expected online." }
 if ($ReleaseDate -and $context.release_date -cne $ReleaseDate) { throw "Build context release date is $($context.release_date), expected $ReleaseDate." }
 if ($ExpectedCommit -and $context.commit -cne $ExpectedCommit.ToLowerInvariant()) { throw "Build context commit does not match ExpectedCommit." }
 
@@ -76,7 +74,7 @@ if (-not $SkipFeed) {
 }
 
 Write-Host "=== Tauri validation passed ==="
-Write-Host "target:  tauri/$ExpectedVariant"
+Write-Host "target:  tauri/online"
 Write-Host "version: $Version"
 Write-Host "commit:  $($context.commit)"
 Write-Host "setup:   $($setup.FullName)"
