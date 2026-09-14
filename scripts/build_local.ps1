@@ -12,6 +12,8 @@ $ConfigPath = Join-Path $Root 'src-tauri\tauri.conf.json'
 $Utf8 = New-Object Text.UTF8Encoding($false)
 $savedPath = $env:Path
 $savedPython = $env:PYTHON
+$savedConsoleOutputEncoding = [Console]::OutputEncoding
+$savedPowerShellOutputEncoding = $OutputEncoding
 $secretNames = @('TAURI_SIGNING_PRIVATE_KEY', 'TAURI_SIGNING_PRIVATE_KEY_PATH', 'TAURI_SIGNING_PRIVATE_KEY_PASSWORD',
     'TAURI_PRIVATE_KEY', 'TAURI_PRIVATE_KEY_PATH', 'TAURI_PRIVATE_KEY_PASSWORD')
 $savedSecrets = @{}
@@ -76,6 +78,11 @@ function Resolve-BuildTools {
 
 Push-Location $Root
 try {
+    # Native Windows consoles commonly start in an OEM code page. The release
+    # tests capture child PowerShell output as UTF-8, so normalize the shared
+    # console before any nested process is launched.
+    [Console]::OutputEncoding = $Utf8
+    $OutputEncoding = $Utf8
     # Existing shell secrets must not leak into dependency installation or tests.
     foreach ($name in $secretNames) {
         $savedSecrets[$name] = [Environment]::GetEnvironmentVariable($name, 'Process')
@@ -191,6 +198,8 @@ try {
     if ($buildLock) { $buildLock.Dispose() }
     $env:Path = $savedPath
     $env:PYTHON = $savedPython
+    [Console]::OutputEncoding = $savedConsoleOutputEncoding
+    $OutputEncoding = $savedPowerShellOutputEncoding
     foreach ($name in $savedSecrets.Keys) { [Environment]::SetEnvironmentVariable($name, $savedSecrets[$name], 'Process') }
     Pop-Location
 }
