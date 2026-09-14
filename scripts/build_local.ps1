@@ -28,6 +28,18 @@ function Invoke-Checked {
     if ($LASTEXITCODE -ne 0) { throw "$Name 失败（退出码 $LASTEXITCODE）。" }
 }
 
+function Get-Sha256 {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $stream = [IO.File]::OpenRead($Path)
+    $sha256 = [Security.Cryptography.SHA256]::Create()
+    try {
+        return -join ($sha256.ComputeHash($stream) | ForEach-Object { $_.ToString('X2') })
+    } finally {
+        $sha256.Dispose()
+        $stream.Dispose()
+    }
+}
+
 function Get-GitState {
     $headValue = & git -C $Root rev-parse HEAD
     if ($LASTEXITCODE -ne 0) { throw '无法读取 Git 提交。' }
@@ -180,9 +192,9 @@ try {
         mode = $Mode; version = $version; build_id = $buildId; commit = $initialState.commit
         dirty = $beforeBuild.dirty; worktree_changes = @($beforeBuild.changes)
         verification_profile = $profile; updater_signatures_verified = $true
-        public_key_sha256 = (Get-FileHash -LiteralPath "$KeyPath.pub" -Algorithm SHA256).Hash
+        public_key_sha256 = Get-Sha256 -Path "$KeyPath.pub"
         installers = @($installers | ForEach-Object { [ordered]@{
-            file = $_.Name; bytes = $_.Length; sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash
+            file = $_.Name; bytes = $_.Length; sha256 = Get-Sha256 -Path $_.FullName
         } })
     }
     [IO.File]::WriteAllText((Join-Path $outputRoot 'build-summary.json'), ($summary | ConvertTo-Json -Depth 6), $Utf8)

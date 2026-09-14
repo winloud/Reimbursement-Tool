@@ -207,6 +207,12 @@ exit $scriptExit
     lock.unlink()
 
 
+def test_summary_hashing_does_not_depend_on_powershell_module_autoload():
+    script = (ROOT / "scripts/build_local.ps1").read_text(encoding="utf-8-sig")
+    assert "Get-FileHash" not in script
+    assert "[Security.Cryptography.SHA256]::Create()" in script
+
+
 def test_formal_orchestrator_preserves_secure_password_for_online_release(small_repo, test_key):
     repo, key = small_repo
     _, password, config = test_key
