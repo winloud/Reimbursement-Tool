@@ -286,6 +286,15 @@ def test_prepare_supports_generic_dual_target_readme_and_docs_index(tmp_path: Pa
     assert "X.Y.Z_x64-setup.exe" not in readme
     assert "- 当前源码版本：v1.3.0" in (repo / "docs/README.md").read_text(encoding="utf-8")
 
+    # The real preflight (rather than this fixture's no-op preflight) must read
+    # non-BOM Chinese README/plan text under Windows PowerShell's OEM code page.
+    shutil.copy2(ROOT / "scripts/prepare_release.ps1", repo / "scripts/prepare_release.ps1")
+    shutil.copy2(ROOT / "scripts/extract_changelog_section.py", repo / "scripts/extract_changelog_section.py")
+    preflight = run([POWERSHELL, "-NoProfile", "-ExecutionPolicy", "Bypass", "-File",
+                    str(repo / "scripts/prepare_release.ps1"), "-Version", "1.3.0",
+                    "-ReleaseDate", "20260714", "-SkipTests"], repo, check=False)
+    assert preflight.returncode == 0, preflight.stdout + preflight.stderr
+
 
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):
     repo = create_release_repo(tmp_path)
