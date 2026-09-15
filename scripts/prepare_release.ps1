@@ -63,7 +63,7 @@ function Assert-FileContains {
     if (-not (Test-Path -LiteralPath $fullPath)) {
         throw "Required file does not exist: $Path"
     }
-    $text = Get-Content -Raw -LiteralPath $fullPath
+    $text = Get-Content -Raw -Encoding UTF8 -LiteralPath $fullPath
     if ($text -notmatch $Pattern) {
         throw "$Description check failed in $Path."
     }
@@ -141,7 +141,7 @@ $frozenPlanPath = Join-Path $Root "docs/releases/$TagName-plan.md"
 if (-not (Test-Path -LiteralPath $frozenPlanPath)) {
     throw "Frozen release plan is missing: docs/releases/$TagName-plan.md"
 }
-$activePlan = Get-Content -Raw -LiteralPath (Join-Path $Root "docs/releases/active-plan.md")
+$activePlan = Get-Content -Raw -Encoding UTF8 -LiteralPath (Join-Path $Root "docs/releases/active-plan.md")
 if ($activePlan -match "版本号：v?$EscapedVersion") {
     throw "docs/releases/active-plan.md still points at $TagName. Freeze it and recreate the next active plan first."
 }
