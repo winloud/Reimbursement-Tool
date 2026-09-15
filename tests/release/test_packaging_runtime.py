@@ -144,6 +144,16 @@ def test_sidecar_spec_excludes_frontend_and_pywebview():
     assert 'name="reimbursement-sidecar"' in spec
 
 
+def test_release_shell_uses_gui_subsystem_without_breaking_sidecar_handshake():
+    main = (ROOT / "src-tauri/src/main.rs").read_text(encoding="utf-8")
+    sidecar = (ROOT / "src-tauri/src/sidecar.rs").read_text(encoding="utf-8")
+    spec = (ROOT / "reimbursement_sidecar.spec").read_text(encoding="utf-8")
+
+    assert '#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]' in main
+    assert "CommandEvent::Stdout" in sidecar
+    assert "console=True" in spec
+
+
 def test_packaging_requirements_support_both_desktop_targets():
     requirements = (ROOT / "backend" / "requirements-packaging.txt").read_text(encoding="utf-8")
 
