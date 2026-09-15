@@ -4,6 +4,8 @@
 
 ## Unreleased
 
+## v2.0.0 - 2026-09-15
+
 - 新增双击即可使用的 Tauri 正式版/测试版本地构建入口：自动识别工具和版本、准备依赖、遮罩输入一次生产签名密码、预先验证密钥并校验产物签名；测试包带独立编号，正式包生成在线安装包及 updater feed，输出构建摘要和 SHA-256。
 
 - 恢复便携 ZIP 桌面壳、launcher、PyInstaller、整包升级/版本切换和独立构建校验链，与现有 Tauri Target 在同一源码提交中并存。
@@ -31,6 +33,7 @@
 ### Packaging
 
 - Tauri sidecar 不携带前端静态文件；ZIP 的 PyInstaller 产物继续包含共享前端和 `pywebview` 依赖。
+
 ## v1.4.2 - 2026-08-29
 
 ### Fixed

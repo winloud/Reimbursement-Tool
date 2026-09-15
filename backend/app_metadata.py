@@ -7,7 +7,7 @@ from pathlib import Path
 from backend.distribution import DistributionTarget, TAURI_SOURCE_FALLBACK_ENV, get_distribution_target
 
 
-DEFAULT_APP_VERSION = "1.4.2"
+DEFAULT_APP_VERSION = "2.0.0"
 APP_VERSION_ENV = "REIMBURSEMENT_APP_VERSION"
 
 
