@@ -112,7 +112,7 @@ Assert-FileContains `
     -Description "CHANGELOG release heading"
 Assert-FileContains `
     -Path "README.md" `
-    -Pattern "报销管理 V$EscapedVersion 发布说明" `
+    -Pattern "(?m)^(?:# 报销管理 V$EscapedVersion 发布说明|## $EscapedTag 发布信息)\s*$" `
     -Description "README release title"
 Assert-FileContains `
     -Path "README.md" `
