@@ -119,6 +119,10 @@ Assert-FileContains `
     -Pattern "报销管理_$EscapedVersion`_x64-setup\.exe" `
     -Description "README installer example"
 Assert-FileContains `
+    -Path "README.md" `
+    -Pattern "报销管理-v$EscapedVersion-$ReleaseDate\.zip" `
+    -Description "README portable ZIP example"
+Assert-FileContains `
     -Path "backend/app_metadata.py" `
     -Pattern "DEFAULT_APP_VERSION\s*=\s*`"$EscapedVersion`"" `
     -Description "backend default version"
@@ -179,4 +183,4 @@ if ($existingLocalTag) {
 
 Write-Host ""
 Write-Host "Release preflight passed for $TagName."
-Write-Host "Fast path: commit release files, create $TagName, then push branch and tag so GitHub Actions builds the formal NSIS installer."
+Write-Host "Fast path: commit release files, create $TagName, then push branch and tag so GitHub Actions builds the formal ZIP and Tauri packages."

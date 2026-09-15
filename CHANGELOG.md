@@ -4,21 +4,25 @@
 
 ## Unreleased
 
+- 新增双击即可使用的 Tauri 正式版/测试版本地构建入口：自动识别工具和版本、准备依赖、遮罩输入一次生产签名密码、预先验证密钥并校验产物签名；测试包带独立编号，正式包生成在线安装包及 updater feed，输出构建摘要和 SHA-256。
+
 - 恢复便携 ZIP 桌面壳、launcher、PyInstaller、整包升级/版本切换和独立构建校验链，与现有 Tauri Target 在同一源码提交中并存。
 - Tauri 的 AppLocalData、会话令牌、原生保存和 updater 路线保持独立；ZIP 继续使用便携目录和无 session token 的本机 API。
-- 新增统一双 Target 正式构建入口：同一版本和 commit 可分别生成隔离的 ZIP、Tauri 在线安装包、离线安装包及 updater feed，并继续使用各自 validator。
+- 新增统一双 Target 正式构建入口：同一版本和 commit 可分别生成隔离的便携 ZIP、Tauri 在线安装包及 updater feed，并继续使用各自 validator。
 
 ### Changed
 
 - 在保留便携 ZIP 桌面壳的同时新增 Tauri 桌面壳；Tauri 使用 PyInstaller API sidecar、随机本机端口和会话令牌，ZIP 继续使用 Chrome app-mode / pywebview / Edge 回退。
-- Tauri 提供当前用户 NSIS 在线包与离线包，并通过 GitHub Releases `latest.json` feed 完成验签更新；ZIP 继续使用便携整包更新和版本切换。
+- Tauri 提供当前用户 NSIS 在线安装包，并通过 GitHub Releases `latest.json` feed 完成验签更新；停止构建和维护 Tauri 离线安装包，缺失 WebView2 时需联网安装或由用户预先安装 Runtime。
 - Tauri 运行数据固定到 `%LOCALAPPDATA%\com.winloud.reimbursementtool\runtime`，首次启动可新建数据或只读迁移旧便携目录；ZIP 数据位置与升级路径保持不变。
 - 数据维护页按当前 Target 展示对应更新能力：ZIP 保留更新、版本切换、版本清理和浏览器诊断，Tauri 展示签名 updater；共享的备份、恢复、数据库检查和诊断导出保持不变。
-- `scripts/verify.ps1` 新增 `Desktop` 档位（Tauri 配置与权限静态检查、Rust 单测、`cargo clippy -D warnings`），并纳入 `All` 档位与两个 GitHub Actions 工作流。
-- 发布链路改为 `scripts/build_tauri_release.ps1` 构建签名 NSIS 与 updater feed，`scripts/validate_release_asset.ps1` 改为校验已发布 Release 上的安装包、签名和 feed；OpenCV 可选运行时包拆到独立脚本 `scripts/build_opencv_runtime.ps1`。
+- `scripts/verify.ps1` 新增 `Desktop` 档位（Tauri 配置与权限静态检查、Rust 单测、`cargo clippy -D warnings`），并纳入 `All` 档位与统一 GitHub Actions 发布工作流。
+- 正式 GitHub 发布链路统一调用 `build_target.ps1 -Target All`，同一个 tag 和 Release 同时发布便携 ZIP、签名 Tauri 安装包及 updater feed；`scripts/validate_release_asset.ps1` 统一校验两种发行资产。OpenCV 可选运行时包继续由独立脚本构建。
 
 ### Fixed
 
+- 修复 Tauri 正式版启动时弹出 CMD 控制台窗口；正式主程序改用 Windows 图形子系统，后台 sidecar 的就绪握手保持不变。
+- 修复在中文 Windows 双击正式构建入口时，发布测试读取子 PowerShell 输出发生编码错误并中断构建的问题；一键构建现在统一使用 UTF-8，发布测试也兼容系统代码页错误输出。构建摘要的 SHA-256 计算同时改为直接使用 .NET，不再依赖 PowerShell 模块自动加载。
 - 修复全新安装首次启动时，前端在运行数据初始化引导出现前读取尚未就绪的 sidecar 配置，导致 Tauri 主进程 panic 并闪退的问题；无 `runtime` 目录时现在会正常进入“首次使用设置”。
 - 修复选择“新建空白数据”或迁移旧数据后，异步启动流程嵌套调用 Tokio `block_on`，导致 sidecar 已拉起但界面长期停在“处理中”的问题；初始化与启动现在使用同一异步命令，并防止重复拉起及失败后遗留子进程。
 

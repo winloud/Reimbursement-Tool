@@ -1,12 +1,13 @@
-﻿# 校验已发布的 GitHub Release 资产（v2.0.0 起为 Tauri NSIS + updater feed）。
+﻿# 校验已发布的 GitHub Release 资产（便携 ZIP + Tauri NSIS + updater feed）。
 #
-# 与 validate_tauri_release.ps1 的分工：
+# 与本地 Target validator 的分工：
 #   - validate_tauri_release.ps1 校验本地 cargo tauri build 的产物（发布前）。
-#   - 本脚本校验 GitHub Release 上已公开的资产、manifest 和 checksum（发布后），
+#   - validate_zip_release.ps1 校验本地便携 ZIP（发布前）。
+#   - 本脚本校验 GitHub Release 上已公开的双 Target 资产、manifest 和 checksum（发布后），
 #     由 scripts/release_publish.ps1 在发布状态机中调用。
 #
-# 阶段 8 随便携 ZIP 链路一并改造：主资产从 报销管理-vX.Y.Z-yyyymmdd.zip 改为
-# NSIS setup exe，并新增更新包签名（.sig）、latest.json、data-compat.json 的校验。
+# 正式 Release 必须同时包含便携 ZIP 和一个 Tauri 在线安装包；OpenCV runtime
+# 仍是可选兼容组件，不是第三个桌面 Target。
 
 param(
     [Parameter(Mandatory = $true)][string]$Version,
@@ -186,19 +187,21 @@ function Get-ReleaseMetadata {
         throw "GitHub Release $TagName has a publishedAt timestamp in the future: $($release.publishedAt)"
     }
 
-    # 主资产：NSIS 安装包。产物名由 Tauri 生成（productName_version_arch-setup.exe），
-    # 离线包带 -offline 后缀，两者都可作为主资产发布。
-    $installerAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe" -or $_.name -like "*-setup-offline.exe" })
-    if ($installerAssets.Count -eq 0) {
-        throw "No NSIS installer asset found for $TagName."
+    $portableZipAssets = @($release.assets | Where-Object { $_.name -like "reimbursement-tool-v$Version-*.zip" })
+    if ($portableZipAssets.Count -ne 1 -or [int64]$portableZipAssets[0].size -le 0) {
+        throw "GitHub Release must contain exactly one non-empty portable ZIP for $TagName."
     }
-    foreach ($installerAsset in $installerAssets) {
-        if ([int64]$installerAsset.size -le 0) {
-            throw "NSIS installer asset is empty: $($installerAsset.name)"
-        }
-        if ([string]$installerAsset.name -notmatch [regex]::Escape($Version)) {
-            throw "NSIS installer asset does not carry version $Version : $($installerAsset.name)"
-        }
+
+    $installerAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe" })
+    if ($installerAssets.Count -ne 1) {
+        throw "GitHub Release must contain exactly one maintained Tauri online installer for $TagName."
+    }
+    $installerAsset = $installerAssets[0]
+    if ([int64]$installerAsset.size -le 0) {
+        throw "NSIS installer asset is empty: $($installerAsset.name)"
+    }
+    if ([string]$installerAsset.name -notmatch [regex]::Escape($Version)) {
+        throw "NSIS installer asset does not carry version $Version : $($installerAsset.name)"
     }
 
     # 每个安装包都必须带 updater 签名，否则客户端无法验签升级。
@@ -238,11 +241,12 @@ function Get-ReleaseMetadata {
         throw "GitHub Release must contain one non-empty $ChecksumsAssetName asset."
     }
 
-    $signatureAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe.sig" -or $_.name -like "*-setup-offline.exe.sig" })
-    $primaryInstaller = @($installerAssets | Sort-Object name | Select-Object -First 1)[0]
+    $signatureAssets = @($release.assets | Where-Object { $_.name -like "*-setup.exe.sig" })
+    $primaryInstaller = $installerAsset
 
     return [ordered]@{
         release = $release
+        portable_zip = $portableZipAssets[0]
         published_at = $publishedAt
         installer_assets = $installerAssets
         primary_installer = $primaryInstaller
@@ -311,6 +315,10 @@ function Test-ReleaseIntegrity {
     if ([string]$manifest.release_date -cne $expectedReleaseDate) {
         throw "Release manifest date is $($manifest.release_date), expected $expectedReleaseDate."
     }
+    $expectedPortableZipName = "reimbursement-tool-v$Version-$ReleaseDate.zip"
+    if ([string]$Metadata.portable_zip.name -cne $expectedPortableZipName) {
+        throw "Portable ZIP asset is $($Metadata.portable_zip.name), expected $expectedPortableZipName."
+    }
 
     $manifestRecords = @($manifest.assets)
     if ($manifestRecords.Count -eq 0) {
@@ -334,8 +342,9 @@ function Test-ReleaseIntegrity {
         $recordsByName[$name] = $record
     }
 
-    # 目标资产集合：安装包 + 其签名 + updater feed + 可选 OpenCV runtime。
+    # 目标资产集合：便携 ZIP + Tauri 安装包及签名 + updater feed + 可选 OpenCV runtime。
     $releaseAssets = @()
+    $releaseAssets += $Metadata.portable_zip
     $releaseAssets += @($Metadata.installer_assets)
     $releaseAssets += @($Metadata.signature_assets)
     $releaseAssets += @($Metadata.feed_assets[$LatestFeedAssetName], $Metadata.feed_assets[$CompatFeedAssetName])
@@ -508,6 +517,11 @@ function New-ValidationResult {
         is_prerelease = [bool]$release.isPrerelease
         published_at = $release.publishedAt
         release_health_verified = $true
+        portable_zip = [ordered]@{
+            name = $Metadata.portable_zip.name
+            size_bytes = [int64]$Metadata.portable_zip.size
+            size_mb = ConvertTo-SizeMb -Bytes ([double]$Metadata.portable_zip.size)
+        }
         installers = @($Metadata.installer_assets | ForEach-Object {
             [ordered]@{
                 name = $_.name

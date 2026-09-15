@@ -22,6 +22,10 @@ def invoke(*args: str) -> subprocess.CompletedProcess[str]:
         capture_output=True,
         text=True,
         encoding="utf-8",
+        # Windows PowerShell 5 may still emit an OEM-code-page error message
+        # before the caller can normalize its console. These tests assert only
+        # the ASCII release contract, so replacement keeps them locale-safe.
+        errors="replace",
     )
 
 

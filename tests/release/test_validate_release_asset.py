@@ -17,6 +17,7 @@ VERSION = "1.2.5"
 TAG = f"v{VERSION}"
 RELEASE_DATE = "20260713"
 COMMIT = "0123456789abcdef0123456789abcdef01234567"
+PORTABLE_NAME = f"reimbursement-tool-v{VERSION}-{RELEASE_DATE}.zip"
 INSTALLER_NAME = f"报销管理_{VERSION}_x64-setup.exe"
 SIGNATURE_NAME = f"{INSTALLER_NAME}.sig"
 LATEST_NAME = "latest.json"
@@ -37,8 +38,10 @@ def create_gh_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path,
     fixture_dir = tmp_path / "fixture"
     fixture_dir.mkdir(parents=True)
     installer_bytes = b"nsis installer placeholder"
+    portable_bytes = b"portable zip placeholder"
     signature_bytes = b"untrusted comment: signature\nRWReX3/gb3u/XPLACEHOLDER\n"
     runtime_bytes = b"opencv runtime zip placeholder"
+    (fixture_dir / PORTABLE_NAME).write_bytes(portable_bytes)
     (fixture_dir / INSTALLER_NAME).write_bytes(installer_bytes)
     (fixture_dir / SIGNATURE_NAME).write_bytes(signature_bytes)
     (fixture_dir / RUNTIME_NAME).write_bytes(runtime_bytes)
@@ -61,6 +64,7 @@ def create_gh_fixture(tmp_path: Path) -> tuple[dict[str, str], Path, Path, Path,
     write_json(compat_path, {"min_data_schema_version": 7, "max_data_schema_version": 7})
 
     asset_files = [
+        (PORTABLE_NAME, portable_bytes),
         (INSTALLER_NAME, installer_bytes),
         (SIGNATURE_NAME, signature_bytes),
         (LATEST_NAME, latest_path.read_bytes()),
@@ -246,6 +250,7 @@ def test_metadata_only_downloads_only_integrity_assets_and_returns_summary(tmp_p
     assert payload["release_health_verified"] is True
     assert payload["is_draft"] is False
     assert payload["is_prerelease"] is False
+    assert payload["portable_zip"]["name"] == PORTABLE_NAME
     assert [installer["name"] for installer in payload["installers"]] == [INSTALLER_NAME]
     assert payload["signatures"] == [SIGNATURE_NAME]
     assert payload["updater_feed"]["latest_version"] == VERSION
@@ -254,9 +259,9 @@ def test_metadata_only_downloads_only_integrity_assets_and_returns_summary(tmp_p
     assert payload["integrity"]["checked"] is True
     assert payload["integrity"]["manifest"]["commit"] == COMMIT
     assert payload["integrity"]["manifest"]["release_date"] == "2026-07-13"
-    # 安装包 + 签名 + latest.json + data-compat.json + OpenCV runtime。
-    assert payload["integrity"]["release_assets_verified"] == 5
-    assert payload["integrity"]["github_digest_checks_verified"] == 7
+    # 便携 ZIP + 安装包 + 签名 + latest.json + data-compat.json + OpenCV runtime。
+    assert payload["integrity"]["release_assets_verified"] == 6
+    assert payload["integrity"]["github_digest_checks_verified"] == 8
     assert payload["integrity"]["installer_downloaded"] is False
     assert (tmp_path / "downloads.log").read_text(encoding="utf-8").splitlines() == [
         "release-manifest.json",
@@ -276,6 +281,18 @@ def test_rejects_installer_without_updater_signature(tmp_path: Path):
 
     assert result.returncode != 0
     assert "Updater signature asset is missing" in result.stdout + result.stderr
+
+
+def test_rejects_release_without_portable_zip(tmp_path: Path):
+    env, release_path, *_ = create_gh_fixture(tmp_path)
+    release = json.loads(release_path.read_text(encoding="utf-8"))
+    release["assets"] = [asset for asset in release["assets"] if asset["name"] != PORTABLE_NAME]
+    write_json(release_path, release)
+
+    result, _ = invoke_validator(tmp_path, env)
+
+    assert result.returncode != 0
+    assert "exactly one non-empty portable ZIP" in result.stdout + result.stderr
 
 
 def test_rejects_feed_version_mismatch(tmp_path: Path):

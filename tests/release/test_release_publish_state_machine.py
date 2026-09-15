@@ -84,6 +84,7 @@ def create_release_repo(tmp_path: Path) -> Path:
 
 报销管理 V1.2.4 是测试版本。
 
+报销管理-v1.2.4-20260713.zip
 报销管理_1.2.4_x64-setup.exe
 V1.2.4 主包默认不包含兼容运行时。
 """,

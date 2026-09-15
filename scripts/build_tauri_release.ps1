@@ -9,21 +9,16 @@
 #   5. 用 tauri signer sign 对更新包签名，生成 .sig（私钥/密码由环境变量注入，脚本不持有）。
 #   6. 调 generate_updater_feed.ps1 产出 latest.json + data-compat.json。
 #
-# 离线包：-Offline 用 tauri build --config 临时覆盖 bundle.windows.webviewInstallMode.type
-# 为 offlineInstaller，产出含 WebView2 offline installer 的 NSIS，资产名带 -offline 后缀。
-#
 # 私钥环境变量（发布时注入，本地构建用测试密钥）：
 #   TAURI_SIGNING_PRIVATE_KEY_PATH：私钥文件路径。
 #   TAURI_SIGNING_PRIVATE_KEY_PASSWORD：私钥密码。
 #
 # 用法：
 #   powershell -File scripts/build_tauri_release.ps1 -Version 2.0.0 -ReleaseDate 20260828
-#   powershell -File scripts/build_tauri_release.ps1 -Version 2.0.0 -Offline  # 完全离线包
 
 param(
     [Parameter(Mandatory = $true)][string]$Version,
     [string]$ReleaseDate = "",
-    [switch]$Offline,
     [switch]$SkipSidecar,
     [string]$Python = "python",
     [string]$TauriFeatures = "",
@@ -33,7 +28,9 @@ param(
     [string]$CommitSha = "",
     [switch]$PreviewBuild,
     [switch]$SkipFeed,
-    [switch]$RequireSignature
+    [switch]$RequireSignature,
+    [string]$SigningKeyPath = $env:TAURI_SIGNING_PRIVATE_KEY_PATH,
+    [Security.SecureString]$SigningPassword
 )
 
 $ErrorActionPreference = "Stop"
@@ -77,7 +74,10 @@ if ([string]::IsNullOrWhiteSpace($CommitSha)) {
 }
 if ($CommitSha -notmatch "^[0-9a-fA-F]{40}$") { throw "CommitSha must be a full 40-character Git commit ID." }
 $CommitSha = $CommitSha.ToLowerInvariant()
-if ($Offline -or $PreviewBuild) { $SkipFeed = $true }
+if ($PreviewBuild) { $SkipFeed = $true }
+if ($RequireSignature -and (-not $SigningKeyPath -or -not (Test-Path -LiteralPath $SigningKeyPath -PathType Leaf))) {
+    throw "TAURI_SIGNING_PRIVATE_KEY_PATH is required for a formal Tauri build."
+}
 
 function Invoke-Step {
     param([Parameter(Mandatory = $true)][string]$Name, [scriptblock]$Block)
@@ -190,7 +190,6 @@ Invoke-Step "Stage sidecar to src-tauri/resources" {
         throw "sidecar 装入布局错误，未找到 $stagedExe（检查是否多了一层目录嵌套）"
     }
     $buildMode = if ($PreviewBuild) { "preview" } else { "release" }
-    $buildVariant = if ($Offline) { "offline" } else { "online" }
     $buildContext = [ordered]@{
         schema_version = 1
         distribution_target = "tauri"
@@ -198,7 +197,7 @@ Invoke-Step "Stage sidecar to src-tauri/resources" {
         commit = $CommitSha
         release_date = $ReleaseDate
         build_mode = $buildMode
-        variant = $buildVariant
+        variant = "online"
     }
     [System.IO.File]::WriteAllText(
         (Join-Path $ResourcesDir "build-context.json"),
@@ -207,47 +206,18 @@ Invoke-Step "Stage sidecar to src-tauri/resources" {
     )
 }
 
-# 4. cargo tauri build 产出 NSIS。前端构建由 beforeBuildCommand（cwd=../frontend）执行，脚本不重复。
-# 离线包用 --config 临时覆盖 webviewInstallMode 为 offlineInstaller。
+# 4. cargo tauri build 产出在线 NSIS。前端构建由 beforeBuildCommand（cwd=../frontend）执行，脚本不重复。
 New-Item -ItemType Directory -Path $NsisDir -Force | Out-Null
 Get-ChildItem -LiteralPath $NsisDir -Filter "*-setup*.exe*" -ErrorAction SilentlyContinue |
     ForEach-Object { Remove-Item -LiteralPath $_.FullName -Force }
 $tauriArgs = @("tauri", "build")
-$offlineConfigPath = $null
 if ($TauriFeatures) {
     $tauriArgs += @("--features", $TauriFeatures)
 }
 $buildLabel = "cargo tauri build (NSIS online)"
-if ($Offline) {
-    # PowerShell 将传给原生命令的内联 JSON 双引号处理掉，不能直接把 JSON
-    # 字符串作为 cargo tauri --config 参数。使用短生命周期的临时 JSON 文件，
-    # 让 Tauri CLI 按文件路径读取覆盖配置。
-    $offlineConfigPath = Join-Path $env:TEMP "reimbursement-tauri-offline-$([guid]::NewGuid().ToString('N')).json"
-    $offlineConfig = [ordered]@{
-        bundle = [ordered]@{
-            windows = [ordered]@{
-                webviewInstallMode = [ordered]@{ type = "offlineInstaller" }
-            }
-        }
-    } | ConvertTo-Json -Depth 5
-    [System.IO.File]::WriteAllText(
-        $offlineConfigPath,
-        $offlineConfig,
-        (New-Object System.Text.UTF8Encoding($false))
-    )
-    $tauriArgs += @("--config", $offlineConfigPath)
-    $buildLabel = "cargo tauri build (NSIS offline)"
-}
-try {
-    Invoke-Step $buildLabel {
-        Push-Location $TauriSrcDir
-        try { cargo @tauriArgs } finally { Pop-Location }
-    }
-}
-finally {
-    if ($offlineConfigPath -and (Test-Path -LiteralPath $offlineConfigPath)) {
-        Remove-Item -LiteralPath $offlineConfigPath -Force -ErrorAction SilentlyContinue
-    }
+Invoke-Step $buildLabel {
+    Push-Location $TauriSrcDir
+    try { cargo @tauriArgs } finally { Pop-Location }
 }
 
 # 5. 对更新包签名（产出 .sig）。
@@ -256,24 +226,12 @@ if ($setupFiles.Count -ne 1) {
     throw "NSIS setup 产物数量异常，预期 1 个，实际 $($setupFiles.Count) 个: $NsisDir"
 }
 $setupExe = $setupFiles[0]
-# 离线包重命名加 -offline 后缀，便于区分在线/离线资产。
 $setupPath = $setupExe.FullName
-if ($Offline -and -not $setupPath.Contains("-offline")) {
-    $offlinePath = [System.IO.Path]::ChangeExtension($setupPath, "-offline.exe").Replace(".-offline", "-offline")
-    Move-Item -LiteralPath $setupPath -Destination $offlinePath -Force
-    $setupPath = $offlinePath
-    $setupExe = Get-Item -LiteralPath $setupPath
-}
 $sigPath = "$setupPath.sig"
 
-if ($env:TAURI_SIGNING_PRIVATE_KEY_PATH -and (Test-Path -LiteralPath $env:TAURI_SIGNING_PRIVATE_KEY_PATH)) {
+if ($SigningKeyPath -and (Test-Path -LiteralPath $SigningKeyPath -PathType Leaf)) {
     Invoke-Step "Sign update package" {
-        # Tauri v2 正确签名子命令：cargo tauri signer sign <file> --private-key-path <path>
-        $signArgs = @("tauri", "signer", "sign", $setupPath, "--private-key-path", $env:TAURI_SIGNING_PRIVATE_KEY_PATH)
-        if ($env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD) {
-            $signArgs += @("--password", $env:TAURI_SIGNING_PRIVATE_KEY_PASSWORD)
-        }
-        cargo @signArgs
+        & (Join-Path $PSScriptRoot "sign_updater.ps1") -File $setupPath -KeyPath $SigningKeyPath -Password $SigningPassword
     }
 } elseif ($RequireSignature) {
     throw "TAURI_SIGNING_PRIVATE_KEY_PATH is required for a formal Tauri build."

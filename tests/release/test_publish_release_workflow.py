@@ -33,14 +33,15 @@ def test_release_workflow_is_serialized_and_bounded_per_tag():
 
     assert "group: publish-release-${{" in workflow
     assert "cancel-in-progress: false" in workflow
-    assert "timeout-minutes: 90" in workflow
+    assert "timeout-minutes: 120" in workflow
 
 
 def test_formal_release_requires_production_updater_signing_key():
     workflow = workflow_text()
 
     assert "TAURI_SIGNING_PRIVATE_KEY secret is required for a formal Tauri release" in workflow
-    assert "RequireSignature = $true" in workflow
+    assert 'Target = "All"' in workflow
+    assert "build_target.ps1" in workflow
     assert "TAURI_PRIVATE_KEY_B64" in workflow
     assert "TAURI_SIGNING_PRIVATE_KEY_PATH" in workflow
 
@@ -91,6 +92,9 @@ def test_release_workflow_drafts_new_release_and_preserves_unrelated_assets():
     assert "gh release upload $tag @($assets.FullName) --clobber" in workflow
     assert 'Set-Content -LiteralPath "release\\release-manifest.json"' not in workflow
     assert "*-setup.exe" in workflow
+    assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
+    assert "artifacts\\tauri\\online" in workflow
+    assert "setup-offline" not in workflow
     assert "repos/$env:GITHUB_REPOSITORY/releases/assets/" not in workflow
     assert "gh api -X DELETE" not in workflow
     assert "--force" not in workflow
@@ -107,7 +111,7 @@ def test_release_workflow_yaml_and_powershell_blocks_parse(tmp_path: Path):
         for step in workflow["jobs"]["release"]["steps"]
         if step.get("shell") == "pwsh" and "run" in step
     ]
-    assert len(blocks) == 10
+    assert len(blocks) == 9
 
     for index, block in enumerate(blocks):
         script_path = tmp_path / f"workflow-step-{index}.ps1"

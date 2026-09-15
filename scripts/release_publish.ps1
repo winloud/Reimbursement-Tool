@@ -280,6 +280,7 @@ function Update-Readme {
     $text = Replace-Required -Text $text -Pattern "# 报销管理 V\d+\.\d+\.\d+ 发布说明" -Replacement "# 报销管理 V$Version 发布说明" -Description "README title"
     $text = Replace-Required -Text $text -Pattern "发布日期：\d{4}-\d{2}-\d{2}" -Replacement "发布日期：$ReleaseDateDisplay" -Description "README release date"
     $text = Replace-Required -Text $text -Pattern "报销管理 V\d+\.\d+\.\d+ 是" -Replacement "报销管理 V$Version 是" -Description "README positioning version"
+    $text = Replace-Required -Text $text -Pattern "报销管理-v\d+\.\d+\.\d+-\d{8}\.zip" -Replacement "报销管理-v$Version-$ReleaseDate.zip" -Description "README ZIP example"
     $text = Replace-Required -Text $text -Pattern "报销管理_\d+\.\d+\.\d+_x64-setup\.exe" -Replacement "报销管理_${Version}_x64-setup.exe" -Description "README installer example"
     $text = Replace-Required -Text $text -Pattern "V\d+\.\d+\.\d+ 主包默认" -Replacement "V$Version 主包默认" -Description "README QR version"
     Write-TextFile -Path $path -Text $text

@@ -21,7 +21,7 @@
 
 - Windows 10 / Windows 11 64 位
 - ZIP Target：优先使用 Google Chrome app-mode，也可回退到 Microsoft Edge WebView2 / pywebview
-- Tauri Target：使用 Microsoft Edge WebView2 Runtime；常规安装包在缺失时联网安装，离线安装包自带完整安装器
+- Tauri Target：使用 Microsoft Edge WebView2 Runtime；常规安装包在缺失时联网安装
 
 最终用户不需要安装 Python、Node.js、npm、PyInstaller 或其他源码开发依赖。
 
@@ -122,6 +122,8 @@ Tauri Target 的运行数据保存在用户本地应用数据目录，与安装�
 
 ## 源码构建 Target
 
+本机日常构建可直接双击根目录的 **`构建测试版.cmd`** 或 **`构建正式版.cmd`**，输入一次生产 updater 私钥密码。脚本自动读取 Tauri 版本、准备构建依赖、验证密码与公钥并签名打包，完成后打开产物目录。测试版生成带编号的在线安装包；正式版生成在线安装包及 updater feed，要求先提交源码变更。两者都只在本地构建。首次配置及区别见 [一键本地构建](docs/release-process.md#一键本地构建)。
+
 源码启动与显式 Distribution Target 设置见 `docs/dev-server.md`；正式构建、validator、产物目录及签名要求见 `docs/release-process.md`。
 
 同一个 commit 可以分别执行：
@@ -136,7 +138,7 @@ powershell -File scripts\build_target.ps1 -Target All -Version 2.0.0 -ReleaseDat
 powershell -File scripts\build_release.ps1 -PreviewBuild -Version 1.4.2 -PreviewSerial 001 -ReleaseDate 20260902
 ```
 
-统一入口会分别调用 `scripts\validate_zip_release.ps1` 与 `scripts\validate_tauri_release.ps1`，产物隔离在 `artifacts\zip` 和 `artifacts\tauri`。远端发布总控仍按 Target 分离，避免 ZIP 与 Tauri updater 资产交叉触发。
+统一入口会分别调用 `scripts\validate_zip_release.ps1` 与 `scripts\validate_tauri_release.ps1`，产物隔离在 `artifacts\zip` 和 `artifacts\tauri`。正式 GitHub workflow 用 `-Target All` 从同一 tag 构建并在同一个 Release 发布便携 ZIP 与 Tauri 在线安装包。
 
 ## 常见问题
 
@@ -156,7 +158,7 @@ Get-Content "$env:LOCALAPPDATA\com.winloud.reimbursementtool\runtime\logs\sideca
 
 处理方式：
 
-- 使用离线安装包，或手动安装 Microsoft Edge WebView2 Runtime
+- 联网重试安装，或先手动安装 Microsoft Edge WebView2 Runtime
 - 将安装目录和 `%LOCALAPPDATA%\com.winloud.reimbursementtool` 加入安全软件信任
 - 重新启动程序
 

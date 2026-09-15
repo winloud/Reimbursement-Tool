@@ -21,9 +21,9 @@ concurrency:
 
 jobs:
   release:
-    name: Build NSIS and publish GitHub Release
+    name: Build ZIP and Tauri packages, then publish GitHub Release
     runs-on: windows-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     env:
       RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref_name }}
 
@@ -311,7 +311,7 @@ jobs:
             throw "OpenCV runtime build failed with exit code $LASTEXITCODE."
           }
 
-      - name: Build Tauri NSIS release
+      - name: Build portable ZIP and signed Tauri release
         shell: pwsh
         env:
           TAURI_PRIVATE_KEY_B64: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
@@ -327,40 +327,45 @@ jobs:
           )
           $env:TAURI_SIGNING_PRIVATE_KEY_PATH = "$env:GITHUB_WORKSPACE\.tauri-key"
           $buildParams = @{
+            Target = "All"
             Version = $env:RELEASE_VERSION
             ReleaseDate = $env:RELEASE_DATE
-            RequireSignature = $true
+            OutputRoot = (Join-Path $env:GITHUB_WORKSPACE "artifacts")
+            UseSystemPython = $true
+            SkipDependencyInstall = $true
           }
-          & .\scripts\build_tauri_release.ps1 @buildParams
+          & .\scripts\build_target.ps1 @buildParams
           if ($LASTEXITCODE -ne 0) {
-            throw "Tauri release build failed with exit code $LASTEXITCODE."
-          }
-
-      - name: Validate Tauri release
-        shell: pwsh
-        run: |
-          & .\scripts\validate_tauri_release.ps1 -Version $env:RELEASE_VERSION -ReleaseDate $env:RELEASE_DATE
-          if (-not $?) {
-            throw "Local Tauri release validation failed."
+            throw "Unified ZIP and Tauri release build failed with exit code $LASTEXITCODE."
           }
 
       - name: Prepare assets, manifest, and checksums
         shell: pwsh
         run: |
-          $nsisDir = Join-Path $env:GITHUB_WORKSPACE "src-tauri\target\release\bundle\nsis"
-          $setupExe = Get-ChildItem -LiteralPath $nsisDir -Filter "*-setup.exe" |
-            Where-Object { $_.Name -notlike "*.sig" } |
-            Select-Object -First 1
-          if (-not $setupExe) {
-            throw "NSIS setup exe was not generated."
+          $zipDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\zip"
+          $portableZips = @(Get-ChildItem -LiteralPath $zipDir -Filter "*.zip" |
+            Where-Object { $_.Name -notlike "opencv-wechat-runtime-*" })
+          if ($portableZips.Count -ne 1) {
+            throw "Expected exactly one portable ZIP package, found $($portableZips.Count)."
           }
+          $portableZipPath = Join-Path $env:GITHUB_WORKSPACE "release\reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip"
+          Copy-Item -LiteralPath $portableZips[0].FullName -Destination $portableZipPath -Force
+
+          $nsisDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\tauri\online"
+          $setupFiles = @(Get-ChildItem -LiteralPath $nsisDir -Filter "*-setup.exe")
+          if ($setupFiles.Count -ne 1) {
+            throw "Expected exactly one maintained Tauri online installer, found $($setupFiles.Count)."
+          }
+          $setupExe = $setupFiles[0]
           $sigPath = "$($setupExe.FullName).sig"
-          $feedDir = Join-Path $env:GITHUB_WORKSPACE "dist-feed"
+          if (-not (Test-Path -LiteralPath $sigPath)) {
+            throw "Updater signature was not generated: $sigPath"
+          }
+          $feedDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\tauri\updater"
           $latestPath = Join-Path $feedDir "latest.json"
           $compatPath = Join-Path $feedDir "data-compat.json"
 
-          $assetFiles = @($setupExe.FullName)
-          if (Test-Path -LiteralPath $sigPath) { $assetFiles += $sigPath }
+          $assetFiles = @($portableZipPath, $setupExe.FullName, $sigPath)
           foreach ($feedFile in @($latestPath, $compatPath)) {
             if (-not (Test-Path -LiteralPath $feedFile)) {
               throw "Feed asset missing: $feedFile"

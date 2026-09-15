@@ -173,11 +173,7 @@ dist-feed\latest.json
 dist-feed\data-compat.json
 ```
 
-完全离线包（自带 WebView2 offline installer，体积约 +127 MB）：
-
-```powershell
-.\scripts\build_tauri_release.ps1 -Version X.Y.Z -Offline
-```
+项目不再构建内置 WebView2 的离线安装包。完全断网的虚拟机需要先预装 Microsoft Edge WebView2 Runtime，再安装常规 Tauri 包。
 
 如需额外生成 OpenCV 兼容运行时包：
 
@@ -233,7 +229,7 @@ Get-Process | Where-Object { $_.ProcessName -like '*报销管理*' -or $_.Proces
 - **Windows 10 / Windows 11 64 位**
 - **Microsoft Edge WebView2 Runtime**
   - 常规安装包在缺失时联网自动下载安装（bootstrapper）
-  - 完全离线安装包自带完整安装器，断网环境也能装
+  - 完全断网且未安装 Runtime 的环境不在 Tauri 安装支持范围内
 
 最终用户不需要安装：
 
@@ -331,7 +327,7 @@ Get-Content "$env:LOCALAPPDATA\com.winloud.reimbursementtool\runtime\logs\sideca
 
 可处理方式：
 
-- 使用完全离线安装包，或手动安装 Microsoft Edge WebView2 Evergreen Runtime
+- 联网重试安装，或手动安装 Microsoft Edge WebView2 Evergreen Runtime
 - 将安装目录和 `%LOCALAPPDATA%\com.winloud.reimbursementtool` 加入安全软件信任
 - 重新启动程序
 
