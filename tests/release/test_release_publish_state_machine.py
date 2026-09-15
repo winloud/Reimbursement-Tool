@@ -249,6 +249,44 @@ def test_prepare_is_idempotent_and_creates_no_commit_or_tag(tmp_path: Path):
     assert "- 当前源码版本：v1.3.0" in docs_readme
 
 
+def test_prepare_supports_generic_dual_target_readme_and_docs_index(tmp_path: Path):
+    repo = create_release_repo(tmp_path)
+    write(repo / "README.md", """# 报销管理
+
+## 版本定位
+
+同一业务源码保留 ZIP 与 Tauri 两种桌面 Target。
+
+解压 `报销管理-v1.4.2-20260829.zip`。
+安装 `报销管理_X.Y.Z_x64-setup.exe`。
+主包默认使用 zxing-cpp。
+""")
+    write(repo / "docs/README.md", """# 文档
+
+## 当前状态
+- 公开稳定版本：GitHub Releases
+- 当前开发状态：[releases/active-plan.md](releases/active-plan.md)
+""")
+    run(["git", "add", "README.md", "docs/README.md"], repo)
+    run(["git", "commit", "-m", "fixture: generic dual target docs"], repo)
+
+    try:
+        first = invoke_release(repo)
+    except subprocess.CalledProcessError as exc:
+        pytest.fail((exc.stdout or "") + (exc.stderr or ""))
+    second = invoke_release(repo)
+    assert "without creating a commit or tag" in first.stdout
+    assert "without creating a commit or tag" in second.stdout
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    assert readme.count("## v1.3.0 发布信息") == 1
+    assert "发布日期：2026-07-14" in readme
+    assert "报销管理-v1.3.0-20260714.zip" in readme
+    assert "报销管理_1.3.0_x64-setup.exe" in readme
+    assert "v1.4.2-20260829" not in readme
+    assert "X.Y.Z_x64-setup.exe" not in readme
+    assert "- 当前源码版本：v1.3.0" in (repo / "docs/README.md").read_text(encoding="utf-8")
+
+
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):
     repo = create_release_repo(tmp_path)
     remote = tmp_path / "origin.git"
