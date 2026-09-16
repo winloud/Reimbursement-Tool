@@ -361,11 +361,31 @@ jobs:
           if (-not (Test-Path -LiteralPath $sigPath)) {
             throw "Updater signature was not generated: $sigPath"
           }
+          # 保留应用内部中文 productName，但 GitHub Release 资产名统一使用 ASCII。
+          # GitHub CLI 在 Windows runner 上上传中文 basename 时会将其归一为
+          # _X.Y.Z_x64-setup.exe；显式使用该稳定名称，避免 manifest/checksum/feed
+          # 与实际公开资产再次分叉。当前 v2.0.0 的既有资产也会被 --clobber 覆盖。
+          $publishedSetupName = "_$($env:RELEASE_VERSION)_x64-setup.exe"
+          $publishedSetupPath = Join-Path $env:GITHUB_WORKSPACE "release\$publishedSetupName"
+          $publishedSigPath = "$publishedSetupPath.sig"
+          Copy-Item -LiteralPath $setupExe.FullName -Destination $publishedSetupPath -Force
+          Copy-Item -LiteralPath $sigPath -Destination $publishedSigPath -Force
+          if (-not (Test-Path -LiteralPath $publishedSetupPath) -or -not (Test-Path -LiteralPath $publishedSigPath)) {
+            throw "Failed to stage ASCII Tauri installer assets."
+          }
           $feedDir = Join-Path $env:GITHUB_WORKSPACE "artifacts\tauri\updater"
           $latestPath = Join-Path $feedDir "latest.json"
           $compatPath = Join-Path $feedDir "data-compat.json"
+          $latest = Get-Content -Raw -Encoding UTF8 -LiteralPath $latestPath | ConvertFrom-Json
+          $latestPlatform = $latest.platforms."windows-x86_64"
+          if (-not $latestPlatform) {
+            throw "latest.json is missing windows-x86_64."
+          }
+          $latestPlatform.url = "https://github.com/winloud/Reimbursement-Tool/releases/download/$($env:RELEASE_TAG)/$publishedSetupName"
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText($latestPath, ($latest | ConvertTo-Json -Depth 5), $utf8NoBom)
 
-          $assetFiles = @($portableZipPath, $setupExe.FullName, $sigPath)
+          $assetFiles = @($portableZipPath, $publishedSetupPath, $publishedSigPath)
           foreach ($feedFile in @($latestPath, $compatPath)) {
             if (-not (Test-Path -LiteralPath $feedFile)) {
               throw "Feed asset missing: $feedFile"
@@ -439,10 +459,7 @@ jobs:
             release_date = ([DateTime]::ParseExact($env:RELEASE_DATE, "yyyyMMdd", [Globalization.CultureInfo]::InvariantCulture)).ToString("yyyy-MM-dd")
             assets = $assetRecords
           }
-          # 安装包名含中文（报销管理_X.Y.Z_x64-setup.exe），manifest 与 checksum 必须写
-          # 无 BOM 的 UTF-8：写成 ASCII 会把中文变成 ?，而 Set-Content 的 utf8 又会加 BOM
-          # 破坏 sha256sum -c。
-          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          # manifest/checksum 使用无 BOM UTF-8，保证中文 release notes 或路径不会被破坏。
           [System.IO.File]::WriteAllText(
             (Join-Path $env:GITHUB_WORKSPACE "release\release-manifest.json"),
             ($manifest | ConvertTo-Json -Depth 5),
