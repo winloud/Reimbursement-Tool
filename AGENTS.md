@@ -23,7 +23,7 @@
 
 - `docs/releases/active-plan.md` 只记录当前目标、范围、验收条件和阻塞，不追加完成流水、历史测试次数或 CHANGELOG 内容副本。
 - 面向用户的完成结果写入 `CHANGELOG.md`；长期有价值的验证、技术决策或部署约束分别写入 `docs/testing/`、`docs/decisions/` 或 `docs/deployment/`。
-- 运行与改动风险相称的测试和检查；组合验证使用 `scripts/verify.ps1` 的固定档位，未运行时说明原因。
+- 按 [验证触发条件](docs/contributing.md#验证触发条件) 选择与风险相称的检查；组合验证使用 `scripts/verify.ps1` 的固定档位，未运行时说明原因。
 - 完成前检查 `git diff` 和 `git status`，确认只包含预期变更并报告剩余风险。
 
 ## 发布

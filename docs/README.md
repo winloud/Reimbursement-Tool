@@ -11,8 +11,8 @@
 - 当前开发计划：releases/active-plan.md
 - 更新日志：../CHANGELOG.md
 - 待办需求池：backlog.md
-- 发布流程：release-process.md
-- 固定验证入口：[scripts/verify.ps1](../scripts/verify.ps1)（`Backend`、`Frontend`、`Release`、`Desktop`、`All`）
+- 构建与发布：[按任务选择入口](release-process.md#按任务选择入口)
+- 验证：[触发条件与档位](contributing.md#验证触发条件)；固定入口为 [scripts/verify.ps1](../scripts/verify.ps1)。
 
 ## 版本文档
 - releases/
