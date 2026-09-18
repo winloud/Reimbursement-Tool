@@ -116,7 +116,7 @@ Assert-FileContains `
     -Description "README release title"
 Assert-FileContains `
     -Path "README.md" `
-    -Pattern "报销管理_$EscapedVersion`_x64-setup\.exe" `
+    -Pattern "reimbursement-tool-v$EscapedVersion-x64-setup\.exe" `
     -Description "README installer example"
 Assert-FileContains `
     -Path "README.md" `

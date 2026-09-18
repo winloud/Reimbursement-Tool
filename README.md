@@ -5,7 +5,7 @@
 发布日期：2026-09-18
 
 便携 ZIP：`报销管理-v2.0.1-20260918.zip`
-Tauri 在线安装包：`报销管理_2.0.1_x64-setup.exe`
+Tauri 在线安装包：`reimbursement-tool-v2.0.1-x64-setup.exe`
 
 ## v2.0.0 发布信息
 
@@ -51,7 +51,7 @@ Tauri 在线安装包：`报销管理_2.0.0_x64-setup.exe`
 
 ### Tauri Target
 
-1. 下载安装包，例如 `报销管理_2.0.0_x64-setup.exe`。
+1. 下载安装包，例如 `reimbursement-tool-v2.0.1-x64-setup.exe`。
 2. 双击运行安装程序，按提示完成安装。安装为当前用户安装，不需要管理员权限。
 3. 从开始菜单或桌面快捷方式启动“报销管理”。
 

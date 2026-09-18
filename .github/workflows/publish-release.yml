@@ -361,11 +361,10 @@ jobs:
           if (-not (Test-Path -LiteralPath $sigPath)) {
             throw "Updater signature was not generated: $sigPath"
           }
-          # 保留应用内部中文 productName，但 GitHub Release 资产名统一使用 ASCII。
-          # GitHub CLI 在 Windows runner 上上传中文 basename 时会将其归一为
-          # _X.Y.Z_x64-setup.exe；显式使用该稳定名称，避免 manifest/checksum/feed
-          # 与实际公开资产再次分叉。当前 v2.0.0 的既有资产也会被 --clobber 覆盖。
-          $publishedSetupName = "_$($env:RELEASE_VERSION)_x64-setup.exe"
+          # 保留应用内部中文 productName，但 GitHub Release 资产名统一使用
+          # 与便携 ZIP 相同的英文产品前缀，避免中文 basename 被 GitHub CLI
+          # 归一成缺少产品名的 _X.Y.Z_x64-setup.exe。
+          $publishedSetupName = "reimbursement-tool-v$($env:RELEASE_VERSION)-x64-setup.exe"
           $publishedSetupPath = Join-Path $env:GITHUB_WORKSPACE "release\$publishedSetupName"
           $publishedSigPath = "$publishedSetupPath.sig"
           Copy-Item -LiteralPath $setupExe.FullName -Destination $publishedSetupPath -Force

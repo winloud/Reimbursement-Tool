@@ -217,7 +217,7 @@ function Test-ReleasePrepared {
     if (-not ($legacyReadme -or $dualTargetReadme)) {
         return $false
     }
-    if (-not (Test-FileContains -RelativePath "README.md" -Pattern "报销管理_$escapedVersion`_x64-setup\.exe")) {
+    if (-not (Test-FileContains -RelativePath "README.md" -Pattern "reimbursement-tool-v$escapedVersion-x64-setup\.exe")) {
         return $false
     }
     if (-not (Test-FileContains -RelativePath "backend/app_metadata.py" -Pattern "DEFAULT_APP_VERSION\s*=\s*`"$escapedVersion`"")) {
@@ -282,7 +282,7 @@ function Update-Readme {
     $text = Read-TextFile -Path $path
     if ($text -match "(?m)^# 报销管理 V\d+\.\d+\.\d+ 发布说明\s*$") {
         $text = Replace-Required -Text $text -Pattern "报销管理-v\d+\.\d+\.\d+-\d{8}\.zip" -Replacement "报销管理-v$Version-$ReleaseDate.zip" -Description "README ZIP example"
-        $text = Replace-Required -Text $text -Pattern "报销管理_(?:X\.Y\.Z|\d+\.\d+\.\d+)_x64-setup\.exe" -Replacement "报销管理_${Version}_x64-setup.exe" -Description "README installer example"
+        $text = Replace-Required -Text $text -Pattern "报销管理_(?:X\.Y\.Z|\d+\.\d+\.\d+)_x64-setup\.exe" -Replacement "reimbursement-tool-v${Version}-x64-setup.exe" -Description "README installer example"
         $text = Replace-Required -Text $text -Pattern "# 报销管理 V\d+\.\d+\.\d+ 发布说明" -Replacement "# 报销管理 V$Version 发布说明" -Description "README title"
         $text = Replace-Required -Text $text -Pattern "发布日期：\d{4}-\d{2}-\d{2}" -Replacement "发布日期：$ReleaseDateDisplay" -Description "README release date"
         $text = Replace-Required -Text $text -Pattern "报销管理 V\d+\.\d+\.\d+ 是" -Replacement "报销管理 V$Version 是" -Description "README positioning version"
@@ -291,9 +291,9 @@ function Update-Readme {
         $nl = Get-NewLine -Text $text
         if ($text -notmatch "(?m)^## v\d+\.\d+\.\d+ 发布信息\s*$") {
             $text = Replace-Required -Text $text -Pattern "报销管理-v\d+\.\d+\.\d+-\d{8}\.zip" -Replacement "报销管理-v$Version-$ReleaseDate.zip" -Description "README ZIP example"
-            $text = Replace-Required -Text $text -Pattern "报销管理_(?:X\.Y\.Z|\d+\.\d+\.\d+)_x64-setup\.exe" -Replacement "报销管理_${Version}_x64-setup.exe" -Description "README installer example"
+            $text = Replace-Required -Text $text -Pattern "报销管理_(?:X\.Y\.Z|\d+\.\d+\.\d+)_x64-setup\.exe" -Replacement "reimbursement-tool-v${Version}-x64-setup.exe" -Description "README installer example"
         }
-        $releaseInfo = "# 报销管理${nl}${nl}## $TagName 发布信息${nl}${nl}发布日期：$ReleaseDateDisplay${nl}${nl}便携 ZIP：``报销管理-v$Version-$ReleaseDate.zip``${nl}Tauri 在线安装包：``报销管理_${Version}_x64-setup.exe``"
+        $releaseInfo = "# 报销管理${nl}${nl}## $TagName 发布信息${nl}${nl}发布日期：$ReleaseDateDisplay${nl}${nl}便携 ZIP：``报销管理-v$Version-$ReleaseDate.zip``${nl}Tauri 在线安装包：``reimbursement-tool-v${Version}-x64-setup.exe``"
         $text = Replace-Required -Text $text -Pattern "(?m)^# 报销管理[ \t]*\r?$" -Replacement $releaseInfo -Description "dual-target README title"
     }
     Write-TextFile -Path $path -Text $text

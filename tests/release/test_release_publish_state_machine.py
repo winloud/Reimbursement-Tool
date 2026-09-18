@@ -281,7 +281,7 @@ def test_prepare_supports_generic_dual_target_readme_and_docs_index(tmp_path: Pa
     assert readme.count("## v1.3.0 发布信息") == 1
     assert "发布日期：2026-07-14" in readme
     assert "报销管理-v1.3.0-20260714.zip" in readme
-    assert "报销管理_1.3.0_x64-setup.exe" in readme
+    assert "reimbursement-tool-v1.3.0-x64-setup.exe" in readme
     assert "v1.4.2-20260829" not in readme
     assert "X.Y.Z_x64-setup.exe" not in readme
     assert "- 当前源码版本：v1.3.0" in (repo / "docs/README.md").read_text(encoding="utf-8")
@@ -319,7 +319,7 @@ Tauri 在线安装包：`报销管理_1.2.4_x64-setup.exe`
     assert "报销管理-v1.2.4-20260713.zip" in readme
     assert "报销管理_1.2.4_x64-setup.exe" in readme
     assert "报销管理-v1.3.0-20260714.zip" in readme
-    assert "报销管理_1.3.0_x64-setup.exe" in readme
+    assert "reimbursement-tool-v1.3.0-x64-setup.exe" in readme
 
 
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):

@@ -94,7 +94,7 @@ def test_release_workflow_drafts_new_release_and_preserves_unrelated_assets():
     assert "*-setup.exe" in workflow
     assert "reimbursement-tool-v$env:RELEASE_VERSION-$env:RELEASE_DATE.zip" in workflow
     assert "artifacts\\tauri\\online" in workflow
-    assert '$publishedSetupName = "_$($env:RELEASE_VERSION)_x64-setup.exe"' in workflow
+    assert '$publishedSetupName = "reimbursement-tool-v$($env:RELEASE_VERSION)-x64-setup.exe"' in workflow
     assert '$latestPlatform.url' in workflow
     assert '$assetFiles = @($portableZipPath, $publishedSetupPath, $publishedSigPath)' in workflow
     assert "setup-offline" not in workflow
