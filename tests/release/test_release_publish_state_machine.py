@@ -296,6 +296,32 @@ def test_prepare_supports_generic_dual_target_readme_and_docs_index(tmp_path: Pa
     assert preflight.returncode == 0, preflight.stdout + preflight.stderr
 
 
+def test_prepare_preserves_historical_dual_target_release_assets(tmp_path: Path):
+    repo = create_release_repo(tmp_path)
+    write(repo / "README.md", """# 报销管理
+
+## v1.2.4 发布信息
+
+发布日期：2026-07-13
+
+便携 ZIP：`报销管理-v1.2.4-20260713.zip`
+Tauri 在线安装包：`报销管理_1.2.4_x64-setup.exe`
+
+## 版本定位
+
+同一业务源码保留 ZIP 与 Tauri 两种桌面 Target。
+""")
+    run(["git", "add", "README.md"], repo)
+    run(["git", "commit", "-m", "fixture: historical dual target release"], repo)
+
+    invoke_release(repo)
+    readme = (repo / "README.md").read_text(encoding="utf-8")
+    assert "报销管理-v1.2.4-20260713.zip" in readme
+    assert "报销管理_1.2.4_x64-setup.exe" in readme
+    assert "报销管理-v1.3.0-20260714.zip" in readme
+    assert "报销管理_1.3.0_x64-setup.exe" in readme
+
+
 def test_publish_refuses_existing_tag_before_creating_release_commit(tmp_path: Path):
     repo = create_release_repo(tmp_path)
     remote = tmp_path / "origin.git"
