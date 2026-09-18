@@ -126,7 +126,7 @@ function SectionHeader({ icon, title, description, action }) {
           {icon}
         </Box>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1" fontWeight={900} sx={{ lineHeight: 1.25 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ lineHeight: 1.25 }}>
             {title}
           </Typography>
           {description && (
@@ -196,7 +196,7 @@ export function MaintenanceBackupSection({
           <Box sx={softPanelSx}>
             <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={1.5}>
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" fontWeight={800}>
+                <Typography variant="body2" fontWeight={600}>
                   最近备份
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25, wordBreak: "break-all" }}>
@@ -217,7 +217,7 @@ export function MaintenanceBackupSection({
           <Box sx={softPanelSx}>
             <Stack spacing={1.25}>
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" fontWeight={800}>
+                <Typography variant="body2" fontWeight={600}>
                   备份管理
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -270,7 +270,7 @@ export function MaintenanceBackupSection({
           <Box sx={softPanelSx}>
             <Stack spacing={1.25}>
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" fontWeight={800}>
+                <Typography variant="body2" fontWeight={600}>
                   恢复数据
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -388,7 +388,7 @@ export function MaintenanceUpdateSection({
             <Stack direction={{ xs: "column", md: "row" }} spacing={2} alignItems="flex-start" justifyContent="space-between">
               <Stack spacing={1.25} sx={{ minWidth: 0, flex: 1 }}>
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={900}>
+                  <Typography variant="body2" fontWeight={700}>
                     安装新版本
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -485,7 +485,7 @@ export function MaintenanceUpdateSection({
           </Box>
 
           <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={900}>
+            <Typography variant="body2" fontWeight={700}>
               版本与暂存管理
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -496,7 +496,7 @@ export function MaintenanceUpdateSection({
           <Box sx={softPanelSx}>
             <Stack direction={{ xs: "column", md: "row" }} spacing={1.5} alignItems={{ xs: "stretch", md: "center" }} justifyContent="space-between">
               <Box sx={{ minWidth: 0 }}>
-                <Typography variant="body2" fontWeight={800}>
+                <Typography variant="body2" fontWeight={600}>
                   已安装版本
                 </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -571,7 +571,7 @@ export function MaintenanceUpdateSection({
             <Stack spacing={1}>
               <Stack direction={{ xs: "column", sm: "row" }} spacing={1.25} alignItems={{ xs: "stretch", sm: "center" }} justifyContent="space-between">
                 <Box sx={{ minWidth: 0 }}>
-                  <Typography variant="body2" fontWeight={800}>
+                  <Typography variant="body2" fontWeight={600}>
                     更新暂存包
                   </Typography>
                   <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -684,7 +684,7 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
           )}
 
           <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={800}>
+            <Typography variant="body2" fontWeight={600}>
               运行状态
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>
@@ -718,7 +718,7 @@ export function MaintenanceDiagnosticsSection({ busy, diagnosticsError, database
           </Box>
 
           <Box sx={{ minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={800}>
+            <Typography variant="body2" fontWeight={600}>
               运行路径
             </Typography>
             <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>

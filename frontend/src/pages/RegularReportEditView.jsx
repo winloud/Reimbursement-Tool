@@ -511,7 +511,17 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
                 {mode === "invoice" ? "未确认金额不计入报销总额。" : "金额按项目录入自动合计。"}
               </Typography>
 
-              <Alert severity={pdfGate.severity} sx={{ py: 0.75 }}>
+              <Alert
+                severity={pdfGate.severity}
+                sx={{
+                  py: 0.75,
+                  ...(!pdfGate.previewBlocked && !pdfGate.downloadBlocked && {
+                    bgcolor: "transparent",
+                    color: "text.secondary",
+                    "& .MuiAlert-icon": { color: "text.secondary" },
+                  }),
+                }}
+              >
                 {pdfGate.message}
               </Alert>
 
