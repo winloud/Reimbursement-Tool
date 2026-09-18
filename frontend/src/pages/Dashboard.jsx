@@ -218,7 +218,7 @@ export default function Dashboard() {
   return (
     <Stack spacing={3}>
       <Box>
-        <Typography variant="h5" fontWeight={800}>
+        <Typography variant="h5" fontWeight={700}>
           总览看板
         </Typography>
         <Typography variant="body2" color="text.secondary">

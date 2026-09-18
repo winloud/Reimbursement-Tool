@@ -76,7 +76,7 @@ function SectionHeader({ icon, title, description, action }) {
           {icon}
         </Box>
         <Box sx={{ minWidth: 0 }}>
-          <Typography variant="subtitle1" fontWeight={900} sx={{ lineHeight: 1.25 }}>
+          <Typography variant="subtitle1" fontWeight={700} sx={{ lineHeight: 1.25 }}>
             {title}
           </Typography>
           {description && (
@@ -180,10 +180,10 @@ export default function SettingsPage() {
     <Stack spacing={2.5} sx={{ width: "100%", pb: 4 }}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2}>
         <Box>
-          <Typography variant="h4" fontWeight={900}>
+          <Typography variant="h5" fontWeight={700}>
             个性化设置
           </Typography>
-          <Typography color="text.secondary" sx={{ mt: 0.5 }}>
+          <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
             默认信息和 PDF 填充字体
           </Typography>
         </Box>
@@ -229,11 +229,13 @@ export default function SettingsPage() {
                     gap: { xs: 1.5, md: 2 },
                   }}
                 >
-                  <TextField fullWidth label="部门" value={form.department} onChange={handleChange("department")} />
-                  <TextField fullWidth label="出差人" value={form.employee_name} onChange={handleChange("employee_name")} />
+                  <TextField size="small" fullWidth label="部门" value={form.department} onChange={handleChange("department")} />
+                  <TextField size="small" fullWidth label="出差人" value={form.employee_name} onChange={handleChange("employee_name")} />
                   <TextField
                     fullWidth
                     label="途中补贴日标准"
+                    size="small"
+                    sx={{ maxWidth: { sm: 240 } }}
                     type="number"
                     value={form.daily_subsidy}
                     onChange={handleChange("daily_subsidy")}
@@ -255,6 +257,8 @@ export default function SettingsPage() {
                 <TextField
                   fullWidth
                   label="自动保存延时"
+                  size="small"
+                  sx={{ maxWidth: 360 }}
                   type="number"
                   value={form.autosave_delay_seconds}
                   onChange={handleChange("autosave_delay_seconds")}
@@ -278,7 +282,7 @@ export default function SettingsPage() {
                   title="发票二维码识别"
                   description="选择发票解析时使用的二维码识别引擎。"
                 />
-                <Select fullWidth value={form.invoice_qr_engine} onChange={handleChange("invoice_qr_engine")}>
+                <Select size="small" inputProps={{ "aria-label": "发票二维码识别引擎" }} fullWidth value={form.invoice_qr_engine} onChange={handleChange("invoice_qr_engine")}>
                   {INVOICE_QR_ENGINE_OPTIONS.map((option) => (
                     <MenuItem key={option.value} value={option.value}>
                       {option.label}
@@ -322,6 +326,8 @@ export default function SettingsPage() {
                   <Select
                     fullWidth
                     value={selectedFontExists ? form.pdf_fill_font_key : ""}
+                    size="small"
+                    inputProps={{ "aria-label": "PDF 填充字体" }}
                     displayEmpty
                     disabled={fonts.length === 0}
                     onChange={handleChange("pdf_fill_font_key")}

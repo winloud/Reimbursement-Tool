@@ -43,6 +43,7 @@ import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useState } from "react";
+import { getReportListEmptyMessage, reportPaginationLabels } from "./reportListPresentation";
 import { Link as RouterLink } from "react-router-dom";
 import {
   getReportRowInteractionPolicy,
@@ -200,6 +201,12 @@ export default function ReportListView(props) {
   } = props;
 
   const rowInteractionPolicy = getReportRowInteractionPolicy(isTrash);
+  const emptyMessage = getReportListEmptyMessage({
+    name: "出差报销单",
+    isTrash,
+    hasFilters: activeFilterChips.length > 0,
+    statusLabel: status !== "all" ? STATUS_META[status]?.label : "",
+  });
 
   return (
     <Stack spacing={3}>
@@ -213,7 +220,7 @@ export default function ReportListView(props) {
           <Typography variant="h5" fontWeight={700}>
             出差报销单
           </Typography>
-          <Typography color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
+          <Typography variant="body2" color="text.secondary">管理出差报销单，支持新增、编辑、删除与多条件筛选。</Typography>
         </div>
         <Box
           sx={{
@@ -530,7 +537,8 @@ export default function ReportListView(props) {
               ) : items.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={tableColumnCount} align="center" sx={{ py: 6 }}>
-                    <Typography color="text.secondary">暂无数据</Typography>
+                    <Typography fontWeight={700}>{emptyMessage.title}</Typography>
+                    <Typography variant="body2" color="text.secondary" sx={{ mt: 1 }}>{emptyMessage.description}</Typography>
                   </TableCell>
                 </TableRow>
               ) : (
@@ -691,7 +699,7 @@ export default function ReportListView(props) {
             setPage(0);
           }}
           rowsPerPageOptions={[10, 20, 50]}
-          labelRowsPerPage="每页行数"
+          {...reportPaginationLabels}
         />
       </Card>
 

@@ -62,6 +62,7 @@ import {
   updateReportStatus,
 } from "../api/client";
 import ReportStatusStepControl from "./ReportStatusStepControl";
+import { getReportListEmptyMessage, reportPaginationLabels } from "./reportListPresentation";
 import { getBatchReportStatusActions, STATUS_META } from "./reportStatus";
 import {
   buildRegularSummaryCards,
@@ -216,6 +217,12 @@ export default function RegularReportList() {
   const [purgeTarget, setPurgeTarget] = useState(null);
   const [preview, setPreview] = useState({ open: false, report: null, pages: [], loading: false, error: "" });
   const isTrash = status === "trash";
+  const emptyMessage = getReportListEmptyMessage({
+    name: "常规报销单",
+    isTrash,
+    hasFilters: Object.entries(DEFAULT_REGULAR_FILTERS).some(([key, value]) => filters[key] !== value),
+    statusLabel: status !== "all" ? STATUS_META[status]?.label : "",
+  });
 
   const queryFilters = useMemo(
     () => ({
@@ -504,7 +511,7 @@ export default function RegularReportList() {
       >
         <Box>
           <Typography variant="h5" fontWeight={700}>常规报销单</Typography>
-          <Typography color="text.secondary">管理无票和有票常规报销，出差数据不会显示在此处。</Typography>
+          <Typography variant="body2" color="text.secondary">管理无票和有票常规报销，出差数据不会显示在此处。</Typography>
         </Box>
         <Box
           sx={{
@@ -631,8 +638,8 @@ export default function RegularReportList() {
           <Stack alignItems="center" justifyContent="center" sx={{ minHeight: 260 }}><CircularProgress /></Stack>
         ) : items.length === 0 ? (
           <Stack alignItems="center" justifyContent="center" spacing={1} sx={{ minHeight: 240, px: 2, textAlign: "center" }}>
-            <Typography fontWeight={800}>没有符合条件的常规报销单</Typography>
-            <Typography variant="body2" color="text.secondary">可以调整筛选条件，或新建一张报销单。</Typography>
+            <Typography fontWeight={700}>{emptyMessage.title}</Typography>
+            <Typography variant="body2" color="text.secondary">{emptyMessage.description}</Typography>
           </Stack>
         ) : (
           <>
@@ -737,7 +744,7 @@ export default function RegularReportList() {
           rowsPerPageOptions={[10, 20, 50]}
           onPageChange={(_event, nextPage) => setPage(nextPage)}
           onRowsPerPageChange={(event) => { setPageSize(Number(event.target.value)); setPage(0); }}
-          labelRowsPerPage="每页"
+          {...reportPaginationLabels}
         />
       </Card>
 
