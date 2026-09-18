@@ -228,7 +228,7 @@ export default function Dashboard() {
 
       <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12}>
-          <Card sx={{ borderRadius: 2 }}>
+          <Card sx={{ borderRadius: 1 }}>
             <CardContent sx={{ py: 1.5, "&:last-child": { pb: 1.5 } }}>
               <Stack direction="row" spacing={1.25} alignItems="center" useFlexGap sx={dashboardRangeToolbarSx}>
                 <Stack direction="row" spacing={1.25} alignItems="center" useFlexGap sx={dashboardRangeFieldsSx}>
@@ -315,10 +315,10 @@ export default function Dashboard() {
 
       <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12} lg={7}>
-          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
+          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 1 }}>
             <CardContent sx={{ height: "100%" }}>
               <Box sx={{ mb: 2 }}>
-                <Typography variant="h6" fontWeight={800}>
+                <Typography variant="subtitle1" fontWeight={700}>
                   月份范围趋势
                 </Typography>
                 <Typography variant="body2" color="text.secondary">
@@ -370,9 +370,9 @@ export default function Dashboard() {
         </Grid>
 
         <Grid item xs={12} lg={5}>
-          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 2 }}>
+          <Card sx={{ minHeight: 420, height: "100%", borderRadius: 1 }}>
             <CardContent sx={{ height: "100%" }}>
-              <Typography variant="h6" fontWeight={800}>
+              <Typography variant="subtitle1" fontWeight={700}>
                 费用类别排行
               </Typography>
                 <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -390,10 +390,10 @@ export default function Dashboard() {
 
       <Grid container spacing={2.5} sx={DASHBOARD_GRID_SX}>
         <Grid item xs={12}>
-          <Card sx={{ borderRadius: 2 }}>
+          <Card sx={{ borderRadius: 1 }}>
             <CardContent>
               <Box sx={{ mb: 2 }}>
-                <Typography variant="h6" fontWeight={800}>
+                <Typography variant="subtitle1" fontWeight={700}>
                   出差负荷热力图
                 </Typography>
                 <Typography variant="body2" color="text.secondary">

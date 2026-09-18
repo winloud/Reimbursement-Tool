@@ -62,6 +62,7 @@ import {
   updateReportStatus,
 } from "../api/client";
 import ReportStatusStepControl from "./ReportStatusStepControl";
+import { pageControlSx } from "./pageControlStyles";
 import { getReportListEmptyMessage, reportPaginationLabels } from "./reportListPresentation";
 import { getBatchReportStatusActions, STATUS_META } from "./reportStatus";
 import {
@@ -502,7 +503,7 @@ export default function RegularReportList() {
   };
 
   return (
-    <Stack spacing={{ xs: 2, md: 3 }}>
+    <Stack spacing={{ xs: 2, md: 3 }} sx={pageControlSx}>
       <Stack
         direction={{ xs: "column", lg: "row" }}
         justifyContent="space-between"

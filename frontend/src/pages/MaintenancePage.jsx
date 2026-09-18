@@ -1,9 +1,10 @@
 import { Box, Stack, Typography } from "@mui/material";
 import MaintenancePanel from "./MaintenancePanel";
+import { pageControlSx } from "./pageControlStyles";
 
 export default function MaintenancePage() {
   return (
-    <Stack spacing={2.5} sx={{ width: "100%", pb: 4 }}>
+    <Stack spacing={2.5} sx={{ ...pageControlSx, width: "100%", pb: 4 }}>
       <Box>
         <Typography variant="h5" fontWeight={700}>
           数据维护

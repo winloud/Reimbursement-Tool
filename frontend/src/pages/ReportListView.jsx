@@ -43,6 +43,7 @@ import TuneIcon from "@mui/icons-material/Tune";
 import UploadFileIcon from "@mui/icons-material/UploadFile";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 import { useState } from "react";
+import { pageControlSx } from "./pageControlStyles";
 import { getReportListEmptyMessage, reportPaginationLabels } from "./reportListPresentation";
 import { Link as RouterLink } from "react-router-dom";
 import {
@@ -209,7 +210,7 @@ export default function ReportListView(props) {
   });
 
   return (
-    <Stack spacing={3}>
+    <Stack spacing={3} sx={pageControlSx}>
       <Stack
         direction={{ xs: "column", lg: "row" }}
         justifyContent="space-between"

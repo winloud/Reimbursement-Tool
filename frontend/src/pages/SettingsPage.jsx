@@ -22,6 +22,7 @@ import ScheduleIcon from "@mui/icons-material/Schedule";
 import TuneIcon from "@mui/icons-material/Tune";
 import TranslateIcon from "@mui/icons-material/Translate";
 import { getSettingFonts, getSettings, updateSettings } from "../api/client";
+import { pageControlSx } from "./pageControlStyles";
 import {
   AUTOSAVE_DELAY_MAX_SECONDS,
   AUTOSAVE_DELAY_MIN_SECONDS,
@@ -177,7 +178,7 @@ export default function SettingsPage() {
   };
 
   return (
-    <Stack spacing={2.5} sx={{ width: "100%", pb: 4 }}>
+    <Stack spacing={2.5} sx={{ ...pageControlSx, width: "100%", pb: 4 }}>
       <Stack direction={{ xs: "column", sm: "row" }} justifyContent="space-between" alignItems={{ xs: "stretch", sm: "center" }} spacing={2}>
         <Box>
           <Typography variant="h5" fontWeight={700}>
