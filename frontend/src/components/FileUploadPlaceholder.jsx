@@ -8,6 +8,15 @@ const uploadConfirm = keyframes`
   100% { box-shadow: 0 0 0 9px rgba(36, 84, 166, 0); }
 `;
 
+const uploadActionSx = {
+  height: 24,
+  boxSizing: "border-box",
+  py: 0,
+  fontSize: 10,
+  lineHeight: "16px",
+  flexShrink: 0,
+};
+
 export default function FileUploadPlaceholder({
   accept,
   ariaLabel,
@@ -168,61 +177,58 @@ export default function FileUploadPlaceholder({
         position: "relative",
         overflow: "hidden",
         outline: "none",
-        transition: "border-color 160ms ease, background-color 160ms ease, transform 160ms ease, box-shadow 160ms ease",
-        transform: activeVisual ? "translateY(-2px)" : "translateY(0)",
-        boxShadow: activeVisual ? "0 10px 24px rgba(36, 84, 166, 0.14)" : "none",
+        transition: "border-color 160ms ease, background-color 160ms ease, box-shadow 160ms ease",
+        boxShadow: activeVisual ? "inset 0 0 0 1px #2454A6" : "none",
         animation: received ? `${uploadConfirm} 480ms ease-out` : "none",
-        "&::before": {
-          content: '""',
-          position: "absolute",
-          inset: 0,
-          pointerEvents: "none",
-          background: "linear-gradient(105deg, transparent 18%, rgba(255,255,255,0.72) 48%, transparent 78%)",
-          transform: activeVisual ? "translateX(80%)" : "translateX(-120%)",
-          transition: activeVisual ? "transform 700ms ease" : "none",
+        "@media (prefers-reduced-motion: reduce)": {
+          transition: "none",
+          animation: "none",
         },
       }}
     >
-      <Stack direction="row" alignItems="center" spacing={0.75} sx={{ position: "relative", zIndex: 1, minHeight: "100%" }}>
-        {showIcon && <UploadFileOutlinedIcon color={activeVisual ? "primary" : "action"} fontSize="small" />}
-        <Box sx={{ minWidth: 0, flex: 1 }}>
+      <Stack spacing={0.25} sx={{ minWidth: 0, height: "100%", justifyContent: "center" }}>
+        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ minWidth: 0 }}>
+          {showIcon && <UploadFileOutlinedIcon color={activeVisual ? "primary" : "action"} sx={{ fontSize: 16, flexShrink: 0 }} />}
           <Typography
             variant="body2"
-            fontWeight={800}
+            fontWeight={600}
             color={activeVisual ? "primary.dark" : interactive ? "primary.main" : "text.disabled"}
-            noWrap
+            sx={{ fontSize: 13, lineHeight: 1.4, overflowWrap: "anywhere" }}
           >
             {primaryText}
           </Typography>
-          {secondaryText && (
-            <Typography variant="caption" color="text.secondary" noWrap sx={{ display: "block", lineHeight: 1.2 }}>
-              {secondaryText}
-            </Typography>
-          )}
-        </Box>
-        <Stack direction="row" alignItems="center" spacing={0.5} sx={{ flex: "0 0 auto" }}>
+        </Stack>
+        {secondaryText && (
+          <Typography variant="caption" color="text.secondary" sx={{ lineHeight: 1.3, overflowWrap: "anywhere" }}>
+            {secondaryText}
+          </Typography>
+        )}
+        <Stack direction="row" alignItems="center" spacing={0.5}>
+          <Typography variant="caption" color={interactive ? "text.secondary" : "text.disabled"} sx={{ fontSize: 11, whiteSpace: "nowrap" }}>
+            拖拽
+          </Typography>
+          <Typography variant="caption" color="text.disabled" aria-hidden="true">/</Typography>
           <Box
             component="kbd"
             sx={{
+              ...uploadActionSx,
               display: "inline-flex",
               alignItems: "center",
               px: 0.6,
-              py: 0.25,
               border: 1,
               borderColor: "divider",
               borderRadius: 0.75,
               bgcolor: "#F8FAFC",
               color: interactive ? "text.secondary" : "text.disabled",
               fontFamily: "inherit",
-              fontSize: 10,
-              fontWeight: 800,
-              lineHeight: 1.2,
+              fontWeight: 500,
               whiteSpace: "nowrap",
             }}
           >
             Ctrl+V
           </Box>
-          <Button component="label" size="small" disabled={!interactive} sx={{ minWidth: 0, px: 0.75, whiteSpace: "nowrap", fontWeight: 800 }}>
+          <Typography variant="caption" color="text.disabled" aria-hidden="true">/</Typography>
+          <Button component="label" size="small" disabled={!interactive} sx={{ ...uploadActionSx, minWidth: 0, px: 0.6, fontSize: 11, whiteSpace: "nowrap", fontWeight: 600 }}>
             选择文件
             <input
               hidden

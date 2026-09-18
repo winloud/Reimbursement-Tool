@@ -8,7 +8,17 @@ const SAVE_STATE_META = {
   idle: { text: "等待修改", icon: null, color: "default" },
   dirty: { text: "有未保存修改", icon: null, color: "warning" },
   saving: { text: "保存中...", icon: <CircularProgress size={14} />, color: "info" },
-  saved: { text: "已保存", icon: <CheckCircleIcon fontSize="small" />, color: "success" },
+  saved: {
+    text: "已保存",
+    icon: <CheckCircleIcon fontSize="small" />,
+    color: "success",
+    chipSx: {
+      bgcolor: "success.50",
+      color: "success.dark",
+      fontWeight: 500,
+      "& .MuiChip-icon": { color: "success.main" },
+    },
+  },
   error: { text: "保存失败，请重试", icon: <ErrorOutlineIcon fontSize="small" />, color: "error" },
 };
 

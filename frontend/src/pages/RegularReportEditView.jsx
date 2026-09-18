@@ -399,7 +399,7 @@ export default function RegularReportEditView({ page, header, editor, invoiceFlo
               />
             </Tooltip>
             <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
-            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
+            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} sx={saveMeta.chipSx} />
           </>
         }
         onBack={onBack}

@@ -16,6 +16,15 @@ export const pageContentSx = {
   // 关掉滚动锚定：折叠一行会让页面变矮，浏览器补偿滚动位置后，被折叠行以上的内容
   // 看起来是往下滑的，同一个列表里折叠不同行方向还不一样。禁用后统一为向上收拢。
   overflowAnchor: "none",
+  // 先在填报页收敛按钮的视觉强度，不影响列表、设置等页面的全局主题。
+  "& .MuiButton-root": {
+    fontWeight: 600,
+  },
+  "& .MuiButton-contained": {
+    boxShadow: "none",
+    "&:hover": { boxShadow: "0 2px 5px rgba(36, 84, 166, 0.12)" },
+    "&.Mui-disabled": { boxShadow: "none" },
+  },
 };
 
 export const workCardSx = {
@@ -107,7 +116,7 @@ export const blockCardHeaderCollapsedSx = {
 export const blockCardTitleSx = {
   flex: "0 0 auto",
   fontSize: 15,
-  fontWeight: 800,
+  fontWeight: 700,
   lineHeight: 1.4,
   whiteSpace: "nowrap",
 };
@@ -120,7 +129,7 @@ export const blockCardSummarySx = {
   flex: "1 1 180px",
   color: "text.secondary",
   fontSize: 12.5,
-  fontWeight: 700,
+  fontWeight: 500,
   flexWrap: "wrap",
 };
 

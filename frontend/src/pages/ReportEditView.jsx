@@ -266,7 +266,7 @@ export default function ReportEditView({
         chips={
           <>
             <Chip size="small" sx={statusMeta.chipSx} label={statusMeta.label} />
-            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} />
+            <Chip size="small" color={saveMeta.color} icon={saveMeta.icon} label={saveMeta.text} sx={saveMeta.chipSx} />
           </>
         }
         onBack={() => requestNavigation("/reports")}
@@ -363,13 +363,13 @@ export default function ReportEditView({
                               spacing={{ xs: 0.25, sm: 1 }}
                               alignItems={{ xs: "flex-start", sm: "center" }}
                             >
-                              <Typography fontWeight={800}>预支信息</Typography>
+                              <Typography fontWeight={700}>预支信息</Typography>
                               <Typography variant="body2" color="text.secondary">
                                 {advanceSummary}
                               </Typography>
                             </Stack>
                           }
-                          drawerSx={{ px: 1.5, pt: 0.5, pb: 1.5 }}
+                          drawerSx={{ px: 1.5, pt: 1.5, pb: 1.5 }}
                         >
                             <Box sx={{ ...basicInfoGridSx, gap: { xs: 1.25, sm: 1.5 } }}>
                               <Box sx={{ gridColumn: { sm: "span 4" } }}>
@@ -550,7 +550,7 @@ export default function ReportEditView({
             <CardContent sx={sectionCardContentSx}>
               <Stack spacing={2}>
                 <Box>
-                  <Typography variant="h6" fontWeight={800}>
+                  <Typography variant="h6" fontWeight={700}>
                     费用汇总
                   </Typography>
                   <Typography variant="body2" color="text.secondary">
@@ -568,7 +568,7 @@ export default function ReportEditView({
 
                 <Stack spacing={1.1}>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography fontWeight={800}>车船费</Typography>
+                    <Typography fontWeight={600}>车船费</Typography>
                     <Typography fontWeight={800}>{formatAmount(summary.transportTotal)}</Typography>
                   </Stack>
                 </Stack>
@@ -578,7 +578,7 @@ export default function ReportEditView({
                 <Stack spacing={1.1}>
                   <Stack direction="row" justifyContent="space-between" alignItems="center" spacing={1}>
                     <Stack direction="row" alignItems="center" spacing={0.75} sx={{ minWidth: 0, flex: "1 1 auto" }}>
-                      <Typography fontWeight={800} sx={{ flexShrink: 0 }}>
+                      <Typography fontWeight={600} sx={{ flexShrink: 0 }}>
                         途中补贴
                       </Typography>
                       <Tooltip title={subsidyModeToggleTooltip} arrow>
@@ -657,7 +657,7 @@ export default function ReportEditView({
 
                 <Stack spacing={0.8}>
                   <Stack direction="row" justifyContent="space-between">
-                    <Typography fontWeight={800}>其他费用</Typography>
+                    <Typography fontWeight={600}>其他费用</Typography>
                     <Typography fontWeight={800}>{formatAmount(summary.otherExpenseTotal)}</Typography>
                   </Stack>
                   {visibleOtherExpenseItems.map(({ category, amount }) => (
@@ -675,10 +675,10 @@ export default function ReportEditView({
                 <Divider />
 
                 <Stack spacing={1.25}>
-                  <Typography fontWeight={800}>汇总</Typography>
+                  <Typography fontWeight={600}>汇总</Typography>
                   <Stack direction="row" justifyContent="space-between" alignItems="baseline">
                     <Typography color="text.secondary">报销总金额</Typography>
-                    <Typography variant="h5" fontWeight={900} color="primary.main">
+                    <Typography variant="h5" fontWeight={700} color="primary.main">
                       {formatAmount(summary.total)}
                     </Typography>
                   </Stack>

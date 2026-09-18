@@ -35,7 +35,7 @@ const SLOT_PRESETS = {
   },
 };
 
-// 填报页统一上传槽：图标 + 单行主文案 + Ctrl+V 徽标 + 选择文件。
+// 填报页统一上传槽：上行图标与提示，下行拖拽 / Ctrl+V / 选择文件。
 // 差旅页与常规页、发票位与附件位共用这一个出口，保证外观一致。
 export default function FileDropSlot({
   kind = "invoice",

@@ -1,4 +1,4 @@
-import { Box, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/material";
+import { Box, Chip, IconButton, Paper, Stack, Tooltip, Typography } from "@mui/material";
 import DeleteIcon from "@mui/icons-material/Delete";
 import VisibilityIcon from "@mui/icons-material/Visibility";
 
@@ -29,11 +29,12 @@ export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSele
             variant="outlined"
             sx={{
               ...fileCardSx,
+              py: 0.75,
               borderLeftColor: invoice.amount_confirmed ? "success.main" : "warning.main",
             }}
           >
-            <Stack spacing={0.125} sx={{ minWidth: 0 }}>
-              <Stack direction="row" spacing={0.5} alignItems="baseline" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
+            <Stack spacing={0.375} sx={{ minWidth: 0 }}>
+              <Stack direction="row" spacing={0.75} alignItems="center" flexWrap="wrap" useFlexGap sx={{ minWidth: 0 }}>
                 <Tooltip title={formatAmount(invoice.amount)}>
                   <Typography
                     variant="body2"
@@ -45,27 +46,37 @@ export default function InvoiceCardList({ invoices, readonly, uploadSlot, onSele
                   </Typography>
                 </Tooltip>
                 <Typography variant="caption" color="text.secondary" noWrap sx={{ lineHeight: 1.2 }}>
-                  <Box component="span" sx={{ fontWeight: 700 }}>
+                  <Box component="span">
                     {fileType}
                   </Box>
                   <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
                     ·
                   </Box>
-                  <Box component="span" sx={{ fontWeight: 700 }}>
-                    {pageCount} 页
-                  </Box>
-                  <Box component="span" color="text.disabled" aria-hidden="true" sx={{ mx: 0.375 }}>
-                    ·
-                  </Box>
-                  <Box component="span" color={invoice.amount_confirmed ? "success.dark" : "warning.dark"} sx={{ fontWeight: 700 }}>
-                    {confirmationLabel}
+                  <Box component="span">
+                    {pageCount}页
                   </Box>
                 </Typography>
+                <Chip
+                  label={confirmationLabel}
+                  size="small"
+                  sx={{
+                    height: 18,
+                    borderRadius: 0.75,
+                    bgcolor: invoice.amount_confirmed ? "#E5F4EC" : "#FFF3DE",
+                    color: invoice.amount_confirmed ? "success.dark" : "warning.dark",
+                    fontSize: 10,
+                    fontWeight: 600,
+                    "& .MuiChip-label": { px: 0.5 },
+                  }}
+                />
               </Stack>
               <Stack direction="row" spacing={0.25} alignItems="center" sx={{ minWidth: 0 }}>
                 <Tooltip title={invoiceNumber}>
-                  <Typography variant="caption" color="text.secondary" noWrap sx={{ flex: 1, minWidth: 0 }}>
-                    {invoiceNumber}
+                  <Typography variant="caption" color="text.secondary" aria-label={invoiceNumber} sx={{ display: "flex", flex: 1, minWidth: 0, whiteSpace: "nowrap" }}>
+                    <Box component="span" sx={{ overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {invoice.invoice_no ? invoiceNumber.slice(0, -4) : invoiceNumber}
+                    </Box>
+                    {invoice.invoice_no && <Box component="span" sx={{ flexShrink: 0 }}>{invoiceNumber.slice(-4)}</Box>}
                   </Typography>
                 </Tooltip>
                 <Stack direction="row" spacing={0} sx={{ flexShrink: 0 }}>

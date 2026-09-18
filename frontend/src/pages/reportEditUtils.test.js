@@ -379,9 +379,7 @@ describe("report edit utilities", () => {
     assert.match(attachmentSource, /<AttachmentCardList/);
     assert.ok(fileListShellSource.indexOf("{children}") < fileListShellSource.indexOf("!readonly && uploadSlot"));
     assert.match(uploadPlaceholderSource, /const uploadConfirm = keyframes/);
-    assert.match(uploadPlaceholderSource, /transform: activeVisual \? "translateY\(-2px\)"/);
     assert.match(uploadPlaceholderSource, /animation: received \? `\$\{uploadConfirm\} 480ms ease-out`/);
-    assert.match(uploadPlaceholderSource, /transition: activeVisual \? "transform 700ms ease"/);
     assert.match(uploadPlaceholderSource, /submitFiles\(event\.dataTransfer\.files\)/);
     assert.match(uploadPlaceholderSource, /event\.currentTarget\.focus\(\)/);
     assert.match(uploadPlaceholderSource, /<Button component="label"/);
@@ -977,7 +975,7 @@ describe("report edit utilities", () => {
       "utf8",
     );
     assert.match(invoiceListSource, /countUnit="份"/);
-    assert.match(invoiceListSource, /\{pageCount\} 页/);
+    assert.match(invoiceListSource, /\{pageCount\}\s*页/);
   });
 
   it("filters zero-valued other expense items from summary details", () => {

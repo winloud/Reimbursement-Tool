@@ -46,12 +46,12 @@ export default function EditPageHeader({
     >
       <Box>
         <Stack direction="row" spacing={1.5} alignItems="center" flexWrap="wrap" useFlexGap>
-          <Typography variant="h5" fontWeight={800}>
+          <Typography variant="h5" fontWeight={700}>
             {title}
           </Typography>
           {chips}
         </Stack>
-        {subtitle && <Typography color="text.secondary">{subtitle}</Typography>}
+        {subtitle && <Typography variant="body2" color="text.secondary" sx={{ mt: 0.25 }}>{subtitle}</Typography>}
       </Box>
       <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap sx={{ "& > .MuiButton-root": { whiteSpace: "nowrap" } }}>
         <Button startIcon={<ArrowBackIcon />} variant="outlined" onClick={onBack}>

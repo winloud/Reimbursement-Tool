@@ -1,4 +1,4 @@
-import { Box, Divider, Stack, Typography } from "@mui/material";
+import { Box, Stack, Typography } from "@mui/material";
 
 const countBadgeSx = {
   px: 0.625,
@@ -40,7 +40,6 @@ export default function FileListShell({
         <Box sx={countBadgeSx}>
           {count} {countUnit}
         </Box>
-        <Divider sx={{ flex: 1 }} />
       </Stack>
       {count === 0 && readonly ? (
         <Typography variant="body2" color="text.secondary" sx={{ py: 0.25 }}>
