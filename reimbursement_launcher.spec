@@ -26,6 +26,7 @@ exe = EXE(
     a.datas,
     [],
     name="报销管理-launcher",
+    icon=str(project_root / "src-tauri" / "icons" / "icon.ico"),
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
