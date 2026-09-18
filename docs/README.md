@@ -2,7 +2,7 @@
 
 ## 当前状态
 
-- 当前源码版本：v2.0.0
+- 当前源码版本：v2.0.1
 - 公开稳定版本：[GitHub Releases](https://github.com/winloud/Reimbursement-Tool/releases/latest)
 - 当前开发状态：[releases/active-plan.md](releases/active-plan.md)
 
